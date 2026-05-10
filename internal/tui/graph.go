@@ -778,20 +778,21 @@ func keyColumnWidth(rows []nodeRow) int {
 	return w
 }
 
-// worstState picks the most urgent state to surface on the node — a
-// single short label + the colour to render it in. Severity ordering,
-// most urgent first:
+// worstState picks the most urgent state to surface as the node's
+// border colour. Argo OutOfSync is intentionally NOT escalated —
+// out-of-sync is the normal mid-promotion state and shouldn't paint
+// the box red; the Sync row inside still surfaces it. Severity, most
+// urgent first:
 //
 //  1. Promo failed/aborted     → "Promo failed"   (red)
 //  2. Stage health unhealthy   → "Unhealthy"      (red)
 //  3. Argo degraded/missing    → "Argo degraded"  (red)
-//  4. Argo out-of-sync         → "OutOfSync"      (red)
-//  5. Promo running/pending    → "Promoting…"     (yellow)
-//  6. Stage progressing        → "Progressing"    (yellow)
-//  7. Argo progressing/sus.    → "Argo syncing"   (yellow)
-//  8. Control-flow stage       → "Control-flow"   (yellow, italic)
-//  9. Healthy + Synced         → "Healthy"        (green)
-//  10. Anything else / unknown → "—"              (muted)
+//  4. Promo running/pending    → "Promoting…"     (yellow)
+//  5. Stage progressing        → "Progressing"    (yellow)
+//  6. Argo progressing/sus.    → "Argo syncing"   (yellow)
+//  7. Control-flow stage       → "Control-flow"   (yellow)
+//  8. Healthy                  → "Healthy"        (green)
+//  9. Anything else / unknown  → "—"              (muted)
 func worstState(s *kargo.Stage) (string, color.Color) {
 	if s == nil {
 		return "—", muted
@@ -803,13 +804,10 @@ func worstState(s *kargo.Stage) (string, color.Color) {
 	if s.Health == "Unhealthy" {
 		return "Unhealthy", degraded
 	}
-	ah, as := worstArgo(s.ArgoCDApps)
+	ah, _ := worstArgo(s.ArgoCDApps)
 	switch ah {
 	case "Degraded", "Missing":
 		return "Argo " + lower(ah), degraded
-	}
-	if as == "OutOfSync" {
-		return "OutOfSync", degraded
 	}
 	switch s.LastPromo {
 	case "Running", "Pending":
