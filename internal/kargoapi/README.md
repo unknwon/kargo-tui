@@ -69,5 +69,3 @@ we'd lose by reverting.
    four files above and applies the import rewrites).
 3. Run `go build ./...`, fix any new corev1 usages by extending
    `corev1stub` with whatever new gogo type the upstream introduced.
-4. Run `go run ./cmd/kargo-probe ListProjects` to confirm timestamps still
-   come through populated.
