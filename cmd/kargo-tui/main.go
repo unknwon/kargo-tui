@@ -60,20 +60,22 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	attachRefresher(client, active)
-	if err := primeToken(ctx, client, active); err != nil {
-		return err
-	}
+	authExpired := primeToken(client, active)
 	project := cmd.String("project")
 	if project == "" {
 		project = active.Project
 	}
 
 	// If no project was selected, try to auto-select when there's exactly one;
-	// otherwise fall through to the picker.
+	// otherwise fall through to the picker. Auth failures here are non-fatal:
+	// the TUI launches with the banner up so the user can press R to recover.
 	if project == "" {
 		ps, err := client.ListProjects(ctx)
-		if err == nil && len(ps) == 1 {
+		switch {
+		case err == nil && len(ps) == 1:
 			project = ps[0]
+		case kargo.IsUnauthenticated(err):
+			authExpired = true
 		}
 	}
 
@@ -81,20 +83,28 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 
 	var p *tea.Program
 	if project == "" {
-		p = tea.NewProgram(tui.NewWithPicker(client, active.Name).
-			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin))
+		m := tui.NewWithPicker(client, active.Name).
+			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin)
+		if authExpired {
+			m = m.WithAuthExpired("saved session expired")
+		}
+		p = tea.NewProgram(m)
 	} else {
 		client.SetProject(project)
-		deploys, err := client.ListStages(ctx, project)
-		if err != nil {
-			return fmt.Errorf("load deploys: %w", err)
+		// ListStages / ListFreight failures are non-fatal here too — if the
+		// cause is auth, the TUI takes over with the banner; if it's a real
+		// server problem, the per-view error line surfaces it once inside.
+		deploys, dErr := client.ListStages(ctx, project)
+		freights, fErr := client.ListFreight(ctx, project)
+		if kargo.IsUnauthenticated(dErr) || kargo.IsUnauthenticated(fErr) {
+			authExpired = true
 		}
-		freights, err := client.ListFreight(ctx, project)
-		if err != nil {
-			return fmt.Errorf("load freights: %w", err)
+		m := tui.New(client, active.Name, project, deploys, freights).
+			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin)
+		if authExpired {
+			m = m.WithAuthExpired("saved session expired")
 		}
-		p = tea.NewProgram(tui.New(client, active.Name, project, deploys, freights).
-			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin))
+		p = tea.NewProgram(m)
 	}
 
 	// Inject the program's thread-safe Send so the SSO login goroutine can
@@ -120,47 +130,37 @@ func attachRefresher(client *kargo.Client, c *config.Context) {
 	client.SetTokenRefresher(r.Refresh)
 }
 
-// primeToken inspects the saved id_token's `exp` claim and, depending on
-// how stale it is, refreshes proactively before launching the TUI:
+// primeToken inspects the saved id_token's `exp` claim and decides how
+// to handle stale credentials *without ever blocking startup or printing
+// to stderr* — the user's eventual home is the TUI's alt-screen, so any
+// stderr write is invisible (or worse, corrupts the rendered view) and
+// we'd rather they always reach the TUI where the auth-expired banner
+// and `R` re-login affordance live.
 //
-//   - Already expired (or expires within 60s): refresh in the foreground
-//     so the user doesn't watch the first batch of RPCs eat 401s. If
-//     refresh fails — usually because the IdP revoked the refresh token
-//     — print an actionable message to stderr and exit. The user has to
-//     re-authenticate via `kargo-tui auth login <url>`; we can't drop
-//     into the SSO browser flow from here without already being inside
-//     the TUI's alt-screen, where stderr writes corrupt the view.
-//   - Token still good (or non-JWT, e.g. admin-token logins): kick the
-//     refresher off in the background. The next 401 (or the natural tick
-//     after the token expires mid-session) is now cheap because the
-//     Refresher's coalescing window has already pre-warmed the cache.
+//   - Token healthy: kick the refresher off in the background. The next
+//     401 (or natural mid-session expiry) finds the Refresher's
+//     coalescing cache pre-warmed and skips the IdP round trip.
+//   - Token already expired (or expires within 60s): same background
+//     refresh, plus return foregroundExpired=true so the caller can
+//     start the TUI with the auth-expired banner already up. If the
+//     background refresh succeeds in time, the first successful tick
+//     clears the banner via noteAuthSuccess; if not, the banner stays
+//     and the user presses R.
 //
-// No-op when no refresher is attached (no refresh_token saved).
-func primeToken(ctx context.Context, client *kargo.Client, active *config.Context) error {
+// Returns false (don't show banner) when no refresher is attached or the
+// token isn't a JWT we can decode — in those cases the lazy 401 path is
+// the only signal we have.
+func primeToken(client *kargo.Client, active *config.Context) (foregroundExpired bool) {
 	if active == nil || active.RefreshToken == "" {
-		return nil
+		return false
 	}
-	exp, ok := auth.IDTokenExpiry(active.BearerToken)
-	if ok && time.Until(exp) < 60*time.Second {
-		fmt.Fprintln(os.Stderr, "Saved session expired; refreshing…")
-		rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		if err := client.ForceRefresh(rctx); err != nil {
-			fmt.Fprintf(os.Stderr,
-				"Refresh failed: %v\n\nRe-authenticate with:\n  kargo-tui auth login %s\n",
-				err, active.APIAddress)
-			return fmt.Errorf("session expired and refresh failed")
-		}
-		return nil
-	}
-	// Background refresh: best-effort, errors are surfaced later by the
-	// usual 401-and-banner path if they matter.
 	go func() {
 		bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = client.ForceRefresh(bgCtx)
 	}()
-	return nil
+	exp, ok := auth.IDTokenExpiry(active.BearerToken)
+	return ok && time.Until(exp) < 60*time.Second
 }
 
 // contextSwitcher returns the list of configured context names, a builder

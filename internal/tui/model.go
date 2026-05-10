@@ -289,6 +289,19 @@ func (m *Model) restartStageWatch() {
 	m.stageWatchCancel = startStageWatchGoroutine(m.client, m.project, m.ctxSend)
 }
 
+// WithAuthExpired starts the model with the session-expired banner up.
+// Used by main when the saved id_token's `exp` claim has already passed
+// at startup, so the user sees the prompt before any RPC has had a
+// chance to fire and confirm it via 401. A successful tick clears it
+// the moment a (proactively-refreshed) bearer starts working.
+func (m Model) WithAuthExpired(msg string) Model {
+	m.authExpired = true
+	if msg != "" {
+		m.authExpiredMsg = msg
+	}
+	return m
+}
+
 // WithContexts wires in the list of configured Kargo contexts, a builder
 // that returns a fresh client for a chosen context, a login callback that
 // authenticates a *new* Kargo URL via SSO, and a relogin callback that
