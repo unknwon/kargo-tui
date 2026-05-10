@@ -27,6 +27,12 @@ func (m Model) View() tea.View {
 	if m.overlay != overlayNone {
 		return m.overlayView()
 	}
+	// detailsOnly takes precedence over the structural views — `v` should
+	// flip the whole frame to the details panel regardless of whether the
+	// user was in tree, graph, or a list view.
+	if m.detailsOnly {
+		return m.detailsOnlyView()
+	}
 	if m.view == viewTree {
 		return m.treeView()
 	}
@@ -91,22 +97,51 @@ func (m Model) View() tea.View {
 	help := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).
 		Render("d deploys · c controls · f freights · t tree · g graph · v details · l logs · D diff · P promote · > downstream · o argo · s sort · y yank · p projects · C contexts · / filter · ? help · q quit")
 
-	bodyArea := body
+	content := lipgloss.JoinVertical(lipgloss.Left, header, body, filterLine, help)
 
-	if m.detailsOnly {
-		// Full-width details panel, suitable for narrow terminals.
-		panelHeight := m.height - 4
-		if panelHeight < 5 {
-			panelHeight = 5
-		}
-		w := m.width
-		if w <= 0 {
-			w = 80
-		}
-		bodyArea = m.renderPanel(w, panelHeight)
+	v := tea.NewView(content)
+	v.AltScreen = true
+	v.BackgroundColor = bg
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+// detailsOnlyView fills the whole frame with the side details panel —
+// the layout `v` toggles into. Works from any structural view since the
+// panel's content is selection-driven (selectedStage / selectedFreight)
+// and those helpers are view-aware.
+func (m Model) detailsOnlyView() tea.View {
+	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg).Padding(0, 1)
+	hintStyle := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1)
+
+	var label string
+	switch m.view {
+	case viewDeploys:
+		label = "deploys"
+	case viewControlFlow:
+		label = "controls"
+	case viewFreights:
+		label = "freights"
+	case viewTree:
+		label = "tree"
+	case viewGraph:
+		label = "graph"
 	}
+	header := titleStyle.Render(fmt.Sprintf("kargo-tui · %s · %s · project=%s · details",
+		label, m.contextName, m.project))
 
-	content := lipgloss.JoinVertical(lipgloss.Left, header, bodyArea, filterLine, help)
+	panelHeight := m.height - 3
+	if panelHeight < 5 {
+		panelHeight = 5
+	}
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
+	body := m.renderPanel(w, panelHeight)
+
+	hint := hintStyle.Render("v back · j/k pgup/pgdn g/G scroll · l logs · D diff · P promote · esc back · q quit")
+	content := lipgloss.JoinVertical(lipgloss.Left, header, body, hint)
 
 	v := tea.NewView(content)
 	v.AltScreen = true

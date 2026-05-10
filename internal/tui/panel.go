@@ -52,7 +52,7 @@ func (m Model) composePanelLines(innerW int) []string {
 
 	var lines []string
 	switch m.view {
-	case viewDeploys, viewControlFlow:
+	case viewDeploys, viewControlFlow, viewTree, viewGraph:
 		s := m.selectedStage()
 		if s == nil {
 			return []string{keyStyle.Render("no selection")}
