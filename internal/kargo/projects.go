@@ -5,47 +5,28 @@ import (
 	"fmt"
 	"sort"
 
-	kargoapi "github.com/akuity/kargo/api/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"github.com/akuity/kargo/pkg/client/generated/core"
 )
 
-// ListProjects returns the names of Kargo projects in the cluster. It first
-// tries the cluster-scoped Project CRD (the canonical source). If that fails
-// (e.g. RBAC denies it), it falls back to namespaces labeled with
-// "kargo.akuity.io/project". The two are unioned and de-duplicated, so a
-// missing label doesn't hide a Project that exists.
-func ListProjects(ctx context.Context) ([]string, error) {
-	c, err := newClient()
+// ListProjects returns the names of Kargo projects accessible to the
+// authenticated user, sorted alphabetically.
+func (c *Client) ListProjects(ctx context.Context) ([]string, error) {
+	resp, err := c.api.Core.ListProjects(
+		core.NewListProjectsParams().WithContext(ctx),
+		c.authInfo,
+	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list projects: %w", err)
 	}
-
-	seen := make(map[string]struct{})
-
-	var projList kargoapi.ProjectList
-	projErr := c.List(ctx, &projList)
-	if projErr == nil {
-		for _, p := range projList.Items {
-			seen[p.Name] = struct{}{}
+	if resp.Payload == nil {
+		return nil, nil
+	}
+	out := make([]string, 0, len(resp.Payload.Items))
+	for _, p := range resp.Payload.Items {
+		if p == nil || p.Metadata == nil {
+			continue
 		}
-	}
-
-	var nsList corev1.NamespaceList
-	nsErr := c.List(ctx, &nsList, client.HasLabels{"kargo.akuity.io/project"})
-	if nsErr == nil {
-		for _, n := range nsList.Items {
-			seen[n.Name] = struct{}{}
-		}
-	}
-
-	if projErr != nil && nsErr != nil {
-		return nil, fmt.Errorf("list projects/namespaces: %w (and %v)", projErr, nsErr)
-	}
-
-	out := make([]string, 0, len(seen))
-	for n := range seen {
-		out = append(out, n)
+		out = append(out, p.Metadata.Name)
 	}
 	sort.Strings(out)
 	return out, nil

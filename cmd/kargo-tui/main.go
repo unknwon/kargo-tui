@@ -2,50 +2,230 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/urfave/cli/v3"
 
+	"unknwon.dev/kargo-tui/internal/auth"
+	"unknwon.dev/kargo-tui/internal/config"
 	"unknwon.dev/kargo-tui/internal/kargo"
 	"unknwon.dev/kargo-tui/internal/tui"
 )
 
 func main() {
-	namespace := flag.String("namespace", "", "Kargo namespace to list resources from. Leave empty to pick interactively.")
-	flag.Parse()
+	cmd := &cli.Command{
+		Name:  "kargo-tui",
+		Usage: "Interactive TUI for the Kargo continuous-delivery API",
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:    "context",
+				Usage:   "Configured Kargo context to use (default: current context)",
+				Sources: cli.EnvVars("KARGO_TUI_CONTEXT"),
+			},
+			&cli.StringFlag{
+				Name:    "project",
+				Aliases: []string{"p"},
+				Usage:   "Kargo project to open. Leave empty to pick interactively.",
+				Sources: cli.EnvVars("KARGO_PROJECT"),
+			},
+		},
+		Action:   runTUI,
+		Commands: []*cli.Command{authCommand(), contextsCommand()},
+	}
 
-	ctx := context.Background()
+	if err := cmd.Run(context.Background(), os.Args); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+}
 
-	// If no namespace was provided, try to auto-select when there's exactly
-	// one Kargo project namespace; otherwise fall through to the picker.
-	if *namespace == "" {
-		nss, err := kargo.ListProjects(ctx)
-		if err == nil && len(nss) == 1 {
-			*namespace = nss[0]
+// runTUI is the root command's action: open the TUI against the active
+// Kargo context.
+func runTUI(ctx context.Context, cmd *cli.Command) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	active, err := cfg.Active(cmd.String("context"))
+	if err != nil {
+		return err
+	}
+
+	client, err := kargo.NewClient(active)
+	if err != nil {
+		return err
+	}
+	project := cmd.String("project")
+	if project == "" {
+		project = active.Project
+	}
+
+	// If no project was selected, try to auto-select when there's exactly one;
+	// otherwise fall through to the picker.
+	if project == "" {
+		ps, err := client.ListProjects(ctx)
+		if err == nil && len(ps) == 1 {
+			project = ps[0]
 		}
 	}
 
 	var p *tea.Program
-	if *namespace == "" {
-		p = tea.NewProgram(tui.NewWithPicker())
+	if project == "" {
+		p = tea.NewProgram(tui.NewWithPicker(client, active.Name))
 	} else {
-		deploys, err := kargo.ListStages(ctx, *namespace)
+		client.SetProject(project)
+		deploys, err := client.ListStages(ctx, project)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "error loading deploys:", err)
-			os.Exit(1)
+			return fmt.Errorf("load deploys: %w", err)
 		}
-		freights, err := kargo.ListFreight(ctx, *namespace)
+		freights, err := client.ListFreight(ctx, project)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "error loading freights:", err)
-			os.Exit(1)
+			return fmt.Errorf("load freights: %w", err)
 		}
-		p = tea.NewProgram(tui.New(*namespace, deploys, freights))
+		p = tea.NewProgram(tui.New(client, active.Name, project, deploys, freights))
 	}
 
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		return err
+	}
+	return nil
+}
+
+// authCommand builds the `kargo-tui auth ...` subcommand tree.
+func authCommand() *cli.Command {
+	return &cli.Command{
+		Name:  "auth",
+		Usage: "Authenticate against a Kargo API server",
+		Commands: []*cli.Command{
+			{
+				Name:      "login",
+				Usage:     "Log in to a Kargo API server with the admin password",
+				ArgsUsage: "<url>",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:  "name",
+						Usage: "Local name for this Kargo context (default: derived from URL host)",
+					},
+					&cli.StringFlag{
+						Name:    "project",
+						Aliases: []string{"p"},
+						Usage:   "Default project for this context",
+					},
+					&cli.StringFlag{
+						Name:    "password",
+						Usage:   "Admin password (omit for interactive prompt)",
+						Sources: cli.EnvVars("KARGO_PASSWORD"),
+					},
+					&cli.BoolFlag{
+						Name:  "insecure-skip-tls-verify",
+						Usage: "Skip TLS certificate verification",
+					},
+					&cli.BoolFlag{
+						Name:  "no-make-current",
+						Usage: "Do not switch the active context to this one",
+					},
+				},
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					if cmd.NArg() < 1 {
+						return fmt.Errorf("usage: kargo-tui auth login <url>")
+					}
+					saved, err := auth.AdminLogin(ctx, auth.LoginOptions{
+						APIAddress:            cmd.Args().First(),
+						ContextName:           cmd.String("name"),
+						Project:               cmd.String("project"),
+						Password:              cmd.String("password"),
+						InsecureSkipTLSVerify: cmd.Bool("insecure-skip-tls-verify"),
+						MakeCurrent:           !cmd.Bool("no-make-current"),
+					})
+					if err != nil {
+						return err
+					}
+					fmt.Printf("logged in to %s as context %q\n", saved.APIAddress, saved.Name)
+					return nil
+				},
+			},
+			{
+				Name:      "logout",
+				Usage:     "Remove a stored Kargo context",
+				ArgsUsage: "<context-name>",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					name := cmd.Args().First()
+					if name == "" {
+						return fmt.Errorf("usage: kargo-tui auth logout <context-name>")
+					}
+					cfg, err := config.Load()
+					if err != nil {
+						return err
+					}
+					if !cfg.Remove(name) {
+						return fmt.Errorf("context %q not found", name)
+					}
+					if err := config.Save(cfg); err != nil {
+						return err
+					}
+					fmt.Printf("removed context %q\n", name)
+					return nil
+				},
+			},
+		},
+	}
+}
+
+// contextsCommand builds the `kargo-tui contexts ...` subcommand tree for
+// inspecting and switching between configured Kargo instances.
+func contextsCommand() *cli.Command {
+	return &cli.Command{
+		Name:  "contexts",
+		Usage: "Manage configured Kargo contexts",
+		Commands: []*cli.Command{
+			{
+				Name:  "list",
+				Usage: "List all configured Kargo contexts",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					cfg, err := config.Load()
+					if err != nil {
+						return err
+					}
+					if len(cfg.Contexts) == 0 {
+						fmt.Println("no contexts configured; run `kargo-tui auth login <url>`")
+						return nil
+					}
+					for _, c := range cfg.Contexts {
+						marker := "  "
+						if c.Name == cfg.CurrentContext {
+							marker = "* "
+						}
+						fmt.Printf("%s%s\t%s\n", marker, c.Name, c.APIAddress)
+					}
+					return nil
+				},
+			},
+			{
+				Name:      "use",
+				Usage:     "Switch the active Kargo context",
+				ArgsUsage: "<context-name>",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					name := cmd.Args().First()
+					if name == "" {
+						return fmt.Errorf("usage: kargo-tui contexts use <context-name>")
+					}
+					cfg, err := config.Load()
+					if err != nil {
+						return err
+					}
+					if cfg.Find(name) == nil {
+						return fmt.Errorf("context %q not found", name)
+					}
+					cfg.CurrentContext = name
+					if err := config.Save(cfg); err != nil {
+						return err
+					}
+					fmt.Printf("switched to context %q\n", name)
+					return nil
+				},
+			},
+		},
 	}
 }

@@ -264,7 +264,7 @@ func (m *Model) renderPanel(width, height int) string {
 		Padding(0, 1).
 		Width(width).
 		Height(height)
-	if m.panelFocused {
+	if m.detailsOnly {
 		border = border.BorderForeground(selected)
 	} else {
 		border = border.BorderForeground(muted)

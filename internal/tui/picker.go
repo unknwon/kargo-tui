@@ -8,33 +8,33 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// updatePicker handles input while the namespace picker is active. It owns
-// keypress, namespace-loaded, and window-size events for the picker phase.
+// updatePicker handles input while the project picker is active. It owns
+// keypress, projects-loaded, and window-size events for the picker phase.
 func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 
-	case namespacesLoadedMsg:
+	case projectsLoadedMsg:
 		m.nsLoading = false
-		m.namespaces = msg.namespaces
-		m.namespacesError = msg.err
-		// Auto-select when exactly one Kargo project namespace exists.
-		if msg.err == nil && len(msg.namespaces) == 1 {
-			return m.startWithNamespace(msg.namespaces[0])
+		m.projects = msg.projects
+		m.projectsError = msg.err
+		// Auto-select when exactly one Kargo project exists.
+		if msg.err == nil && len(msg.projects) == 1 {
+			return m.startWithProject(msg.projects[0])
 		}
 		return m, nil
 
 	case tea.KeyPressMsg:
 		key := msg.String()
-		filtered := m.filteredNamespaces()
+		filtered := m.filteredProjects()
 		switch key {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "esc":
 			// If picker was opened from a running session, allow esc back out.
-			if m.namespace != "" {
+			if m.project != "" {
 				m.phase = phaseRunning
 				return m, nil
 			}
@@ -53,19 +53,18 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.nsCursor < 0 || m.nsCursor >= len(filtered) {
 				return m, nil
 			}
-			ns := filtered[m.nsCursor]
-			return m.startWithNamespace(ns)
+			return m.startWithProject(filtered[m.nsCursor])
 		case "r":
 			if !m.nsLoading {
 				m.nsLoading = true
-				return m, loadNamespacesCmd()
+				return m, loadProjectsCmd(m.client)
 			}
 			return m, nil
 		}
 		var cmd tea.Cmd
 		m.nsFilter, cmd = m.nsFilter.Update(msg)
 		// Reset cursor when the filter narrows to fewer rows.
-		if m.nsCursor >= len(m.filteredNamespaces()) {
+		if m.nsCursor >= len(m.filteredProjects()) {
 			m.nsCursor = 0
 		}
 		return m, cmd
@@ -73,16 +72,16 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// filteredNamespaces returns the namespaces matching the current picker
-// search text (case-insensitive substring match), or all namespaces when
-// the filter is empty.
-func (m Model) filteredNamespaces() []string {
+// filteredProjects returns the projects matching the current picker search
+// text (case-insensitive substring match), or all projects when the filter
+// is empty.
+func (m Model) filteredProjects() []string {
 	q := strings.ToLower(strings.TrimSpace(m.nsFilter.Value()))
 	if q == "" {
-		return m.namespaces
+		return m.projects
 	}
-	out := make([]string, 0, len(m.namespaces))
-	for _, n := range m.namespaces {
+	out := make([]string, 0, len(m.projects))
+	for _, n := range m.projects {
 		if strings.Contains(strings.ToLower(n), q) {
 			out = append(out, n)
 		}
@@ -90,11 +89,12 @@ func (m Model) filteredNamespaces() []string {
 	return out
 }
 
-// startWithNamespace transitions out of the picker into the running phase
-// for the given namespace, clearing stale data and dispatching initial
+// startWithProject transitions out of the picker into the running phase
+// for the given project, clearing stale data and dispatching initial
 // loaders + the refresh ticker.
-func (m Model) startWithNamespace(ns string) (Model, tea.Cmd) {
-	m.namespace = ns
+func (m Model) startWithProject(p string) (Model, tea.Cmd) {
+	m.project = p
+	m.client.SetProject(p)
 	m.phase = phaseRunning
 	m.nsFilter.Blur()
 	// Clear stale data and force a fresh load + tick loop.
@@ -118,13 +118,13 @@ func (m Model) startWithNamespace(ns string) (Model, tea.Cmd) {
 	m.refreshPanel()
 	m.loading = true
 	return m, tea.Batch(
-		loadDeploysCmd(ns),
-		loadFreightsCmd(ns),
+		loadDeploysCmd(m.client, p),
+		loadFreightsCmd(m.client, p),
 		tickCmd(),
 	)
 }
 
-// pickerView renders the namespace picker (used during phasePickingNamespace).
+// pickerView renders the project picker (used during phasePickingProject).
 func (m Model) pickerView() tea.View {
 	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
 	hintStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
@@ -133,20 +133,20 @@ func (m Model) pickerView() tea.View {
 	errStyle := lipgloss.NewStyle().Foreground(degraded).Background(bg)
 
 	var lines []string
-	lines = append(lines, titleStyle.Render("Select a Kargo project namespace"))
+	lines = append(lines, titleStyle.Render("Select a Kargo project"))
 	lines = append(lines, hintStyle.Render("type to filter · ↑/↓ select · enter open · r reload · esc quit"))
 	lines = append(lines, "")
 	lines = append(lines, m.nsFilter.View())
 	lines = append(lines, "")
 
-	if m.namespacesError != nil {
-		lines = append(lines, errStyle.Render("error: "+m.namespacesError.Error()))
+	if m.projectsError != nil {
+		lines = append(lines, errStyle.Render("error: "+m.projectsError.Error()))
 	} else if m.nsLoading {
-		lines = append(lines, hintStyle.Render("loading namespaces…"))
+		lines = append(lines, hintStyle.Render("loading projects…"))
 	} else {
-		filtered := m.filteredNamespaces()
+		filtered := m.filteredProjects()
 		if len(filtered) == 0 {
-			lines = append(lines, hintStyle.Render("no Kargo project namespaces found"))
+			lines = append(lines, hintStyle.Render("no Kargo projects found"))
 		} else {
 			maxItems := m.height - len(lines) - 4
 			if maxItems < 5 {

@@ -11,11 +11,10 @@ import (
 
 const refreshInterval = 5 * time.Second
 
-// namespacesLoadedMsg carries the result of listing Kargo project
-// namespaces. Used by the picker.
-type namespacesLoadedMsg struct {
-	namespaces []string
-	err        error
+// projectsLoadedMsg carries the result of listing Kargo projects.
+type projectsLoadedMsg struct {
+	projects []string
+	err      error
 }
 
 // deploysLoadedMsg carries the result of listing Stages (rendered as
@@ -46,27 +45,27 @@ type logsLoadedMsg struct {
 	err    error
 }
 
-// loadNamespacesCmd dispatches a list of Kargo project namespaces.
-func loadNamespacesCmd() tea.Cmd {
+// loadProjectsCmd dispatches a list of Kargo projects.
+func loadProjectsCmd(c *kargo.Client) tea.Cmd {
 	return func() tea.Msg {
-		ns, err := kargo.ListProjects(context.Background())
-		return namespacesLoadedMsg{namespaces: ns, err: err}
+		ps, err := c.ListProjects(context.Background())
+		return projectsLoadedMsg{projects: ps, err: err}
 	}
 }
 
-// loadDeploysCmd fetches Stages for the given namespace; the TUI surfaces
-// them as the "deploys" view.
-func loadDeploysCmd(ns string) tea.Cmd {
+// loadDeploysCmd fetches Stages for the given project; the TUI surfaces them
+// as the "deploys" view.
+func loadDeploysCmd(c *kargo.Client, project string) tea.Cmd {
 	return func() tea.Msg {
-		s, err := kargo.ListStages(context.Background(), ns)
+		s, err := c.ListStages(context.Background(), project)
 		return deploysLoadedMsg{deploys: s, err: err}
 	}
 }
 
-// loadFreightsCmd fetches Freight for the given namespace.
-func loadFreightsCmd(ns string) tea.Cmd {
+// loadFreightsCmd fetches Freight for the given project.
+func loadFreightsCmd(c *kargo.Client, project string) tea.Cmd {
 	return func() tea.Msg {
-		f, err := kargo.ListFreight(context.Background(), ns)
+		f, err := c.ListFreight(context.Background(), project)
 		return freightsLoadedMsg{freights: f, err: err}
 	}
 }
@@ -76,21 +75,20 @@ func tickCmd() tea.Cmd {
 	return tea.Tick(refreshInterval, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
-// discoverArgoURLCmd dispatches Argo CD UI URL discovery.
-func discoverArgoURLCmd() tea.Cmd {
+// discoverArgoURLCmd dispatches Argo CD UI URL discovery via the Kargo
+// server's GetConfig RPC.
+func discoverArgoURLCmd(c *kargo.Client) tea.Cmd {
 	return func() tea.Msg {
-		return argoURLMsg(kargo.DiscoverArgoCDBaseURL(context.Background()))
+		return argoURLMsg(c.DiscoverArgoCDBaseURL(context.Background()))
 	}
 }
 
-// loadLogsCmd fetches Promotions and Events for the given stage in parallel
-// (sequentially within the goroutine, conceptually parallel from the UI's
-// point of view).
-func loadLogsCmd(namespace, stageName string) tea.Cmd {
+// loadLogsCmd fetches Promotions and Events for the given stage.
+func loadLogsCmd(c *kargo.Client, project, stageName string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
-		promos, pErr := kargo.ListPromotionsForStage(ctx, namespace, stageName)
-		events, eErr := kargo.ListEventsForStage(ctx, namespace, stageName)
+		promos, pErr := c.ListPromotionsForStage(ctx, project, stageName)
+		events, eErr := c.ListEventsForStage(ctx, project, stageName)
 		err := pErr
 		if err == nil {
 			err = eErr

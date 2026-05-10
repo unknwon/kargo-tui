@@ -17,7 +17,6 @@ func (m *Model) setView(v view) {
 	m.filterValues[m.view] = m.filter.Value()
 	m.view = v
 	m.detailsOnly = false
-	m.panelFocused = false
 	m.filter.SetValue(m.filterValues[v])
 	m.refreshRows()
 	m.resetPanelScroll()

@@ -34,7 +34,7 @@ func (m Model) layoutDims() (int, int) {
 // loaded data, key presses, and overlay/picker events to the right handler
 // and returns a possibly-mutated model plus any follow-up commands.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.phase == phasePickingNamespace {
+	if m.phase == phasePickingProject {
 		return m.updatePicker(msg)
 	}
 
@@ -72,8 +72,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.loading = true
 		return m, tea.Batch(
-			loadDeploysCmd(m.namespace),
-			loadFreightsCmd(m.namespace),
+			loadDeploysCmd(m.client, m.project),
+			loadFreightsCmd(m.client, m.project),
 			tickCmd(),
 		)
 
@@ -209,10 +209,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd := m.filter.Focus()
 			return m, cmd
 		case "esc":
-			// Dismiss details (focus + full-screen mode together) on the
-			// first press; clear filter on a subsequent press.
-			if m.panelFocused || m.detailsOnly {
-				m.panelFocused = false
+			// Dismiss details overlay on the first press; clear filter on a
+			// subsequent press.
+			if m.detailsOnly {
 				m.detailsOnly = false
 				return m, nil
 			}
@@ -231,8 +230,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.loading {
 				m.loading = true
 				return m, tea.Batch(
-					loadDeploysCmd(m.namespace),
-					loadFreightsCmd(m.namespace),
+					loadDeploysCmd(m.client, m.project),
+					loadFreightsCmd(m.client, m.project),
 				)
 			}
 			return m, nil
@@ -243,13 +242,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollRight()
 			return m, nil
 		case "n":
-			// Re-open the namespace picker.
-			m.phase = phasePickingNamespace
+			// Re-open the project picker.
+			m.phase = phasePickingProject
 			m.nsLoading = true
 			m.nsCursor = 0
 			m.nsFilter.SetValue("")
 			m.nsFilter.Focus()
-			return m, tea.Batch(loadNamespacesCmd(), textinput.Blink)
+			return m, tea.Batch(loadProjectsCmd(m.client), textinput.Blink)
 		case "v":
 			m.detailsOnly = !m.detailsOnly
 			return m, nil
@@ -258,9 +257,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "?":
 			m.showHelp = true
-			return m, nil
-		case "tab":
-			m.panelFocused = !m.panelFocused
 			return m, nil
 		case "s":
 			m.cycleSort()
@@ -276,7 +272,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.view == viewDeploys || m.view == viewControlFlow {
 				if s := m.selectedStage(); s != nil {
 					m.openLogsOverlay(s.Name)
-					return m, loadLogsCmd(m.namespace, s.Name)
+					return m, loadLogsCmd(m.client, m.project, s.Name)
 				}
 			}
 			return m, nil
@@ -288,9 +284,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// When the panel is focused, route navigation keys to the viewport
-		// instead of the table so a long detail panel can scroll.
-		if m.panelFocused {
+		// In full-screen details mode the table is hidden, so nav keys scroll
+		// the panel viewport instead of moving the table cursor.
+		if m.detailsOnly {
 			switch key {
 			case "up", "k":
 				m.panelVP.ScrollUp(1)
@@ -301,7 +297,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "pgup":
 				m.panelVP.PageUp()
 				return m, nil
-			case "pgdown", "pgdn":
+			case "pgdown", "pgdn", " ":
 				m.panelVP.PageDown()
 				return m, nil
 			case "home", "g":

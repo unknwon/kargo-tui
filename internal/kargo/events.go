@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	kargoapi "github.com/akuity/kargo/api/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"github.com/akuity/kargo/pkg/client/generated/core"
+	"github.com/akuity/kargo/pkg/client/generated/events"
+	"github.com/akuity/kargo/pkg/client/generated/models"
 )
 
 // PromotionEntry is a flattened view of a kargoapi.Promotion record.
@@ -26,34 +26,40 @@ type PromotionEntry struct {
 
 // ListPromotionsForStage returns the most recent Promotions targeting the
 // given stage, newest first.
-func ListPromotionsForStage(ctx context.Context, namespace, stage string) ([]PromotionEntry, error) {
-	c, err := newClient()
-	if err != nil {
-		return nil, err
+func (c *Client) ListPromotionsForStage(ctx context.Context, project, stage string) ([]PromotionEntry, error) {
+	if project == "" {
+		project = c.project
 	}
-	var pl kargoapi.PromotionList
-	if err := c.List(ctx, &pl, client.InNamespace(namespace)); err != nil {
+	params := core.NewListPromotionsParams().WithContext(ctx)
+	params.Project = project
+	params.Stage = stringPtr(stage)
+	resp, err := c.api.Core.ListPromotions(params, c.authInfo)
+	if err != nil {
 		return nil, fmt.Errorf("list promotions: %w", err)
 	}
-	out := make([]PromotionEntry, 0, len(pl.Items))
-	for _, p := range pl.Items {
-		if p.Spec.Stage != stage {
+	if resp.Payload == nil {
+		return nil, nil
+	}
+	items := resp.Payload.Items
+	out := make([]PromotionEntry, 0, len(items))
+	for _, p := range items {
+		if p == nil || p.Metadata == nil {
 			continue
 		}
 		entry := PromotionEntry{
-			Name:    p.Name,
-			Stage:   p.Spec.Stage,
-			Freight: p.Spec.Freight,
-			Phase:   string(p.Status.Phase),
-			Message: p.Status.Message,
-			Created: p.CreationTimestamp.Time,
+			Name:    p.Metadata.Name,
+			Phase:   p.Status.PromotionStatus.Phase,
+			Message: p.Status.PromotionStatus.Message,
+			Created: parseTime(p.Metadata.CreationTimestamp),
 		}
-		if p.Status.StartedAt != nil {
-			entry.StartedAt = p.Status.StartedAt.Time
+		if p.Spec.PromotionSpec.Stage != nil {
+			entry.Stage = *p.Spec.PromotionSpec.Stage
 		}
-		if p.Status.FinishedAt != nil {
-			entry.FinishedAt = p.Status.FinishedAt.Time
+		if p.Spec.PromotionSpec.Freight != nil {
+			entry.Freight = *p.Spec.PromotionSpec.Freight
 		}
+		entry.StartedAt = parseTime(p.Status.PromotionStatus.StartedAt)
+		entry.FinishedAt = parseTime(p.Status.PromotionStatus.FinishedAt)
 		out = append(out, entry)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -75,18 +81,26 @@ type EventEntry struct {
 
 // ListEventsForStage returns recent Kubernetes events touching the given
 // stage (or its promotions), newest first.
-func ListEventsForStage(ctx context.Context, namespace, stage string) ([]EventEntry, error) {
-	c, err := newClient()
-	if err != nil {
-		return nil, err
+func (c *Client) ListEventsForStage(ctx context.Context, project, stage string) ([]EventEntry, error) {
+	if project == "" {
+		project = c.project
 	}
-	var el corev1.EventList
-	if err := c.List(ctx, &el, client.InNamespace(namespace)); err != nil {
+	params := events.NewListProjectEventsParams().WithContext(ctx)
+	params.Project = project
+	resp, err := c.api.Events.ListProjectEvents(params, c.authInfo)
+	if err != nil {
 		return nil, fmt.Errorf("list events: %w", err)
 	}
-	out := make([]EventEntry, 0, len(el.Items))
+	if resp.Payload == nil {
+		return nil, nil
+	}
+	items := resp.Payload.Items
+	out := make([]EventEntry, 0, len(items))
 	stageLower := strings.ToLower(stage)
-	for _, e := range el.Items {
+	for _, e := range items {
+		if e == nil {
+			continue
+		}
 		obj := strings.ToLower(e.InvolvedObject.Name)
 		// Match events on the Stage itself, or Promotions whose name is
 		// prefixed with the stage name (Kargo's promotion naming convention).
@@ -97,8 +111,8 @@ func ListEventsForStage(ctx context.Context, namespace, stage string) ([]EventEn
 			Type:    e.Type,
 			Reason:  e.Reason,
 			Message: e.Message,
-			Count:   e.Count,
-			Last:    eventTime(e),
+			Count:   int32(e.Count),
+			Last:    eventLastTime(e),
 			Source:  e.InvolvedObject.Kind + "/" + e.InvolvedObject.Name,
 		})
 	}
@@ -108,13 +122,27 @@ func ListEventsForStage(ctx context.Context, namespace, stage string) ([]EventEn
 	return out, nil
 }
 
-// eventTime returns the most authoritative timestamp on a Kubernetes Event.
-func eventTime(e corev1.Event) time.Time {
-	if !e.LastTimestamp.IsZero() {
-		return e.LastTimestamp.Time
+// eventLastTime returns the most authoritative timestamp on a Kubernetes
+// event delivered through the Kargo API.
+func eventLastTime(e *models.V1Event) time.Time {
+	if t := parseTime(e.LastTimestamp); !t.IsZero() {
+		return t
 	}
-	if !e.EventTime.IsZero() {
-		return e.EventTime.Time
+	if e.Metadata.CreationTimestamp != "" {
+		return parseTime(e.Metadata.CreationTimestamp)
 	}
-	return e.CreationTimestamp.Time
+	return parseTime(e.FirstTimestamp)
+}
+
+// parseTime parses an RFC3339 timestamp produced by the Kargo API. Returns
+// the zero time on empty input or parse failure.
+func parseTime(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }

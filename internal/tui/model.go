@@ -34,7 +34,7 @@ type phase int
 
 const (
 	phaseRunning phase = iota
-	phasePickingNamespace
+	phasePickingProject
 )
 
 type overlayMode int
@@ -47,11 +47,14 @@ const (
 
 // Model is the Bubble Tea model that drives the kargo-tui interface. It
 // holds every piece of state the UI needs: loaded Kargo data, table widgets,
-// per-view filter/sort state, the namespace picker, and any active overlay.
+// per-view filter/sort state, the project picker, and any active overlay.
 type Model struct {
-	namespace string
-	phase     phase
-	view      view
+	client      *kargo.Client
+	contextName string
+
+	project string
+	phase   phase
+	view    view
 
 	// detailsOnly hides the table and fills the whole screen with the side
 	// panel. Useful on narrow terminals (e.g. phones) where the panel would
@@ -61,11 +64,9 @@ type Model struct {
 	// showHelp renders a full-screen help overlay listing key bindings.
 	showHelp bool
 
-	// panelFocused routes navigation keys (up/down/pgup/pgdn) to the panel
-	// viewport instead of the table. Toggled with tab.
-	panelFocused bool
-	// panelVP holds the rendered panel content as a scrollable viewport so
-	// long detail panels can be navigated independently from the table.
+	// panelVP holds the rendered panel content as a scrollable viewport.
+	// Scroll keys are routed here only when detailsOnly is true; in the
+	// side-by-side layout the panel is read-only.
 	panelVP viewport.Model
 
 	deploys       []kargo.Stage
@@ -111,12 +112,12 @@ type Model struct {
 	overlayDiffFrom *kargo.Freight
 	overlayDiffTo   *kargo.Freight
 
-	// Namespace picker state.
-	namespaces      []string
-	namespacesError error
-	nsFilter        textinput.Model
-	nsCursor        int
-	nsLoading       bool
+	// Project picker state.
+	projects      []string
+	projectsError error
+	nsFilter      textinput.Model
+	nsCursor      int
+	nsLoading     bool
 
 	width, height int
 
@@ -146,10 +147,12 @@ var allFreightColumns = []table.Column{
 	{Title: "Warehouse", Width: 20},
 }
 
-// New starts the TUI with a known namespace and pre-loaded data.
-func New(namespace string, deploys []kargo.Stage, freights []kargo.Freight) Model {
+// New starts the TUI with a known project and pre-loaded data.
+func New(client *kargo.Client, contextName, project string, deploys []kargo.Stage, freights []kargo.Freight) Model {
 	m := newBase()
-	m.namespace = namespace
+	m.client = client
+	m.contextName = contextName
+	m.project = project
 	m.phase = phaseRunning
 	m.deploys = deploys
 	m.freights = freights
@@ -159,11 +162,13 @@ func New(namespace string, deploys []kargo.Stage, freights []kargo.Freight) Mode
 	return m
 }
 
-// NewWithPicker starts the TUI in namespace-picker mode. A loader command is
-// dispatched from Init to fetch namespaces.
-func NewWithPicker() Model {
+// NewWithPicker starts the TUI in project-picker mode. A loader command is
+// dispatched from Init to fetch projects.
+func NewWithPicker(client *kargo.Client, contextName string) Model {
 	m := newBase()
-	m.phase = phasePickingNamespace
+	m.client = client
+	m.contextName = contextName
+	m.phase = phasePickingProject
 	m.nsLoading = true
 	return m
 }
@@ -179,7 +184,7 @@ func newBase() Model {
 
 	nsTi := textinput.New()
 	nsTi.Prompt = "› "
-	nsTi.Placeholder = "type to filter namespaces…"
+	nsTi.Placeholder = "type to filter projects…"
 	nsTi.CharLimit = 64
 	nsTi.Focus()
 
@@ -225,11 +230,11 @@ func newTable(cols []table.Column) table.Model {
 }
 
 // Init is the Bubble Tea entry point. It dispatches the initial commands —
-// either loading namespaces for the picker, or starting the refresh ticker
-// for an already-selected namespace — and kicks off Argo CD URL discovery.
+// either loading projects for the picker, or starting the refresh ticker
+// for an already-selected project — and kicks off Argo CD URL discovery.
 func (m Model) Init() tea.Cmd {
-	if m.phase == phasePickingNamespace {
-		return tea.Batch(loadNamespacesCmd(), textinput.Blink, discoverArgoURLCmd())
+	if m.phase == phasePickingProject {
+		return tea.Batch(loadProjectsCmd(m.client), textinput.Blink, discoverArgoURLCmd(m.client))
 	}
-	return tea.Batch(tickCmd(), discoverArgoURLCmd())
+	return tea.Batch(tickCmd(), discoverArgoURLCmd(m.client))
 }
