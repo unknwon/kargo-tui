@@ -57,6 +57,16 @@ func (c *Client) SetTokenRefresher(refresh func(context.Context) (string, error)
 	c.rpc.refresh = refresh
 }
 
+// ForceRefresh proactively invokes the configured token refresher and
+// updates the in-memory bearer. Used at startup when the saved id_token
+// is already known to be expired (or about to be), so the first RPC
+// doesn't have to eat a 401 and recover. No-op when no refresher is
+// attached. Returns the refresher's error so the caller can decide
+// whether to fall back to interactive re-login.
+func (c *Client) ForceRefresh(ctx context.Context) error {
+	return c.rpc.tryRefresh(ctx)
+}
+
 // NewUnauthenticatedRPC is used by `auth login` to call AdminLogin and
 // GetPublicConfig before any token has been issued.
 func NewUnauthenticatedRPC(apiAddress string, insecureSkipTLSVerify bool) *connectJSONWrapper {

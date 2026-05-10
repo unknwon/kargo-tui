@@ -3,9 +3,12 @@ package auth
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +18,29 @@ import (
 	"unknwon.dev/kargo-tui/internal/config"
 	"unknwon.dev/kargo-tui/internal/kargo"
 )
+
+// IDTokenExpiry returns the `exp` claim of a JWT-encoded id_token as a
+// Time. The token's signature is *not* verified — we're only consulting
+// our own saved token to decide whether it's worth using; the server is
+// the authority on actual validity. Returns ok=false for tokens that
+// aren't JWTs (opaque tokens, admin-account passwords) or that omit exp.
+func IDTokenExpiry(token string) (time.Time, bool) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return time.Time{}, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.Exp == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(claims.Exp, 0), true
+}
 
 // Refresher swaps an expired OIDC id_token for a fresh one using the saved
 // refresh_token, and persists the rotated tokens back to the config file so

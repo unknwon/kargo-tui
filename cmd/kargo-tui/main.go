@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/urfave/cli/v3"
@@ -59,6 +60,9 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	attachRefresher(client, active)
+	if err := primeToken(ctx, client, active); err != nil {
+		return err
+	}
 	project := cmd.String("project")
 	if project == "" {
 		project = active.Project
@@ -114,6 +118,49 @@ func attachRefresher(client *kargo.Client, c *config.Context) {
 	}
 	r := auth.NewRefresher(c.Name, c.InsecureSkipTLSVerify)
 	client.SetTokenRefresher(r.Refresh)
+}
+
+// primeToken inspects the saved id_token's `exp` claim and, depending on
+// how stale it is, refreshes proactively before launching the TUI:
+//
+//   - Already expired (or expires within 60s): refresh in the foreground
+//     so the user doesn't watch the first batch of RPCs eat 401s. If
+//     refresh fails — usually because the IdP revoked the refresh token
+//     — print an actionable message to stderr and exit. The user has to
+//     re-authenticate via `kargo-tui auth login <url>`; we can't drop
+//     into the SSO browser flow from here without already being inside
+//     the TUI's alt-screen, where stderr writes corrupt the view.
+//   - Token still good (or non-JWT, e.g. admin-token logins): kick the
+//     refresher off in the background. The next 401 (or the natural tick
+//     after the token expires mid-session) is now cheap because the
+//     Refresher's coalescing window has already pre-warmed the cache.
+//
+// No-op when no refresher is attached (no refresh_token saved).
+func primeToken(ctx context.Context, client *kargo.Client, active *config.Context) error {
+	if active == nil || active.RefreshToken == "" {
+		return nil
+	}
+	exp, ok := auth.IDTokenExpiry(active.BearerToken)
+	if ok && time.Until(exp) < 60*time.Second {
+		fmt.Fprintln(os.Stderr, "Saved session expired; refreshing…")
+		rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := client.ForceRefresh(rctx); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"Refresh failed: %v\n\nRe-authenticate with:\n  kargo-tui auth login %s\n",
+				err, active.APIAddress)
+			return fmt.Errorf("session expired and refresh failed")
+		}
+		return nil
+	}
+	// Background refresh: best-effort, errors are surfaced later by the
+	// usual 401-and-banner path if they matter.
+	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = client.ForceRefresh(bgCtx)
+	}()
+	return nil
 }
 
 // contextSwitcher returns the list of configured context names, a builder
