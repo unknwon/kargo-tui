@@ -253,3 +253,16 @@ func promoteCmd(c *kargo.Client, project, stage, freight string) tea.Cmd {
 		return msg
 	}
 }
+
+// promoteDownstreamCmd dispatches a PromoteDownstream call as a tea.Cmd.
+func promoteDownstreamCmd(c *kargo.Client, project, source, freight string) tea.Cmd {
+	return func() tea.Msg {
+		entries, err := c.PromoteDownstream(context.Background(), project, source, freight)
+		return promoteDownstreamResultMsg{
+			source:     source,
+			freight:    freight,
+			promotions: len(entries),
+			err:        err,
+		}
+	}
+}

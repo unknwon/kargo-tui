@@ -123,6 +123,15 @@ type promoteResultMsg struct {
 	err           error
 }
 
+// promoteDownstreamResultMsg carries the outcome of a PromoteDownstream
+// call (one source stage → every downstream that requested its freight).
+type promoteDownstreamResultMsg struct {
+	source     string
+	freight    string
+	promotions int // number of Promotion CRs the server created
+	err        error
+}
+
 // loadLogsCmd fetches Promotions and Events for the given stage.
 func loadLogsCmd(c *kargo.Client, project, stageName string) tea.Cmd {
 	return func() tea.Msg {

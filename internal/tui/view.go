@@ -89,7 +89,7 @@ func (m Model) View() tea.View {
 	}
 
 	help := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).
-		Render("d deploys · c controls · f freights · t tree · g graph · v details · l logs · D diff · P promote · o argo · s sort · y yank · p projects · C contexts · / filter · ? help · q quit")
+		Render("d deploys · c controls · f freights · t tree · g graph · v details · l logs · D diff · P promote · > downstream · o argo · s sort · y yank · p projects · C contexts · / filter · ? help · q quit")
 
 	bodyArea := body
 

@@ -28,6 +28,7 @@ func (m Model) helpView() tea.View {
 		{"Actions", "l", "logs (promotions + events) for selected stage"},
 		{"", "D", "diff current vs. candidate freight for selected stage"},
 		{"", "P", "promote freight to selected stage"},
+		{"", ">", "promote selected stage's freight to every downstream"},
 		{"", "o", "open Argo CD application in browser"},
 		{"", "s", "cycle sort: name / age / health / last-promo"},
 		{"", "y", "yank (copy) selected resource name to clipboard"},

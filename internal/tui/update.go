@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
@@ -143,6 +144,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case argoURLMsg:
 		m.argoBaseURL = string(msg)
 		m.refreshPanel()
+		return m, nil
+
+	case promoteDownstreamResultMsg:
+		if msg.err != nil {
+			m.yankedMessage = "promote-downstream failed: " + msg.err.Error()
+		} else if msg.promotions == 0 {
+			m.yankedMessage = "no eligible downstream stages for " + msg.source
+		} else {
+			m.yankedMessage = fmt.Sprintf("created %d downstream promotion(s) from %s", msg.promotions, msg.source)
+		}
+		m.yankedAt = time.Now()
+		if !m.loading {
+			m.loading = true
+			return m, tea.Batch(
+				loadDeploysCmd(m.client, m.project),
+				loadFreightsCmd(m.client, m.project),
+			)
+		}
 		return m, nil
 
 	case promoteResultMsg:
@@ -413,6 +432,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.openPromoteOverlay(s)
 			return m, nil
+		case ">":
+			// Promote the selected stage's currently-deployed freight to
+			// every downstream stage that requested it. No picker — the
+			// stage's current freight is the natural input.
+			s := m.selectedStage()
+			if s == nil {
+				return m, nil
+			}
+			if len(s.CurrentFreight) == 0 {
+				m.yankedMessage = "no current freight on " + s.Name + " to promote downstream"
+				m.yankedAt = time.Now()
+				return m, nil
+			}
+			fr := s.CurrentFreight[0]
+			m.yankedMessage = "promoting " + shortFreight(fr) + " downstream from " + s.Name + "…"
+			m.yankedAt = time.Now()
+			return m, promoteDownstreamCmd(m.client, m.project, s.Name, fr)
 		case "?":
 			m.showHelp = true
 			return m, nil
