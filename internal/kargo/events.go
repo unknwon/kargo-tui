@@ -146,9 +146,10 @@ func flattenPromotion(p *kargoapi.Promotion) PromotionEntry {
 	}
 }
 
-// metaTime extracts a plain time.Time from a metav1.Time value type. Returns
-// zero when the input is zero. The metav1.Time-as-pointer variants are
-// handled by the caller checking for nil first.
+// metaTime extracts a plain time.Time from a metav1.Time value or pointer.
+// Returns zero when the input is nil, the zero metav1.Time, or doesn't
+// expose UTC(). Safe to call with a nil *metav1.Time because that type's
+// IsZero method handles a nil receiver.
 func metaTime(t interface{ IsZero() bool }) time.Time {
 	if t == nil || t.IsZero() {
 		return time.Time{}

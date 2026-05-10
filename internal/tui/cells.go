@@ -258,7 +258,7 @@ func whenString(t time.Time) string {
 
 // whenStringApprox is whenString prefixed with "~" to mark the timestamp as
 // approximate (e.g. promotion-step times derived from the parent promotion's
-// start, since Kargo's Connect-RPC JSON elides per-step timestamps).
+// start when the controller hasn't recorded per-step timestamps yet).
 func whenStringApprox(t time.Time) string {
 	if t.IsZero() {
 		return lipgloss.NewStyle().Foreground(muted).Render("—")
@@ -268,8 +268,8 @@ func whenStringApprox(t time.Time) string {
 
 // stepWhen renders a promotion step's "<relative> ago (<UTC>)" timestamp,
 // preferring finished > started. Falls back to the parent promotion's start
-// time prefixed with "~" to mark it approximate, since Kargo's Connect-RPC
-// JSON transport currently emits every per-step timestamp as `{}`.
+// time prefixed with "~" to mark it approximate when the controller hasn't
+// stamped the step yet (e.g. step still queued, or older Kargo server).
 func stepWhen(s kargo.PromotionStep, fallback time.Time) string {
 	if !s.FinishedAt.IsZero() {
 		return whenString(s.FinishedAt)

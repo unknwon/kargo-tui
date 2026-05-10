@@ -125,7 +125,7 @@ type Model struct {
 	nsLoading     bool
 	nsExplicit    bool
 
-	// Context picker state. Populated when the user presses `N` to switch
+	// Context picker state. Populated when the user presses `C` to switch
 	// between configured Kargo instances. ctxBuilder is supplied by main and
 	// returns a fresh client + that context's default project for a chosen
 	// context name. ctxNames lists the available context names for display.

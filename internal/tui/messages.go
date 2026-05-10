@@ -96,9 +96,10 @@ type contextLoginMsg struct {
 type loginStatusMsg string
 
 // runContextLoginCmd invokes the supplied login callback on a goroutine.
-// The callback receives a `status` reporter so it can stream updates back
-// into the TUI via the supplied program reference. Final outcome is posted
-// as a contextLoginMsg.
+// The callback receives a `status` reporter that posts loginStatusMsg
+// updates back into the TUI via the `send` function (set up by main from
+// the running tea.Program). The final outcome is returned as a
+// contextLoginMsg.
 func runContextLoginCmd(
 	login func(ctx context.Context, url string, status func(string)) (string, error),
 	ctx context.Context,
@@ -111,11 +112,6 @@ func runContextLoginCmd(
 		return contextLoginMsg{name: name, err: err}
 	}
 }
-
-// contextLoginCanceledMsg is posted when the user dismisses an in-progress
-// SSO login from the TUI. It clears the loading flag and returns control to
-// the picker without ending the program.
-type contextLoginCanceledMsg struct{}
 
 // loadLogsCmd fetches Promotions and Events for the given stage.
 func loadLogsCmd(c *kargo.Client, project, stageName string) tea.Cmd {

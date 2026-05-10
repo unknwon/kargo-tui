@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -83,11 +81,6 @@ func (c *connectJSON) call(ctx context.Context, method string, req, out any) err
 	if resp.StatusCode/100 != 2 {
 		return parseConnectError(method, resp.StatusCode, respBody)
 	}
-	if dir := os.Getenv("KARGO_TUI_DUMP_DIR"); dir != "" {
-		_ = os.MkdirAll(dir, 0o755)
-		path := filepath.Join(dir, method+".json")
-		_ = os.WriteFile(path, respBody, 0o644)
-	}
 	if out == nil || len(respBody) == 0 {
 		return nil
 	}
@@ -133,10 +126,6 @@ func (c *connectJSON) callProto(ctx context.Context, method string, reqMsg, resp
 		// Connect's error envelope is JSON even on a proto request, so
 		// reuse the JSON parser rather than inventing a second one.
 		return parseConnectError(method, resp.StatusCode, respBody)
-	}
-	if dir := os.Getenv("KARGO_TUI_DUMP_DIR"); dir != "" {
-		_ = os.MkdirAll(dir, 0o755)
-		_ = os.WriteFile(filepath.Join(dir, method+".proto.bin"), respBody, 0o644)
 	}
 	if respMsg == nil || len(respBody) == 0 {
 		return nil

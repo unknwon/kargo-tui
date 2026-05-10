@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -52,19 +53,12 @@ func (m Model) updateContextPicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Login succeeded. Refresh the context list and switch to the new
 		// context straight away — that's almost always what the user
 		// wanted when they typed `+`.
-		if !contains(m.ctxNames, msg.name) {
+		if !slices.Contains(m.ctxNames, msg.name) {
 			m.ctxNames = append(m.ctxNames, msg.name)
 		}
 		m.ctxAdding = false
 		m.ctxURLInput.SetValue("")
 		return m.switchContext(msg.name)
-
-	case contextLoginCanceledMsg:
-		m.ctxLoggingIn = false
-		m.ctxLoginCancel = nil
-		// Stay on the add-form so the user can edit the URL or esc out.
-		m.ctxAdding = true
-		return m, nil
 
 	case tea.KeyPressMsg:
 		key := msg.String()
@@ -291,14 +285,3 @@ func (m Model) contextPickerView() tea.View {
 	return v
 }
 
-// contains is a tiny helper since the standard library's slices.Contains
-// requires a comparable element type and an extra import; using it inline
-// here keeps the picker file self-contained.
-func contains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
-}
