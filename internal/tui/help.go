@@ -7,45 +7,55 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// helpView renders the keybindings overlay. The body lives inside a
-// scrollable viewport so it stays usable on small terminals.
-func (m Model) helpView() tea.View {
-	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
-	keyStyle := lipgloss.NewStyle().Foreground(selected).Bold(true).Background(bg)
-	descStyle := lipgloss.NewStyle().Foreground(normal).Background(bg)
-	hintStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
-	sectStyle := lipgloss.NewStyle().Foreground(progressing).Bold(true).Background(bg)
-
-	bindings := []struct{ section, key, desc string }{
+// helpBindings returns the static binding table rendered in the help
+// overlay. Lives outside helpView so prepareHelpViewport can format
+// it from Update.
+func helpBindings() []struct{ section, key, desc string } {
+	return []struct{ section, key, desc string }{
 		{"Views", "d", "deploys"},
 		{"", "c", "controls"},
 		{"", "f", "freights"},
+		{"", "t", "tree (DAG of stages, expand/collapse with +/-)"},
+		{"", "g", "graph (layered DAG with spatial cursor)"},
 		{"", "p", "switch project"},
 		{"", "v", "toggle full-screen details"},
 		{"", "?", "show this help overlay"},
 		{"Actions", "l", "logs (promotions + events) for selected stage"},
 		{"", "D", "diff current vs. candidate freight for selected stage"},
+		{"", "P", "promote freight to selected stage"},
+		{"", ">", "promote selected stage's freight to every downstream"},
 		{"", "o", "open Argo CD application in browser"},
 		{"", "s", "cycle sort: name / age / health / last-promo"},
 		{"", "y", "yank (copy) selected resource name to clipboard"},
 		{"Navigation", "↑/k", "move cursor up"},
 		{"", "↓/j", "move cursor down"},
 		{"", "wheel", "mouse wheel scrolls cursor / overlay / details"},
-		{"", "←", "scroll columns left"},
-		{"", "→", "scroll columns right"},
-		{"", "pgup/pgdn", "page details panel (full-screen mode)"},
-		{"", "g/G", "jump to top / bottom of details panel (full-screen mode)"},
+		{"", "←", "scroll columns left (table) / collapse node (tree)"},
+		{"", "→", "scroll columns right (table) / expand node (tree)"},
+		{"", "+/-", "expand / collapse tree node"},
+		{"", "enter", "apply filter / toggle tree node"},
+		{"", "pgup/pgdn", "page details panel (full-screen mode) / tree"},
+		{"", "home/end", "jump to top / bottom"},
 		{"Filtering", "/", "start filtering (per list)"},
-		{"", "enter", "apply filter"},
 		{"", "esc", "dismiss details/overlay, then clear filter"},
 		{"Other", "r", "refresh now"},
 		{"", "q / ctrl+c", "quit"},
 		{"Contexts", "C", "switch Kargo context (then press + to log in to a new URL)"},
 	}
+}
+
+// prepareHelpViewport sizes the help viewport and loads its content
+// into m.helpVP. Called from Update when the help overlay opens or the
+// terminal resizes — the mutation persists in the reducer so j/k scroll
+// keys can move past their no-op state.
+func (m *Model) prepareHelpViewport() {
+	keyStyle := lipgloss.NewStyle().Foreground(selected).Bold(true).Background(bg)
+	descStyle := lipgloss.NewStyle().Foreground(normal).Background(bg)
+	sectStyle := lipgloss.NewStyle().Foreground(progressing).Bold(true).Background(bg)
 
 	keyW := 12
 	var lines []string
-	for _, b := range bindings {
+	for _, b := range helpBindings() {
 		if b.section != "" {
 			lines = append(lines, "")
 			lines = append(lines, sectStyle.Render(b.section))
@@ -65,9 +75,17 @@ func (m Model) helpView() tea.View {
 	m.helpVP.SetWidth(w - 4)
 	m.helpVP.SetHeight(h - 4)
 	m.helpVP.SetContent(strings.Join(lines, "\n"))
+}
+
+// helpView renders the keybindings overlay. The viewport content is
+// loaded by prepareHelpViewport from Update; here we just compose the
+// frame around m.helpVP.View().
+func (m Model) helpView() tea.View {
+	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
+	hintStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
 
 	header := titleStyle.Render("Keybindings")
-	hint := hintStyle.Render("j/k scroll · g/G top/bottom · esc/? dismiss")
+	hint := hintStyle.Render("j/k scroll · home/end top/bottom · esc/? dismiss")
 	body := lipgloss.JoinVertical(lipgloss.Left, header, "", m.helpVP.View(), "", hint)
 
 	box := lipgloss.NewStyle().

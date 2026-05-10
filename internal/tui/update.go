@@ -1,8 +1,13 @@
 package tui
 
 import (
+	"fmt"
+	"time"
+
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+
+	"unknwon.dev/kargo-tui/internal/kargo"
 )
 
 // layoutDims returns (tableWidth, panelWidth). Panel is shown only when
@@ -34,6 +39,7 @@ func (m Model) layoutDims() (int, int) {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if sm, ok := msg.(SetSendMsg); ok {
 		m.ctxSend = sm.Send
+		m.restartStageWatch()
 		return m, nil
 	}
 
@@ -82,6 +88,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.overlayVP.SetHeight(oh)
 		m.helpVP.SetWidth(ow)
 		m.helpVP.SetHeight(oh)
+		// Reload help content so its viewport's max-Y-offset reflects
+		// the new size — without this, scroll keys are no-ops after
+		// resize until the help is re-opened.
+		if m.showHelp {
+			m.prepareHelpViewport()
+		}
 		m.refreshPanel()
 		return m, nil
 
@@ -142,6 +154,68 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.argoBaseURL = string(msg)
 		m.refreshPanel()
 		return m, nil
+
+	case stageEventMsg:
+		m.deploys = kargo.MergeStageEvent(m.deploys, kargo.StageEvent(msg))
+		m.refreshRows()
+		m.refreshPanel()
+		return m, nil
+
+	case stageWatchEndedMsg:
+		// Stream closed (server hangup, network blip, or proxy stripped
+		// the streaming response). Tick-based refresh is still running,
+		// so the UI keeps working — surface a quiet status note.
+		if msg.err != nil {
+			m.yankedMessage = "stage watch ended: " + msg.err.Error()
+			m.yankedAt = time.Now()
+		}
+		m.stageWatchCancel = nil
+		return m, nil
+
+	case promoteDownstreamResultMsg:
+		if msg.err != nil {
+			m.yankedMessage = "promote-downstream failed: " + msg.err.Error()
+		} else if msg.promotions == 0 {
+			m.yankedMessage = "no eligible downstream stages for " + msg.source
+		} else {
+			m.yankedMessage = fmt.Sprintf("created %d downstream promotion(s) from %s", msg.promotions, msg.source)
+		}
+		m.yankedAt = time.Now()
+		// Force an immediate data refresh so the new promotion appears
+		// without waiting for the next tick. We dispatch even when a
+		// tick fetch is already in flight: the in-flight one was issued
+		// before the promotion existed, so its data won't include it.
+		m.loading = true
+		return m, tea.Batch(
+			loadDeploysCmd(m.client, m.project),
+			loadFreightsCmd(m.client, m.project),
+		)
+
+	case promoteResultMsg:
+		// The overlay may have been dismissed before the response landed
+		// (the user hit esc on the submitting screen). We still record
+		// the outcome as a transient yank-style status so they see it.
+		if msg.err != nil {
+			m.promoteError = msg.err
+			m.yankedMessage = "promote failed: " + msg.err.Error()
+		} else {
+			m.promoteResult = msg.promotionName
+			m.yankedMessage = "promotion created: " + msg.promotionName
+		}
+		m.yankedAt = time.Now()
+		if m.overlay == overlayPromote {
+			m.promoteStep = promoteDone
+		}
+		// Force an immediate data refresh so the new promotion appears in
+		// the deploy/tree views without waiting for the next tick. We
+		// dispatch even when a tick fetch is in flight — that one was
+		// issued before the promotion existed, so its data won't have
+		// it.
+		m.loading = true
+		return m, tea.Batch(
+			loadDeploysCmd(m.client, m.project),
+			loadFreightsCmd(m.client, m.project),
+		)
 
 	case tea.MouseWheelMsg:
 		// Mouse wheel scrolls whichever surface is currently visible:
@@ -216,14 +290,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "pgdown", "pgdn", " ":
 				m.helpVP.PageDown()
 				return m, nil
-			case "home", "g":
+			case "home":
 				m.helpVP.GotoTop()
 				return m, nil
-			case "end", "G":
+			case "end":
 				m.helpVP.GotoBottom()
 				return m, nil
 			}
 			return m, nil
+		}
+
+		// Promote overlay: distinct flow (pick → confirm → submit → done).
+		if m.overlay == overlayPromote {
+			return m.updatePromoteOverlay(key)
 		}
 
 		// Logs/Diff overlay: scroll & dismiss only.
@@ -247,10 +326,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "pgdown", "pgdn", " ":
 				m.overlayVP.PageDown()
 				return m, nil
-			case "home", "g":
+			case "home":
 				m.overlayVP.GotoTop()
 				return m, nil
-			case "end", "G":
+			case "end":
 				m.overlayVP.GotoBottom()
 				return m, nil
 			}
@@ -292,11 +371,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "left":
+			// Graph and tree views consume arrow keys themselves
+			// (spatial cursor / collapse). Tables get column scroll.
+			if m.view == viewGraph {
+				m.moveGraphCursor("left")
+				return m, nil
+			}
+			if m.view == viewTree {
+				m.setTreeNodeExpansion(false)
+				return m, nil
+			}
 			m.scrollLeft()
 			return m, nil
 		case "right":
+			if m.view == viewGraph {
+				m.moveGraphCursor("right")
+				return m, nil
+			}
+			if m.view == viewTree {
+				m.setTreeNodeExpansion(true)
+				return m, nil
+			}
 			m.scrollRight()
 			return m, nil
+		case "up", "k":
+			if m.view == viewGraph {
+				m.moveGraphCursor("up")
+				return m, nil
+			}
+			if m.view == viewTree {
+				m.moveTreeCursor(-1)
+				return m, nil
+			}
+		case "down", "j":
+			if m.view == viewGraph {
+				m.moveGraphCursor("down")
+				return m, nil
+			}
+			if m.view == viewTree {
+				m.moveTreeCursor(1)
+				return m, nil
+			}
 		case "p":
 			// Re-open the project picker. nsExplicit prevents the
 			// auto-select branch from short-circuiting the picker when only
@@ -326,8 +441,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			m.setView(viewControlFlow)
 			return m, nil
+		case "t":
+			m.setView(viewTree)
+			return m, nil
+		case "g":
+			m.setView(viewGraph)
+			return m, nil
+		case "P":
+			s := m.selectedStage()
+			if s == nil {
+				return m, nil
+			}
+			m.openPromoteOverlay(s)
+			return m, nil
+		case ">":
+			// Promote the selected stage's currently-deployed freight to
+			// every downstream stage that requested it. No picker — the
+			// stage's current freight is the natural input.
+			s := m.selectedStage()
+			if s == nil {
+				return m, nil
+			}
+			if len(s.CurrentFreight) == 0 {
+				m.yankedMessage = "no current freight on " + s.Name + " to promote downstream"
+				m.yankedAt = time.Now()
+				return m, nil
+			}
+			fr := s.CurrentFreight[0]
+			m.yankedMessage = "promoting " + shortFreight(fr) + " downstream from " + s.Name + "…"
+			m.yankedAt = time.Now()
+			return m, promoteDownstreamCmd(m.client, m.project, s.Name, fr)
 		case "?":
 			m.showHelp = true
+			m.prepareHelpViewport()
 			return m, nil
 		case "s":
 			m.cycleSort()
@@ -340,7 +486,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openArgoCDForSelection()
 			return m, nil
 		case "l":
-			if m.view == viewDeploys || m.view == viewControlFlow {
+			if m.view == viewDeploys || m.view == viewControlFlow || m.view == viewTree || m.view == viewGraph {
 				if s := m.selectedStage(); s != nil {
 					m.openLogsOverlay(s.Name)
 					return m, loadLogsCmd(m.client, m.project, s.Name)
@@ -348,8 +494,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "D":
-			if m.view == viewDeploys || m.view == viewControlFlow {
+			if m.view == viewDeploys || m.view == viewControlFlow || m.view == viewTree || m.view == viewGraph {
 				m.openDiffOverlay()
+				return m, nil
+			}
+			return m, nil
+		}
+
+		// Graph view consumes any other unhandled key so it doesn't leak
+		// into the hidden table dispatch below. Arrow keys are handled
+		// in the top-level switch; logs / promote / diff use l / P / D
+		// like every other view.
+		if m.view == viewGraph {
+			return m, nil
+		}
+
+		// Tree view owns its own page/expand/toggle keys. Arrow + j/k
+		// nav was already handled in the top-level switch above.
+		if m.view == viewTree {
+			switch key {
+			case "pgup":
+				m.moveTreeCursor(-10)
+				return m, nil
+			case "pgdown", "pgdn", " ":
+				m.moveTreeCursor(10)
+				return m, nil
+			case "home":
+				m.treeCursor = 0
+				return m, nil
+			case "end":
+				if len(m.treeNodes) > 0 {
+					m.treeCursor = len(m.treeNodes) - 1
+				}
+				return m, nil
+			case "+":
+				m.setTreeNodeExpansion(true)
+				return m, nil
+			case "-":
+				m.setTreeNodeExpansion(false)
+				return m, nil
+			case "enter":
+				m.toggleTreeNode()
 				return m, nil
 			}
 			return m, nil
@@ -371,10 +556,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "pgdown", "pgdn", " ":
 				m.panelVP.PageDown()
 				return m, nil
-			case "home", "g":
+			case "home":
 				m.panelVP.GotoTop()
 				return m, nil
-			case "end", "G":
+			case "end":
 				m.panelVP.GotoBottom()
 				return m, nil
 			}

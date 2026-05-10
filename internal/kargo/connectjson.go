@@ -18,16 +18,27 @@ import (
 // Connect-RPC service. The full URL is <baseURL><servicePath><MethodName>.
 const kargoServicePath = "/akuity.io.kargo.service.v1alpha1.KargoService/"
 
-// connectJSON speaks Connect-RPC over HTTP+JSON. Akuity-hosted Kargo (and
-// Kargo's own server) supports this content type natively — no protobuf
-// codec is required, which sidesteps the v2-protobuf-descriptor init panic
-// in the generated KargoService client. We POST to
-// <baseURL>/akuity.io.kargo.service.v1alpha1.KargoService/<Method> with a
-// JSON body and decode the JSON response.
+// connectJSON is the hand-rolled Connect-RPC transport used to talk to
+// Kargo without importing the upstream-generated client (which panics
+// at init() because of v2-protobuf-descriptor mismatches with the
+// gogo-typed corev1 messages it embeds). The transport speaks three
+// flavours of Connect on the same endpoint family
+// (<baseURL>/akuity.io.kargo.service.v1alpha1.KargoService/<Method>):
+//
+//   - call() — unary application/json, used for projects, events, and
+//     other RPCs that don't carry metav1.Time fields.
+//   - callProto() — unary application/proto, used for stages and
+//     promotions where the JSON encoder elides metav1.Time to "{}".
+//   - callServerStream() — application/connect+proto, used for
+//     WatchStages-style server-streaming RPCs.
 type connectJSON struct {
 	baseURL string
 	token   string
 	http    *http.Client
+	// streamHTTP is a separate client without a request timeout, used
+	// for long-lived server-streaming RPCs (WatchStages etc.). Built
+	// lazily by streamClient().
+	streamHTTP *http.Client
 }
 
 // newConnectJSON builds a hand-rolled Kargo Connect-RPC-over-JSON client.

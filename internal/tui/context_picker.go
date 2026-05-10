@@ -190,6 +190,7 @@ func (m Model) switchContext(name string) (Model, tea.Cmd) {
 		m.phase = phaseRunning
 		m.refreshRows()
 		m.refreshPanel()
+		m.restartStageWatch()
 		m.loading = true
 		return m, tea.Batch(
 			loadDeploysCmd(client, defaultProject),

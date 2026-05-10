@@ -52,7 +52,7 @@ func (m Model) composePanelLines(innerW int) []string {
 
 	var lines []string
 	switch m.view {
-	case viewDeploys, viewControlFlow:
+	case viewDeploys, viewControlFlow, viewTree, viewGraph:
 		s := m.selectedStage()
 		if s == nil {
 			return []string{keyStyle.Render("no selection")}
@@ -282,6 +282,12 @@ func (m *Model) renderPanel(width, height int) string {
 }
 
 func (m Model) selectedStage() *kargo.Stage {
+	if m.view == viewTree {
+		return m.selectedTreeStage()
+	}
+	if m.view == viewGraph {
+		return m.selectedGraphStage()
+	}
 	i := m.deploysTable.Cursor()
 	if i < 0 || i >= len(m.visibleDeploys) {
 		return nil

@@ -26,6 +26,10 @@ type Stage struct {
 	ArgoCDApps     []ArgoCDAppRef
 	Created        time.Time
 	Labels         map[string]string
+	// Upstreams is the deduplicated set of upstream stage names referenced
+	// by Spec.RequestedFreight[].Sources.Stages — used to build the tree
+	// view's parent/child relationships.
+	Upstreams []string
 }
 
 // ListStages loads all Stages in the given project via the Kargo API server.
@@ -112,6 +116,8 @@ func flattenStage(s *kargoapi.Stage) Stage {
 		}
 	}
 
+	upstreams := upstreamStages(s)
+
 	return Stage{
 		Name:           s.Name,
 		Namespace:      s.Namespace,
@@ -127,5 +133,28 @@ func flattenStage(s *kargoapi.Stage) Stage {
 		ArgoCDApps:     argoApps,
 		Created:        s.CreationTimestamp.Time,
 		Labels:         s.Labels,
+		Upstreams:      upstreams,
 	}
+}
+
+// upstreamStages collects the deduplicated upstream stage names from every
+// FreightRequest on the stage spec. A stage with no upstream Stages entries
+// (e.g. one that pulls Direct from a Warehouse) returns an empty slice.
+func upstreamStages(s *kargoapi.Stage) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, req := range s.Spec.RequestedFreight {
+		for _, name := range req.Sources.Stages {
+			if name == "" {
+				continue
+			}
+			if _, dup := seen[name]; dup {
+				continue
+			}
+			seen[name] = struct{}{}
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

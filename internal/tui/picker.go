@@ -122,6 +122,7 @@ func (m Model) startWithProject(p string) (Model, tea.Cmd) {
 		m.freightsTable.SetWidth(m.width)
 	}
 	m.refreshPanel()
+	m.restartStageWatch()
 	m.loading = true
 	return m, tea.Batch(
 		loadDeploysCmd(m.client, p),

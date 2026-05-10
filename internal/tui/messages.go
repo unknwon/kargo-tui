@@ -113,6 +113,79 @@ func runContextLoginCmd(
 	}
 }
 
+// stageEventMsg carries one StageEvent from the WatchStages stream into
+// the model. Folded into m.deploys via kargo.MergeStageEvent and
+// triggers a refreshRows so the table/tree/graph reflect the change
+// without waiting for the next 5s tick.
+type stageEventMsg kargo.StageEvent
+
+// stageWatchEndedMsg signals that the WatchStages goroutine exited
+// (clean close or error). Carries the error (nil on clean close); the
+// model uses this to log a warning and let the tick-based refresh
+// continue carrying the load.
+type stageWatchEndedMsg struct{ err error }
+
+// promoteResultMsg carries the outcome of a PromoteToStage call. Posted by
+// promoteCmd; consumed by the promote overlay's submit step.
+type promoteResultMsg struct {
+	stage         string
+	freight       string
+	promotionName string
+	phase         string
+	err           error
+}
+
+// promoteDownstreamResultMsg carries the outcome of a PromoteDownstream
+// call (one source stage → every downstream that requested its freight).
+type promoteDownstreamResultMsg struct {
+	source     string
+	freight    string
+	promotions int // number of Promotion CRs the server created
+	err        error
+}
+
+// startStageWatchGoroutine opens a WatchStages stream against the given
+// project and pipes events back into the TUI via the supplied send.
+// The returned CancelFunc stops the watch (called on project switch /
+// context switch / program exit). Returns a no-op cancel and starts
+// nothing when any of c, project, or send is missing — without all
+// three the watch has nothing to call, no project to scope to, or no
+// way to deliver events.
+func startStageWatchGoroutine(
+	c *kargo.Client,
+	project string,
+	send func(tea.Msg),
+) context.CancelFunc {
+	if send == nil || c == nil || project == "" {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		events, errCh := c.WatchStages(ctx, project)
+		for {
+			select {
+			case ev, ok := <-events:
+				if !ok {
+					// Stream ended. WatchStages closes errCh before
+					// closing events, so by the time we get here the
+					// error (if any) has already been buffered. A clean
+					// close yields the zero value with more=false.
+					var endErr error
+					if e, more := <-errCh; more {
+						endErr = e
+					}
+					send(stageWatchEndedMsg{err: endErr})
+					return
+				}
+				send(stageEventMsg(ev))
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return cancel
+}
+
 // loadLogsCmd fetches Promotions and Events for the given stage.
 func loadLogsCmd(c *kargo.Client, project, stageName string) tea.Cmd {
 	return func() tea.Msg {
