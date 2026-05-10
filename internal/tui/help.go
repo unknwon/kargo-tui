@@ -21,6 +21,7 @@ func (m Model) helpView() tea.View {
 		{"", "c", "controls"},
 		{"", "f", "freights"},
 		{"", "t", "tree (DAG of stages, expand/collapse with +/-)"},
+		{"", "g", "graph (layered DAG with spatial cursor)"},
 		{"", "p", "switch project"},
 		{"", "v", "toggle full-screen details"},
 		{"", "?", "show this help overlay"},

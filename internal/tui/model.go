@@ -30,6 +30,7 @@ const (
 	viewFreights
 	viewControlFlow
 	viewTree
+	viewGraph
 )
 
 type phase int
@@ -152,6 +153,11 @@ type Model struct {
 	treeNodes    []treeNode
 	treeCursor   int
 	treeExpanded map[string]bool
+
+	// Graph view state. graphLayout is recomputed on each data refresh
+	// (Sugiyama layered DAG); graphCursor indexes into graphLayout.nodes.
+	graphLayout graphLayout
+	graphCursor int
 
 	// Promote overlay state.
 	promoteStage      string // target stage name

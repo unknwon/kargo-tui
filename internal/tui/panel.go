@@ -285,6 +285,9 @@ func (m Model) selectedStage() *kargo.Stage {
 	if m.view == viewTree {
 		return m.selectedTreeStage()
 	}
+	if m.view == viewGraph {
+		return m.selectedGraphStage()
+	}
 	i := m.deploysTable.Cursor()
 	if i < 0 || i >= len(m.visibleDeploys) {
 		return nil

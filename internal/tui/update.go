@@ -362,6 +362,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "t":
 			m.setView(viewTree)
 			return m, nil
+		case "g":
+			// Top-level `g` opens the graph view. In detailsOnly the
+			// `g` key still goes to the panel-top scroll handler below.
+			if !m.detailsOnly {
+				m.setView(viewGraph)
+				return m, nil
+			}
 		case "P":
 			s := m.selectedStage()
 			if s == nil {
@@ -383,7 +390,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openArgoCDForSelection()
 			return m, nil
 		case "l":
-			if m.view == viewDeploys || m.view == viewControlFlow || m.view == viewTree {
+			if m.view == viewDeploys || m.view == viewControlFlow || m.view == viewTree || m.view == viewGraph {
 				if s := m.selectedStage(); s != nil {
 					m.openLogsOverlay(s.Name)
 					return m, loadLogsCmd(m.client, m.project, s.Name)
@@ -391,8 +398,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "D":
-			if m.view == viewDeploys || m.view == viewControlFlow || m.view == viewTree {
+			if m.view == viewDeploys || m.view == viewControlFlow || m.view == viewTree || m.view == viewGraph {
 				m.openDiffOverlay()
+				return m, nil
+			}
+			return m, nil
+		}
+
+		// Graph view: arrow keys move the cursor along edges/siblings,
+		// enter opens the logs overlay for the selected node.
+		if m.view == viewGraph {
+			switch key {
+			case "left":
+				m.moveGraphCursor("left")
+				return m, nil
+			case "right":
+				m.moveGraphCursor("right")
+				return m, nil
+			case "up", "k":
+				m.moveGraphCursor("up")
+				return m, nil
+			case "down", "j":
+				m.moveGraphCursor("down")
+				return m, nil
+			case "enter":
+				if s := m.selectedStage(); s != nil {
+					m.openLogsOverlay(s.Name)
+					return m, loadLogsCmd(m.client, m.project, s.Name)
+				}
 				return m, nil
 			}
 			return m, nil

@@ -115,9 +115,10 @@ func maxColOffset(total int) int {
 func (m *Model) refreshRows() {
 	q := strings.ToLower(strings.TrimSpace(m.filter.Value()))
 
-	// The tree needs no filter/sort/column logic — just rebuild from
-	// m.deploys whenever the source data or view changes.
+	// The tree and graph views need no filter/sort/column logic — just
+	// rebuild them from m.deploys whenever the source data changes.
 	m.rebuildTree()
+	m.rebuildGraph()
 
 	switch m.view {
 	case viewDeploys, viewControlFlow:
