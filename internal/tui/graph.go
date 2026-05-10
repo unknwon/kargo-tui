@@ -28,18 +28,28 @@ type graphLayout struct {
 }
 
 type graphNode struct {
-	Stage *kargo.Stage
-	Layer int // 0-based column
-	Slot  int // 0-based row within layer
-	X, Y  int // top-left cell of the node box
-	// Dummy nodes carry no Stage; they exist purely so multi-layer edges
-	// can be routed as a chain of single-layer segments. They aren't drawn
-	// or selectable.
-	Dummy bool
+	Stage  *kargo.Stage
+	Layer  int // 0-based column
+	Slot   int // 0-based row within layer
+	X, Y   int // top-left cell of the node box
+	W, H   int // box dimensions (varies per node so each fits its rows)
+	Rows   []nodeRow
+	Dummy  bool
 	// LongEdge identifies which original edge a dummy node belongs to,
 	// so the segment renderer can colour them consistently when the
 	// cursor highlights an edge.
 	LongEdge int
+}
+
+// nodeRow is one "key: value" line inside a stage box. ValueColor of
+// nil renders the value in normal/muted; a non-nil colour overrides
+// (used for state cells like Health/LastPromo so they keep their
+// semantic colour from the deploy list).
+type nodeRow struct {
+	Key        string
+	Value      string
+	ValueColor color.Color // nil → normal foreground
+	ValueBold  bool
 }
 
 type graphEdge struct {
@@ -62,12 +72,137 @@ type graphCfg struct {
 
 func defaultGraphCfg() graphCfg {
 	return graphCfg{
-		NodeW:   22, // room for words like "OutOfSync" + freight short SHA
-		NodeH:   6,  // top border + name + status word + freight + age/shard + bottom border
+		NodeW:   28, // wide enough for "Argo: Healthy/Synced" lines
+		NodeH:   0,  // unused — box height now derives from row count
 		ColGap:  6,
 		RowGap:  1,
 		HMargin: 1,
 		VMargin: 0,
+	}
+}
+
+// buildNodeRows produces the key/value lines a stage box should show,
+// mirroring the deploy list's columns. ValueColor is set on rows whose
+// value carries a semantic state colour (Health, Last Promo, Argo,
+// Sync) so the box still reads "where the problem is" at a glance.
+func buildNodeRows(s *kargo.Stage, m Model) []nodeRow {
+	rows := []nodeRow{
+		{Key: "Health", Value: stageHealthLabel(s.Health), ValueColor: stageHealthColor(s.Health), ValueBold: true},
+	}
+	if s.IsControlFlow {
+		rows = append(rows, nodeRow{Key: "Argo", Value: "control-flow", ValueColor: progressing})
+	} else {
+		ah, as := worstArgo(s.ArgoCDApps)
+		if ah == "" && as == "" && len(s.ArgoCDApps) == 0 {
+			rows = append(rows, nodeRow{Key: "Argo", Value: "—", ValueColor: muted})
+		} else {
+			rows = append(rows,
+				nodeRow{Key: "Argo", Value: argoLabel(ah), ValueColor: argoHealthColorVal(ah)},
+				nodeRow{Key: "Sync", Value: argoLabel(as), ValueColor: argoSyncColorVal(as)},
+			)
+		}
+	}
+	rows = append(rows, nodeRow{Key: "Promo", Value: promoLabel(s.LastPromo), ValueColor: promoColorVal(s.LastPromo)})
+	freightVal := "—"
+	freightColor := color.Color(muted)
+	if len(s.CurrentFreight) > 0 {
+		freightVal = shortFreight(s.CurrentFreight[0])
+		if a := m.aliasOf(s.CurrentFreight[0]); a != "" {
+			freightVal += " " + a
+		}
+		freightColor = nil
+	} else if isFreightName(s.FreightSummary) {
+		freightVal = shortFreight(s.FreightSummary)
+		freightColor = nil
+	} else if s.FreightSummary != "" {
+		freightVal = s.FreightSummary
+		freightColor = nil
+	}
+	rows = append(rows, nodeRow{Key: "Freight", Value: freightVal, ValueColor: freightColor})
+	var age string
+	switch {
+	case !s.LastPromoAt.IsZero():
+		age = ageString(s.LastPromoAt) + " ago"
+	case !s.Created.IsZero():
+		age = ageString(s.Created) + " ago"
+	default:
+		age = "—"
+	}
+	rows = append(rows, nodeRow{Key: "Age", Value: age, ValueColor: muted})
+	if s.Shard != "" {
+		rows = append(rows, nodeRow{Key: "Shard", Value: s.Shard, ValueColor: muted})
+	}
+	return rows
+}
+
+func stageHealthLabel(h string) string {
+	if h == "" {
+		return "—"
+	}
+	return h
+}
+
+func stageHealthColor(h string) color.Color {
+	switch h {
+	case "Healthy":
+		return healthy
+	case "Unhealthy":
+		return degraded
+	case "Progressing":
+		return progressing
+	default:
+		return muted
+	}
+}
+
+func argoLabel(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}
+
+func argoHealthColorVal(h string) color.Color {
+	switch h {
+	case "Healthy":
+		return healthy
+	case "Progressing", "Suspended":
+		return progressing
+	case "Degraded", "Missing":
+		return degraded
+	default:
+		return muted
+	}
+}
+
+func argoSyncColorVal(s string) color.Color {
+	switch s {
+	case "Synced":
+		return healthy
+	case "OutOfSync":
+		return degraded
+	default:
+		return muted
+	}
+}
+
+func promoLabel(p string) string {
+	if p == "" {
+		return "—"
+	}
+	return p
+}
+
+func promoColorVal(p string) color.Color {
+	switch p {
+	case "Succeeded":
+		return healthy
+	case "Failed", "Errored", "Aborted":
+		return degraded
+	case "Running", "Pending":
+		return progressing
+	default:
+		return muted
 	}
 }
 
@@ -79,7 +214,7 @@ func defaultGraphCfg() graphCfg {
 //     minimise edge crossings — one pass is good enough for the small
 //     DAGs Kargo projects produce.
 //  3. Cell coordinates: (layer * (NodeW+ColGap), slot * (NodeH+RowGap)).
-func layoutGraph(stages []kargo.Stage, cfg graphCfg) graphLayout {
+func layoutGraph(stages []kargo.Stage, cfg graphCfg, m Model) graphLayout {
 	if cfg.NodeW == 0 {
 		cfg = defaultGraphCfg()
 	}
@@ -250,27 +385,69 @@ func layoutGraph(stages []kargo.Stage, cfg graphCfg) graphLayout {
 		}
 	}
 
-	// Materialise nodes with cell coordinates. Dummies use the same
-	// box dimensions for layout but render as nothing — they simply
-	// reserve a slot that subsequent edge segments can route through.
+	// Per-node row data + height. Dummies are 1 row tall (the routing
+	// line passes through their middle). Real nodes size to fit the
+	// rows buildNodeRows produces.
+	rowsForNode := make(map[string][]nodeRow, len(stages))
+	heightFor := func(name string) int {
+		if dummyNames[name] {
+			return 1
+		}
+		return 2 + len(rowsForNode[name]) // top border + rows + bottom border
+	}
+	for _, s := range stages {
+		stage := byName[s.Name]
+		rowsForNode[s.Name] = buildNodeRows(stage, m)
+	}
+
+	// Per-slot row height = max box height across all layers for that
+	// slot. Keeps boxes in the same row visually aligned.
+	maxSlot := 0
+	for _, ns := range byLayer {
+		if len(ns) > maxSlot {
+			maxSlot = len(ns)
+		}
+	}
+	slotH := make([]int, maxSlot)
+	for _, layerNodes := range byLayer {
+		for slotIdx, name := range layerNodes {
+			h := heightFor(name)
+			if h > slotH[slotIdx] {
+				slotH[slotIdx] = h
+			}
+		}
+	}
+	// Y offset per slot (cumulative height + RowGap between slots).
+	slotY := make([]int, maxSlot)
+	cum := cfg.VMargin
+	for i := 0; i < maxSlot; i++ {
+		slotY[i] = cum
+		cum += slotH[i] + cfg.RowGap
+	}
+
+	// Materialise nodes. Box width is uniform (cfg.NodeW); box height is
+	// per-node so each box hugs its content. Y is the slot's top edge.
 	nodes := make([]graphNode, 0, len(stages)+len(dummyNames))
 	idxByName := make(map[string]int, len(stages)+len(dummyNames))
 	for l := 0; l <= maxLayer; l++ {
 		for s, name := range byLayer[l] {
 			x := cfg.HMargin + l*(cfg.NodeW+cfg.ColGap)
-			y := cfg.VMargin + s*(cfg.NodeH+cfg.RowGap)
+			y := slotY[s]
 			idxByName[name] = len(nodes)
 			node := graphNode{
 				Layer: l,
 				Slot:  s,
 				X:     x,
 				Y:     y,
+				W:     cfg.NodeW,
+				H:     heightFor(name),
 			}
 			if dummyNames[name] {
 				node.Dummy = true
 				node.LongEdge = dummyOrigEdge[name]
 			} else {
 				node.Stage = byName[name]
+				node.Rows = rowsForNode[name]
 			}
 			nodes = append(nodes, node)
 		}
@@ -288,20 +465,14 @@ func layoutGraph(stages []kargo.Stage, cfg graphCfg) graphLayout {
 		edges = append(edges, graphEdge{From: fi, To: ti, Original: origEdgeOf(s)})
 	}
 
-	// Total canvas size.
+	// Total canvas size. Height already accounted for via slotY/cum.
 	width := cfg.HMargin
 	if maxLayer >= 0 {
 		width += (maxLayer+1)*cfg.NodeW + maxLayer*cfg.ColGap
 	}
-	maxSlot := 0
-	for _, ns := range byLayer {
-		if len(ns) > maxSlot {
-			maxSlot = len(ns)
-		}
-	}
-	height := cfg.VMargin
-	if maxSlot > 0 {
-		height += maxSlot*cfg.NodeH + (maxSlot-1)*cfg.RowGap
+	height := cum
+	if maxSlot == 0 {
+		height = cfg.VMargin
 	}
 
 	return graphLayout{
@@ -442,10 +613,10 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int, m Model) string {
 		if e.Original == highlightedOrig && highlightedOrig != -1 {
 			style = cursorEdgeStyle
 		}
-		startX := from.X + g.cfg.NodeW
-		startY := from.Y + g.cfg.NodeH/2
+		startX := from.X + from.W
+		startY := from.Y + from.H/2
 		endX := to.X - 1
-		endY := to.Y + g.cfg.NodeH/2
+		endY := to.Y + to.H/2
 		// When the source is a dummy, "right side" is the centre of the
 		// dummy's reserved slot — there's no box edge to paint outside
 		// of, so start one cell into the gutter.
@@ -453,9 +624,9 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int, m Model) string {
 			startX = from.X
 		}
 		if to.Dummy {
-			endX = to.X + g.cfg.NodeW - 1
+			endX = to.X + to.W - 1
 		}
-		gutter := from.X + g.cfg.NodeW + g.cfg.ColGap/2
+		gutter := from.X + from.W + g.cfg.ColGap/2
 		cv.hLine(startX, gutter, startY, style)
 		if startY != endY {
 			cv.vLine(gutter, startY, endY, style)
@@ -476,19 +647,23 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int, m Model) string {
 	}
 
 	// Nodes (skip dummies — they're invisible routing slots). Border
-	// colour = worst-of-state for the stage (heatmap effect — the eye
-	// catches red/yellow boxes against a sea of green/grey). The cursor
-	// row swaps in a thicker, brighter border so selection wins.
+	// colour = worst-of-state so the picture reads as a heatmap; the
+	// cursor swaps to selected-blue + heavy double-line so selection
+	// wins against any state colour.
 	for i, n := range g.nodes {
 		if n.Dummy {
 			continue
 		}
 		_, stateColor := worstState(n.Stage)
-		border := lipgloss.NewStyle().Foreground(stateColor).Background(bg)
+		borderColor := stateColor
+		if i == cursorIdx {
+			borderColor = selected
+		}
+		border := lipgloss.NewStyle().Foreground(borderColor).Background(bg)
 		if i == cursorIdx {
 			border = cursorBorderStyle
 		}
-		drawNode(cv, n, g.cfg, border, bgStyle, m, i == cursorIdx)
+		drawNode(cv, n, border, bgStyle, m, i == cursorIdx, borderColor)
 	}
 
 	// Viewport pan: shift the visible window so the cursor node stays
@@ -504,8 +679,7 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int, m Model) string {
 	if cursorIdx >= 0 && cursorIdx < len(g.nodes) {
 		n := g.nodes[cursorIdx]
 		const margin = 2
-		// Horizontal: keep the entire node box visible.
-		nodeRight := n.X + g.cfg.NodeW
+		nodeRight := n.X + n.W
 		if n.X-margin < x0 {
 			x0 = n.X - margin
 		}
@@ -515,8 +689,7 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int, m Model) string {
 		if x0 < 0 {
 			x0 = 0
 		}
-		// Vertical.
-		nodeBottom := n.Y + g.cfg.NodeH
+		nodeBottom := n.Y + n.H
 		if n.Y-margin < y0 {
 			y0 = n.Y - margin
 		}
@@ -530,23 +703,15 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int, m Model) string {
 	return cv.renderRect(x0, y0, viewW, viewH)
 }
 
-// drawNode paints a single node box. Layout (NodeH-2 inner rows):
-//
-//	row 0 : name (truncated)
-//	row 1 : status word — picked by worstState, coloured to match border
-//	row 2 : freight short SHA + alias
-//	row 3 : age + shard (when non-default)
-//
-// The border carries the urgency signal so a glance across the graph
-// reveals where attention is needed; the inside reads like the deploy
-// list. Selected cursor uses a heavy double-line border so it wins
-// against any state colour.
-func drawNode(cv *canvas, n graphNode, cfg graphCfg, border, bgStyle lipgloss.Style, m Model, cursor bool) {
+// drawNode paints a single node box. The first inner row is the stage
+// name (bold, in the border colour); each subsequent row is one
+// "key: value" pair from buildNodeRows. Box height is set per-node
+// during layout so each box hugs its content.
+func drawNode(cv *canvas, n graphNode, border, bgStyle lipgloss.Style, m Model, cursor bool, borderColor color.Color) {
 	x, y := n.X, n.Y
-	w, h := cfg.NodeW, cfg.NodeH
+	w, h := n.W, n.H
 
-	// Border. Heavy box-drawing chars on the cursor row so selection
-	// reads as more important than any state colour.
+	// Border — heavy double-line on the cursor so selection always wins.
 	tl, tr, bl, br, hor, ver := '┌', '┐', '└', '┘', '─', '│'
 	if cursor {
 		tl, tr, bl, br, hor, ver = '╔', '╗', '╚', '╝', '═', '║'
@@ -571,64 +736,64 @@ func drawNode(cv *canvas, n graphNode, cfg graphCfg, border, bgStyle lipgloss.St
 	}
 
 	innerW := w - 2
-	if innerW < 1 {
+	if innerW < 1 || h < 3 {
 		return
 	}
+
+	// Row 0: stage name in bold, painted in the border colour so the
+	// outside-and-inside read as one unit ("the red box belongs to qa").
 	rowY := y + 1
-	mutedStyle := bgStyle.Foreground(muted)
-
-	// Row 0: name. Truncate via fitToWidth which always returns exactly
-	// innerW visible cells (truncates with ellipsis or pads with spaces),
-	// so the writeAt loop never overruns into the right border.
-	cv.writeAt(x+1, rowY, fitToWidth(n.Stage.Name, innerW), bgStyle.Foreground(normal).Bold(true))
+	nameStyle := bgStyle.Foreground(borderColor).Bold(true)
+	cv.writeAt(x+1, rowY, fitToWidth(n.Stage.Name, innerW), nameStyle)
 	rowY++
-	if rowY >= y+h-1 {
-		return
-	}
 
-	// Row 1: status word, coloured the same as the border so the inside
-	// echoes the outside ("the red box says 'Promo failed'").
-	stateLabel, stateColor := worstState(n.Stage)
-	cv.writeAt(x+1, rowY, fitToWidth(stateLabel, innerW), bgStyle.Foreground(stateColor).Bold(true))
-	rowY++
-	if rowY >= y+h-1 {
-		return
-	}
-
-	// Row 2: freight short SHA + alias.
-	freight := "—"
-	freightStyle := mutedStyle
-	if len(n.Stage.CurrentFreight) > 0 {
-		freight = shortFreight(n.Stage.CurrentFreight[0])
-		freightStyle = bgStyle.Foreground(normal)
-		if a := m.aliasOf(n.Stage.CurrentFreight[0]); a != "" {
-			freight = freight + " " + a
+	// Subsequent rows: the key/value pairs from buildNodeRows. Key in
+	// muted, value in its semantic colour (or normal foreground when
+	// the row didn't pick one).
+	keyStyle := bgStyle.Foreground(muted)
+	for _, r := range n.Rows {
+		if rowY >= y+h-1 {
+			break
 		}
-	} else if isFreightName(n.Stage.FreightSummary) {
-		freight = shortFreight(n.Stage.FreightSummary)
-		freightStyle = bgStyle.Foreground(normal)
+		// Render "key  value" with the key padded to a small fixed
+		// width so values line up. Truncate the value if the combined
+		// line would overrun innerW.
+		keyW := keyColumnWidth(n.Rows)
+		if keyW > innerW-2 {
+			keyW = innerW - 2
+		}
+		key := fitToWidth(r.Key, keyW)
+		valW := innerW - keyW - 1 // 1 cell separator
+		if valW < 1 {
+			valW = 1
+		}
+		val := fitToWidth(r.Value, valW)
+		cv.writeAt(x+1, rowY, key, keyStyle)
+		cv.set(x+1+keyW, rowY, ' ', bgStyle)
+		valColor := r.ValueColor
+		if valColor == nil {
+			valColor = normal
+		}
+		valStyle := bgStyle.Foreground(valColor)
+		if r.ValueBold {
+			valStyle = valStyle.Bold(true)
+		}
+		cv.writeAt(x+1+keyW+1, rowY, val, valStyle)
+		rowY++
 	}
-	cv.writeAt(x+1, rowY, fitToWidth(freight, innerW), freightStyle)
-	rowY++
-	if rowY >= y+h-1 {
-		return
-	}
+}
 
-	// Row 3: age + shard.
-	var age string
-	switch {
-	case !n.Stage.LastPromoAt.IsZero():
-		age = ageString(n.Stage.LastPromoAt)
-	case !n.Stage.Created.IsZero():
-		age = ageString(n.Stage.Created)
-	default:
-		age = "—"
+// keyColumnWidth returns the width to reserve for the key column —
+// width of the longest key + 1 for the colon-style separator we
+// effectively render via spaces.
+func keyColumnWidth(rows []nodeRow) int {
+	w := 0
+	for _, r := range rows {
+		if n := ansi.StringWidth(r.Key); n > w {
+			w = n
+		}
 	}
-	tail := age
-	if n.Stage.Shard != "" {
-		tail = age + " " + n.Stage.Shard
-	}
-	cv.writeAt(x+1, rowY, fitToWidth(tail, innerW), mutedStyle)
+	return w
 }
 
 // worstState picks the most urgent state to surface on the node — a
@@ -896,7 +1061,7 @@ func pickNeighbor(g graphLayout, candidates []int, _ string) (int, bool) {
 // from refreshRows so the graph stays in sync with the rest of the UI.
 // Ensures the cursor lands on a real (non-dummy) node afterwards.
 func (m *Model) rebuildGraph() {
-	m.graphLayout = layoutGraph(m.deploys, defaultGraphCfg())
+	m.graphLayout = layoutGraph(m.deploys, defaultGraphCfg(), *m)
 	if len(m.graphLayout.nodes) == 0 {
 		m.graphCursor = 0
 		return
