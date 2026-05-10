@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -30,6 +31,7 @@ func (m *Model) openPromoteOverlay(stage *kargo.Stage) {
 	}
 	if stage.IsControlFlow {
 		m.yankedMessage = "control-flow stages cannot be promoted to directly"
+		m.yankedAt = time.Now()
 		return
 	}
 	m.overlay = overlayPromote
@@ -40,12 +42,10 @@ func (m *Model) openPromoteOverlay(stage *kargo.Stage) {
 	m.promoteResult = ""
 	m.promoteError = nil
 	m.promoteCandidates = candidateFreight(m.freights, stage)
-	// Default cursor to the freight already deployed to this stage's
-	// upstream — usually the most recently verified one. If none match,
-	// fall back to the newest freight overall.
-	if len(m.promoteCandidates) == 0 && len(m.freights) > 0 {
-		m.promoteCandidates = append([]kargo.Freight(nil), m.freights...)
-	}
+	// Empty candidates → the picker renders "no candidate freight found
+	// for this stage" with esc-to-dismiss. We deliberately don't fall
+	// back to the full freight list because Kargo will reject any
+	// promotion of freight that isn't verified upstream of the target.
 }
 
 // candidateFreight returns the freight a user might reasonably promote to

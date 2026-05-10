@@ -8,9 +8,10 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// View renders the current frame. It dispatches between the project
-// picker, the help overlay, the logs/diff overlay, and the main
-// table+details layout depending on Model state.
+// View renders the current frame. It dispatches, in priority order,
+// between the project picker, context picker, help overlay, promote
+// overlay, logs/diff overlay, full-screen details panel, tree view,
+// graph view, and the default table+details layout.
 func (m Model) View() tea.View {
 	if m.phase == phasePickingProject {
 		return m.pickerView()

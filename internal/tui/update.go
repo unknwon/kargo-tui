@@ -181,14 +181,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.yankedMessage = fmt.Sprintf("created %d downstream promotion(s) from %s", msg.promotions, msg.source)
 		}
 		m.yankedAt = time.Now()
-		if !m.loading {
-			m.loading = true
-			return m, tea.Batch(
-				loadDeploysCmd(m.client, m.project),
-				loadFreightsCmd(m.client, m.project),
-			)
-		}
-		return m, nil
+		// Force an immediate data refresh so the new promotion appears
+		// without waiting for the next tick. We dispatch even when a
+		// tick fetch is already in flight: the in-flight one was issued
+		// before the promotion existed, so its data won't include it.
+		m.loading = true
+		return m, tea.Batch(
+			loadDeploysCmd(m.client, m.project),
+			loadFreightsCmd(m.client, m.project),
+		)
 
 	case promoteResultMsg:
 		// The overlay may have been dismissed before the response landed
@@ -206,15 +207,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.promoteStep = promoteDone
 		}
 		// Force an immediate data refresh so the new promotion appears in
-		// the deploy/tree views without waiting for the next tick.
-		if !m.loading {
-			m.loading = true
-			return m, tea.Batch(
-				loadDeploysCmd(m.client, m.project),
-				loadFreightsCmd(m.client, m.project),
-			)
-		}
-		return m, nil
+		// the deploy/tree views without waiting for the next tick. We
+		// dispatch even when a tick fetch is in flight — that one was
+		// issued before the promotion existed, so its data won't have
+		// it.
+		m.loading = true
+		return m, tea.Batch(
+			loadDeploysCmd(m.client, m.project),
+			loadFreightsCmd(m.client, m.project),
+		)
 
 	case tea.MouseWheelMsg:
 		// Mouse wheel scrolls whichever surface is currently visible:

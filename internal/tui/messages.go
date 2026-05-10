@@ -147,9 +147,10 @@ type promoteDownstreamResultMsg struct {
 // startStageWatchGoroutine opens a WatchStages stream against the given
 // project and pipes events back into the TUI via the supplied send.
 // The returned CancelFunc stops the watch (called on project switch /
-// context switch / program exit). Safe to call with a nil send — in
-// that case it returns a no-op cancel and starts nothing, since the
-// goroutine has no way to deliver events without the program reference.
+// context switch / program exit). Returns a no-op cancel and starts
+// nothing when any of c, project, or send is missing — without all
+// three the watch has nothing to call, no project to scope to, or no
+// way to deliver events.
 func startStageWatchGoroutine(
 	c *kargo.Client,
 	project string,
@@ -165,8 +166,10 @@ func startStageWatchGoroutine(
 			select {
 			case ev, ok := <-events:
 				if !ok {
-					// Stream ended; drain errCh so we report a useful
-					// reason in the watch-ended message.
+					// Stream ended. WatchStages closes errCh before
+					// closing events, so by the time we get here the
+					// error (if any) has already been buffered. A clean
+					// close yields the zero value with more=false.
 					var endErr error
 					if e, more := <-errCh; more {
 						endErr = e

@@ -8,9 +8,8 @@ import (
 )
 
 // helpBindings returns the static binding table rendered in the help
-// overlay. Pulled out of helpView so prepareHelpViewport can use it
-// from Update — viewport state set in View() doesn't persist back into
-// the reducer's model, which broke j/k scroll.
+// overlay. Lives outside helpView so prepareHelpViewport can format
+// it from Update.
 func helpBindings() []struct{ section, key, desc string } {
 	return []struct{ section, key, desc string }{
 		{"Views", "d", "deploys"},
