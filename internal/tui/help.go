@@ -36,7 +36,7 @@ func helpBindings() []struct{ section, key, desc string } {
 		{"", "+/-", "expand / collapse tree node"},
 		{"", "enter", "apply filter / toggle tree node"},
 		{"", "pgup/pgdn", "page details panel (full-screen mode) / tree"},
-		{"", "g/G", "jump to top / bottom of details panel or tree"},
+		{"", "home/end", "jump to top / bottom"},
 		{"Filtering", "/", "start filtering (per list)"},
 		{"", "esc", "dismiss details/overlay, then clear filter"},
 		{"Other", "r", "refresh now"},
@@ -86,7 +86,7 @@ func (m Model) helpView() tea.View {
 	hintStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
 
 	header := titleStyle.Render("Keybindings")
-	hint := hintStyle.Render("j/k scroll · g/G top/bottom · esc/? dismiss")
+	hint := hintStyle.Render("j/k scroll · home/end top/bottom · esc/? dismiss")
 	body := lipgloss.JoinVertical(lipgloss.Left, header, "", m.helpVP.View(), "", hint)
 
 	box := lipgloss.NewStyle().

@@ -289,10 +289,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "pgdown", "pgdn", " ":
 				m.helpVP.PageDown()
 				return m, nil
-			case "home", "g":
+			case "home":
 				m.helpVP.GotoTop()
 				return m, nil
-			case "end", "G":
+			case "end":
 				m.helpVP.GotoBottom()
 				return m, nil
 			}
@@ -325,10 +325,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "pgdown", "pgdn", " ":
 				m.overlayVP.PageDown()
 				return m, nil
-			case "home", "g":
+			case "home":
 				m.overlayVP.GotoTop()
 				return m, nil
-			case "end", "G":
+			case "end":
 				m.overlayVP.GotoBottom()
 				return m, nil
 			}
@@ -444,13 +444,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setView(viewTree)
 			return m, nil
 		case "g":
-			// Top-level `g` opens the graph view. In detailsOnly mode it
-			// scrolls the panel to top (handled lower down); in tree view
-			// it jumps to the first row (handled in the tree block).
-			if !m.detailsOnly && m.view != viewTree {
-				m.setView(viewGraph)
-				return m, nil
-			}
+			m.setView(viewGraph)
+			return m, nil
 		case "P":
 			s := m.selectedStage()
 			if s == nil {
@@ -523,10 +518,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "pgdown", "pgdn", " ":
 				m.moveTreeCursor(10)
 				return m, nil
-			case "home", "g":
+			case "home":
 				m.treeCursor = 0
 				return m, nil
-			case "end", "G":
+			case "end":
 				if len(m.treeNodes) > 0 {
 					m.treeCursor = len(m.treeNodes) - 1
 				}
@@ -560,10 +555,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "pgdown", "pgdn", " ":
 				m.panelVP.PageDown()
 				return m, nil
-			case "home", "g":
+			case "home":
 				m.panelVP.GotoTop()
 				return m, nil
-			case "end", "G":
+			case "end":
 				m.panelVP.GotoBottom()
 				return m, nil
 			}

@@ -140,7 +140,7 @@ func (m Model) detailsOnlyView() tea.View {
 	}
 	body := m.renderPanel(w, panelHeight)
 
-	hint := hintStyle.Render("v back · j/k pgup/pgdn g/G scroll · l logs · D diff · P promote · esc back · q quit")
+	hint := hintStyle.Render("v back · j/k pgup/pgdn home/end scroll · l logs · D diff · P promote · esc back · q quit")
 	content := lipgloss.JoinVertical(lipgloss.Left, header, body, hint)
 
 	v := tea.NewView(content)

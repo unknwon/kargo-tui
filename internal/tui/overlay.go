@@ -338,7 +338,7 @@ func (m Model) overlayView() tea.View {
 	hintStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
 
 	header := titleStyle.Render(m.overlayTitle)
-	hint := hintStyle.Render("esc/enter dismiss · j/k scroll · g/G top/bottom")
+	hint := hintStyle.Render("esc/enter dismiss · j/k scroll · home/end top/bottom")
 	if m.overlayLoading {
 		hint = hintStyle.Render("loading…  esc to cancel")
 	}
