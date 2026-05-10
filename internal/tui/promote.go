@@ -27,11 +27,14 @@ const (
 // promotePickerPage returns the number of rows pgup/pgdown moves the
 // picker cursor — the visible body height minus one row of overlap so
 // the user keeps a row of context across page jumps. Body height
-// mirrors promotePickingView (m.height - 3 for header + hint).
+// mirrors promotePickingView (m.height - 3 for header + hint), so the
+// page jump is (m.height - 3) - 1 = m.height - 4. Clamped to at least
+// one row so a pathologically tiny terminal doesn't return zero and
+// freeze pgup/pgdown.
 func promotePickerPage(termHeight int) int {
 	n := termHeight - 4
-	if n < 3 {
-		n = 3
+	if n < 1 {
+		n = 1
 	}
 	return n
 }
@@ -180,9 +183,11 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 	// occupies 2 leading cells inside the padded area. Clip the label
 	// to (terminal width - 2 padding - 2 marker) so a wide freight
 	// name + warehouse + age can never wrap to a second terminal row.
+	// Clamp to >= 1 rather than a comfortable minimum: on very narrow
+	// terminals a floor above (w - 4) would itself cause wrap.
 	rowBudget := w - 4
-	if rowBudget < 8 {
-		rowBudget = 8
+	if rowBudget < 1 {
+		rowBudget = 1
 	}
 
 	header := titleStyle.Padding(0, 1).Render(clipToWidth(m.overlayTitle, w-2))
@@ -327,7 +332,7 @@ func (m Model) promoteViewingContent(innerW int) string {
 		return keyStyle.Render(padRight(k+":", 12)) + " " + valStyle.Render(wrap(v, innerW-13))
 	}
 	var lines []string
-	lines = append(lines, titleStyle.Render(shortFreight(f.Name)+aliasSuffix(f.Alias)))
+	lines = append(lines, titleStyle.Render(f.Name))
 	if f.Alias != "" {
 		lines = append(lines, keyStyle.Render(f.Alias))
 	}
