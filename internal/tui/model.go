@@ -303,6 +303,7 @@ func newBase() Model {
 	overlayVP := viewport.New(viewport.WithHeight(20), viewport.WithWidth(80))
 	overlayVP.SoftWrap = true
 	helpVP := viewport.New(viewport.WithHeight(20), viewport.WithWidth(60))
+	helpVP.SoftWrap = true
 
 	return Model{
 		view:          viewDeploys,
