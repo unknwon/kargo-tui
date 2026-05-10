@@ -294,23 +294,42 @@ func (c *canvas) vLine(x, y1, y2 int, style lipgloss.Style) {
 // coalesce same-style runs cheaply; the canvas is small enough that
 // per-cell rendering is fine.
 func (c *canvas) render() string {
+	return c.renderRect(0, 0, c.w, c.h)
+}
+
+// renderRect renders only a sub-rectangle of the canvas. Used to pan a
+// large graph layout into a smaller terminal viewport.
+func (c *canvas) renderRect(x0, y0, w, h int) string {
+	if x0 < 0 {
+		x0 = 0
+	}
+	if y0 < 0 {
+		y0 = 0
+	}
+	x1 := x0 + w
+	y1 := y0 + h
+	if x1 > c.w {
+		x1 = c.w
+	}
+	if y1 > c.h {
+		y1 = c.h
+	}
 	var b strings.Builder
-	for y := 0; y < c.h; y++ {
-		for x := 0; x < c.w; x++ {
+	for y := y0; y < y1; y++ {
+		for x := x0; x < x1; x++ {
 			cell := c.cells[y][x]
 			b.WriteString(cell.style.Render(string(cell.r)))
 		}
-		if y < c.h-1 {
+		if y < y1-1 {
 			b.WriteByte('\n')
 		}
 	}
 	return b.String()
 }
 
-// renderGraph paints g onto a fresh canvas and returns the styled string.
-// cursorIdx is the index into g.nodes of the currently-selected node;
-// pass -1 to suppress cursor styling.
-func renderGraph(g graphLayout, cursorIdx int, m Model) string {
+// renderGraph paints g onto a fresh canvas, then crops a viewport
+// (viewW × viewH) that keeps the cursor node visible.
+func renderGraph(g graphLayout, cursorIdx, viewW, viewH int, m Model) string {
 	cv := newCanvas(g.width, g.height)
 
 	edgeStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
@@ -365,7 +384,43 @@ func renderGraph(g graphLayout, cursorIdx int, m Model) string {
 		drawNode(cv, n, g.cfg, border, bgStyle, m)
 	}
 
-	return cv.render()
+	// Viewport pan: shift the visible window so the cursor node stays
+	// fully on screen with a small margin. When the cursor is unset or
+	// the layout fits, render from the origin.
+	x0, y0 := 0, 0
+	if viewW <= 0 {
+		viewW = g.width
+	}
+	if viewH <= 0 {
+		viewH = g.height
+	}
+	if cursorIdx >= 0 && cursorIdx < len(g.nodes) {
+		n := g.nodes[cursorIdx]
+		const margin = 2
+		// Horizontal: keep the entire node box visible.
+		nodeRight := n.X + g.cfg.NodeW
+		if n.X-margin < x0 {
+			x0 = n.X - margin
+		}
+		if nodeRight+margin > x0+viewW {
+			x0 = nodeRight + margin - viewW
+		}
+		if x0 < 0 {
+			x0 = 0
+		}
+		// Vertical.
+		nodeBottom := n.Y + g.cfg.NodeH
+		if n.Y-margin < y0 {
+			y0 = n.Y - margin
+		}
+		if nodeBottom+margin > y0+viewH {
+			y0 = nodeBottom + margin - viewH
+		}
+		if y0 < 0 {
+			y0 = 0
+		}
+	}
+	return cv.renderRect(x0, y0, viewW, viewH)
 }
 
 // drawNode paints a single node box with name + health + freight short.
@@ -470,8 +525,20 @@ func (m Model) graphView() tea.View {
 		cursorIdx = m.graphCursor
 	}
 
+	// Carve out the body area from the available terminal size. Three
+	// trim lines: header, status, hint. One more if there's an error or
+	// yank message; reserve room for it conservatively so the layout
+	// doesn't jitter when the message appears.
+	bodyW := m.width - 2 // account for padding
+	if bodyW < 20 {
+		bodyW = 20
+	}
+	bodyH := m.height - 5
+	if bodyH < 5 {
+		bodyH = 5
+	}
 	body := lipgloss.NewStyle().Background(bg).Padding(0, 1).
-		Render(renderGraph(g, cursorIdx, m))
+		Render(renderGraph(g, cursorIdx, bodyW, bodyH, m))
 
 	statusLine := graphStatusLine(g, cursorIdx)
 	hint := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).
