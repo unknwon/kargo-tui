@@ -27,12 +27,12 @@ const (
 // promotePickerPage returns the number of rows pgup/pgdown moves the
 // picker cursor — the visible body height minus one row of overlap so
 // the user keeps a row of context across page jumps. Body height
-// mirrors promotePickingView (m.height - 3 for header + hint), so the
-// page jump is (m.height - 3) - 1 = m.height - 4. Clamped to at least
-// one row so a pathologically tiny terminal doesn't return zero and
-// freeze pgup/pgdown.
+// mirrors promotePickingView (m.height - 2 for the header + hint
+// chrome), so the page jump is (m.height - 2) - 1 = m.height - 3.
+// Clamped to at least one row so a pathologically tiny terminal
+// doesn't return zero and freeze pgup/pgdown.
 func promotePickerPage(termHeight int) int {
-	n := termHeight - 4
+	n := termHeight - 3
 	if n < 1 {
 		n = 1
 	}
@@ -172,8 +172,8 @@ func (m Model) promoteOverlayView() tea.View {
 
 // promotePickingView renders the freight-candidate picker as a
 // full-screen frame: 1-row header, N-row body, 1-row hint. Because the
-// chrome is a fixed 3 rows the body height is unambiguous (`m.height -
-// 3`) and the cursor windowing always keeps the highlighted row visible.
+// chrome is a fixed 2 rows the body height is unambiguous (`m.height -
+// 2`) and the cursor windowing always keeps the highlighted row visible.
 func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lipgloss.Style) tea.View {
 	w := m.width
 	if w <= 0 {
@@ -191,11 +191,11 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 	}
 
 	header := titleStyle.Padding(0, 1).Render(clipToWidth(m.overlayTitle, w-2))
-	hint := hintStyle.Padding(0, 1).Render(clipToWidth("↑/↓ select · pgup/pgdn/home/end jump · enter pick · v details · esc cancel", w-2))
+	hint := hintStyle.Padding(0, 1).Render(clipToWidth("↑/↓ select · pgup/pgdn/space/home/end jump · enter pick · v details · esc cancel", w-2))
 
-	bodyH := m.height - 3
-	if bodyH < 3 {
-		bodyH = 3
+	bodyH := m.height - 2
+	if bodyH < 1 {
+		bodyH = 1
 	}
 
 	var body string
@@ -261,20 +261,26 @@ const promoteViewingChromeRows = 8
 const promoteViewingChromeCols = 6
 
 // preparePromoteViewingViewport sizes overlayVP and loads the highlighted
-// candidate's detail block. promoteOverlayView is a value receiver, so
-// any width/height/content set inside View() mutates a throwaway copy
-// and never reaches the real model — meaning the key handler would
-// compute scroll offsets against a zero-sized, empty viewport and clamp
-// every j/k to no-op. Call this from the handler itself (with a pointer
-// receiver) before reading or scrolling the viewport.
+// candidate's detail block. Called from two places:
+//
+//   - The key handler (updatePromoteOverlay), via a pointer receiver, so
+//     the resized/loaded viewport state persists into the real model and
+//     subsequent ScrollUp/ScrollDown have a non-zero maxYOffset to clamp
+//     against. Required for scroll keys to do anything.
+//   - The View path (promoteViewingView), where it's harmless: View()
+//     runs on a value-copy and any state set here is thrown away after
+//     rendering, but rendering does need width/height/content set first.
+//
+// Both callers must invoke this — the handler call drives scroll, the
+// View call drives display.
 func (m *Model) preparePromoteViewingViewport() {
 	w := m.width
 	if w <= 0 {
 		w = 80
 	}
 	innerW := w - promoteViewingChromeCols
-	if innerW < 20 {
-		innerW = 20
+	if innerW < 1 {
+		innerW = 1
 	}
 	innerH := m.height - promoteViewingChromeRows
 	if innerH < 3 {
@@ -295,14 +301,14 @@ func (m Model) promoteViewingView(titleStyle, hintStyle lipgloss.Style) tea.View
 		w = 80
 	}
 	innerW := w - promoteViewingChromeCols
-	if innerW < 20 {
-		innerW = 20
+	if innerW < 1 {
+		innerW = 1
 	}
 	// Clip the title and hint so a narrow terminal can't wrap them —
 	// any extra row would push the viewport content past the bottom
 	// of the screen and hide the hint.
 	header := titleStyle.Render(clipToWidth(m.overlayTitle, innerW))
-	hint := hintStyle.Render(clipToWidth("v/esc back · enter promote · j/k scroll · home/end top/bottom", innerW))
+	hint := hintStyle.Render(clipToWidth("v/esc back · enter promote · j/k/↑/↓ scroll · pgup/pgdn/space page · home/end top/bottom", innerW))
 	body := lipgloss.JoinVertical(lipgloss.Left, header, "", m.overlayVP.View(), "", hint)
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -344,7 +350,7 @@ func (m Model) promoteViewingContent(innerW int) string {
 // Each promoteStep accepts a different key set: pick (arrows + enter +
 // v to view), view (scroll keys + enter to advance to confirm + v/esc
 // to return), confirm (y/n), submitting (esc to dismiss without
-// cancelling the in-flight RPC), done (any key dismisses).
+// cancelling the in-flight RPC), done (enter/esc to match the hint).
 func (m Model) updatePromoteOverlay(key string) (tea.Model, tea.Cmd) {
 	switch m.promoteStep {
 	case promotePicking:
@@ -448,8 +454,11 @@ func (m Model) updatePromoteOverlay(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case promoteDone:
-		m.overlay = overlayNone
-		return m, nil
+		switch key {
+		case "enter", "esc":
+			m.overlay = overlayNone
+			return m, nil
+		}
 	}
 	return m, nil
 }
