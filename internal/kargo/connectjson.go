@@ -71,8 +71,9 @@ func newConnectJSON(baseURL, token string, insecureSkipTLSVerify bool) *connectJ
 
 // call POSTs req as JSON to method and decodes the response into out. A
 // non-2xx status is returned as a *connectError carrying the server's JSON
-// error envelope when available. On CodeUnauthenticated the token is
-// refreshed once (if a refresher is configured) and the call retried.
+// error envelope when available. On CodeUnauthenticated, if a refresher is
+// configured *and* it succeeds, the call is retried once with the new
+// token; otherwise the original auth error propagates unchanged.
 func (c *connectJSON) call(ctx context.Context, method string, req, out any) error {
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -125,7 +126,9 @@ func (c *connectJSON) call(ctx context.Context, method string, req, out any) err
 // — unlike the JSON encoder, which elides every Time to `{}`. Use this for
 // any RPC whose response carries timestamps the TUI needs to render
 // honestly. Both reqMsg and respMsg must be proto.Message values; the
-// vendored Kargo types live under internal/kargoapi/svc.
+// vendored Kargo types live under internal/kargoapi/svc. Auth-failure
+// retry behaviour mirrors call(): on CodeUnauthenticated, if a refresher
+// is configured and succeeds, the request is retried once.
 func (c *connectJSON) callProto(ctx context.Context, method string, reqMsg, respMsg proto.Message) error {
 	body, err := proto.Marshal(reqMsg)
 	if err != nil {
@@ -201,7 +204,7 @@ func (c *connectJSON) tryRefresh(ctx context.Context) error {
 	return nil
 }
 
-var errNoRefresher = fmt.Errorf("no token refresher configured")
+var errNoRefresher = errors.New("no token refresher configured")
 
 // isUnauthenticated reports whether err is a Connect error with the
 // "unauthenticated" code (or HTTP 401 fallback for older servers).

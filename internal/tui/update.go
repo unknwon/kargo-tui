@@ -454,29 +454,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "R":
 			// Inline re-login for the current context. Only meaningful when
 			// the auth banner is up; otherwise the existing session is fine
-			// and `R` does nothing (avoids surprising the user). Reuses the
-			// ctxLogin callback main wired in, jumping the user into the
-			// context picker's login flow already targeted at this URL.
-			if !m.authExpired || m.ctxLogin == nil || m.client == nil {
+			// and `R` does nothing (avoids surprising the user). Uses the
+			// ctxRelogin callback (rather than ctxLogin) so the saved
+			// context's insecureSkipTLSVerify / project flags are preserved
+			// — ctxLogin would Upsert a brand-new context with default zero
+			// values for everything beyond the URL.
+			if !m.authExpired || m.ctxRelogin == nil || m.contextName == "" {
 				return m, nil
 			}
-			url := m.client.BaseURL()
-			if url == "" {
-				return m, nil
+			name := m.contextName
+			url := ""
+			if m.client != nil {
+				url = m.client.BaseURL()
 			}
 			m.phase = phasePickingContext
-			m.ctxAdding = true
+			m.ctxAdding = false
 			m.ctxLoggingIn = true
-			m.ctxLoginStatus = "Re-authenticating against " + url + "…"
+			if url != "" {
+				m.ctxLoginStatus = "Re-authenticating against " + url + "…"
+			} else {
+				m.ctxLoginStatus = "Re-authenticating " + name + "…"
+			}
 			m.ctxError = nil
-			m.ctxURLInput.SetValue(url)
 			lctx, cancel := context.WithCancel(context.Background())
 			m.ctxLoginCancel = cancel
 			send := m.ctxSend
 			if send == nil {
 				send = func(tea.Msg) {}
 			}
-			return m, runContextLoginCmd(m.ctxLogin, lctx, url, send)
+			// Adapt the name-based relogin callback to the URL-based shape
+			// runContextLoginCmd expects — the name is closed over here.
+			loginByName := func(ctx context.Context, _ string, status func(string)) (string, error) {
+				return m.ctxRelogin(ctx, name, status)
+			}
+			return m, runContextLoginCmd(loginByName, lctx, name, send)
 		case "v":
 			m.detailsOnly = !m.detailsOnly
 			return m, nil

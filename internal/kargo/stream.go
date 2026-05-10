@@ -81,18 +81,23 @@ func (c *connectJSON) callServerStream(
 		raw, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		dialErr := parseConnectError(method, resp.StatusCode, raw)
-		if isUnauthenticated(dialErr) && c.tryRefresh(ctx) == nil {
-			resp, err = dial()
-			if err != nil {
-				return fmt.Errorf("call stream %s: %w", method, err)
-			}
-			if resp.StatusCode/100 != 2 {
-				raw2, _ := io.ReadAll(resp.Body)
-				_ = resp.Body.Close()
-				return parseConnectError(method, resp.StatusCode, raw2)
-			}
-		} else {
+		if !isUnauthenticated(dialErr) || c.tryRefresh(ctx) != nil {
 			return dialErr
+		}
+		// Refresh succeeded — retry the dial once. If the retry fails for
+		// any reason, surface the original dialErr (the auth failure that
+		// triggered the refresh) wrapped around the retry error so the
+		// user sees both: "your token was bad, and the refreshed one
+		// also got: <whatever>".
+		resp, err = dial()
+		if err != nil {
+			return fmt.Errorf("call stream %s after refresh (original: %w): %w", method, dialErr, err)
+		}
+		if resp.StatusCode/100 != 2 {
+			raw2, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			return fmt.Errorf("after refresh (original: %w): %w",
+				dialErr, parseConnectError(method, resp.StatusCode, raw2))
 		}
 	}
 	defer resp.Body.Close()

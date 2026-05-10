@@ -73,12 +73,12 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 		}
 	}
 
-	ctxNames, ctxBuilder, ctxLogin := contextSwitcher(cfg)
+	ctxNames, ctxBuilder, ctxLogin, ctxRelogin := contextSwitcher(cfg)
 
 	var p *tea.Program
 	if project == "" {
 		p = tea.NewProgram(tui.NewWithPicker(client, active.Name).
-			WithContexts(ctxNames, ctxBuilder, ctxLogin))
+			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin))
 	} else {
 		client.SetProject(project)
 		deploys, err := client.ListStages(ctx, project)
@@ -90,7 +90,7 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 			return fmt.Errorf("load freights: %w", err)
 		}
 		p = tea.NewProgram(tui.New(client, active.Name, project, deploys, freights).
-			WithContexts(ctxNames, ctxBuilder, ctxLogin))
+			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin))
 	}
 
 	// Inject the program's thread-safe Send so the SSO login goroutine can
@@ -118,14 +118,17 @@ func attachRefresher(client *kargo.Client, c *config.Context) {
 
 // contextSwitcher returns the list of configured context names, a builder
 // that constructs a fresh client + that context's default project for a
-// chosen name, and a login callback that runs the SSO flow against a new
-// Kargo URL and saves it as a new context. The builder also persists the
+// chosen name, a login callback that runs the SSO flow against a new
+// Kargo URL and saves it as a new context, and a relogin callback that
+// re-runs SSO against an *existing* context, preserving its
+// insecureSkipTLSVerify and project flags. The builder also persists the
 // chosen context as CurrentContext so the next launch is non-interactive;
 // failures from Save are non-fatal — the in-memory switch still completes.
 func contextSwitcher(cfg *config.Config) (
 	[]string,
 	func(string) (*kargo.Client, string, error),
 	func(ctx context.Context, url string, status func(string)) (string, error),
+	func(ctx context.Context, contextName string, status func(string)) (string, error),
 ) {
 	names := make([]string, 0, len(cfg.Contexts))
 	for _, c := range cfg.Contexts {
@@ -162,7 +165,35 @@ func contextSwitcher(cfg *config.Config) (
 		}
 		return saved.Name, nil
 	}
-	return names, build, login
+	relogin := func(ctx context.Context, name string, status func(string)) (string, error) {
+		// Read the saved context fresh from disk so flags set by a
+		// concurrent `kargo-tui auth login --name ...` are honoured.
+		fresh, err := config.Load()
+		if err == nil {
+			*cfg = *fresh
+		}
+		c := cfg.Find(name)
+		if c == nil {
+			return "", fmt.Errorf("context %q not found", name)
+		}
+		saved, err := auth.SSOLogin(ctx, auth.LoginOptions{
+			APIAddress:            c.APIAddress,
+			ContextName:           c.Name,
+			Project:               c.Project,
+			InsecureSkipTLSVerify: c.InsecureSkipTLSVerify,
+			MakeCurrent:           true,
+			Quiet:                 true,
+		}, status)
+		if err != nil {
+			return "", err
+		}
+		// Reload again so the in-memory cfg reflects the rotated tokens.
+		if fresh, err := config.Load(); err == nil {
+			*cfg = *fresh
+		}
+		return saved.Name, nil
+	}
+	return names, build, login, relogin
 }
 
 // authCommand builds the `kargo-tui auth ...` subcommand tree.

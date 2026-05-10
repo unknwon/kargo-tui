@@ -49,6 +49,10 @@ func NewClient(ctx *config.Context) (*Client, error) {
 // CodeUnauthenticated response, to obtain a fresh bearer token before
 // retrying. Pass nil to disable. Wired here rather than at construction
 // to avoid an import cycle between the auth and kargo packages.
+//
+// Must be called before any RPC is issued on this client: the field
+// write is unsynchronized, so racing it against in-flight RPCs (which
+// read c.rpc.refresh in tryRefresh) is a data race.
 func (c *Client) SetTokenRefresher(refresh func(context.Context) (string, error)) {
 	c.rpc.refresh = refresh
 }

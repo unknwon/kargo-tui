@@ -32,8 +32,11 @@ type Refresher struct {
 }
 
 // NewRefresher builds a Refresher bound to a named config context. The
-// context's APIAddress / RefreshToken are read fresh from disk on every
-// Refresh() so token rotations from concurrent processes are picked up.
+// RefreshToken field is read fresh from disk on every Refresh() so a
+// token rotated by another process (e.g. a concurrent kargo-tui) is
+// picked up. The OIDC provider (issuer URL, endpoints, client ID) is
+// discovered on the first Refresh() and cached for the process lifetime
+// — a server-side OIDC reconfiguration won't take effect until restart.
 func NewRefresher(contextName string, insecureSkipTLSVerify bool) *Refresher {
 	return &Refresher{contextName: contextName, insecure: insecureSkipTLSVerify}
 }
