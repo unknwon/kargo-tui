@@ -107,20 +107,23 @@ func buildNodeRows(s *kargo.Stage, m Model) []nodeRow {
 	if s.LastPromo != "" {
 		rows = append(rows, nodeRow{Key: "Promo", Value: s.LastPromo, ValueColor: promoColorVal(s.LastPromo)})
 	}
-	freight := ""
+	var freightSHA, freightAlias string
 	switch {
 	case len(s.CurrentFreight) > 0:
-		freight = shortFreight(s.CurrentFreight[0])
-		if a := m.aliasOf(s.CurrentFreight[0]); a != "" {
-			freight += " " + a
-		}
+		freightSHA = shortFreight(s.CurrentFreight[0])
+		freightAlias = m.aliasOf(s.CurrentFreight[0])
 	case isFreightName(s.FreightSummary):
-		freight = shortFreight(s.FreightSummary)
+		freightSHA = shortFreight(s.FreightSummary)
 	case s.FreightSummary != "":
-		freight = s.FreightSummary
+		freightSHA = s.FreightSummary
 	}
-	if freight != "" {
-		rows = append(rows, nodeRow{Key: "Freight", Value: freight})
+	if freightSHA != "" {
+		rows = append(rows, nodeRow{Key: "Freight", Value: freightSHA})
+		if freightAlias != "" {
+			// Continuation row: empty key so the alias sits flush under
+			// the SHA, indented by the key column the renderer reserves.
+			rows = append(rows, nodeRow{Key: "", Value: freightAlias, ValueColor: muted})
+		}
 	}
 	var age string
 	switch {
