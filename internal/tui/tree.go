@@ -23,12 +23,18 @@ type treeNode struct {
 	Expanded      bool
 	IsPrimary     bool
 	OtherUpstream string // set on stub occurrences; references the primary parent
+	IsMatch       bool   // true when filter is active and this row's name matches
 }
 
 // rebuildTree produces the flat ordered list of visible nodes for the
-// current stage set, honouring m.treeExpanded.
+// current stage set, honouring m.treeExpanded and the active filter
+// query (m.filter.Value()). When the filter is non-empty, a node is
+// rendered only if it matches OR any of its descendants matches; the
+// matching rows themselves get IsMatch=true so the renderer can
+// highlight them.
 func (m *Model) rebuildTree() {
 	stages := m.deploys
+	q := strings.ToLower(strings.TrimSpace(m.filter.Value()))
 	byName := make(map[string]*kargo.Stage, len(stages))
 	for i := range stages {
 		s := &stages[i]
@@ -91,11 +97,57 @@ func (m *Model) rebuildTree() {
 		}
 	}
 
+	// Filter pass: compute which nodes match and which subtrees contain a
+	// match. matches[name] = the node's name contains the query;
+	// visible[name] = matches OR has a matching descendant.
+	matches := make(map[string]bool, len(byName))
+	visible := make(map[string]bool, len(byName))
+	if q != "" {
+		for name := range byName {
+			if strings.Contains(strings.ToLower(name), q) {
+				matches[name] = true
+			}
+		}
+		// Memoised reverse walk: a node is visible if it matches itself
+		// or any descendant via primaryParent does.
+		var hasVisibleDesc func(name string) bool
+		visited := make(map[string]bool)
+		hasVisibleDesc = func(name string) bool {
+			if v, ok := visible[name]; ok {
+				return v
+			}
+			if visited[name] {
+				return false
+			}
+			visited[name] = true
+			v := matches[name]
+			for _, c := range children[name] {
+				if hasVisibleDesc(c) {
+					v = true
+				}
+			}
+			visible[name] = v
+			return v
+		}
+		for name := range byName {
+			hasVisibleDesc(name)
+		}
+	}
+
+	// isVisible reports whether a node should appear given the active
+	// filter (true for everything when no filter is set).
+	isVisible := func(name string) bool {
+		if q == "" {
+			return true
+		}
+		return visible[name]
+	}
+
 	var out []treeNode
 	var walk func(name string, prefix string, isLast, isRoot bool)
 	walk = func(name string, prefix string, isLast, isRoot bool) {
 		s := byName[name]
-		if s == nil {
+		if s == nil || !isVisible(name) {
 			return
 		}
 		var branch, childPrefix string
@@ -114,6 +166,9 @@ func (m *Model) rebuildTree() {
 		kids := children[name]
 		var primaryKids, secondaryKids []string
 		for _, c := range kids {
+			if !isVisible(c) {
+				continue
+			}
 			if primaryParent[c] == name {
 				primaryKids = append(primaryKids, c)
 			} else {
@@ -122,6 +177,11 @@ func (m *Model) rebuildTree() {
 		}
 		hasKids := len(primaryKids)+len(secondaryKids) > 0
 		expanded := m.treeExpanded[name]
+		// While filtering, force-expand: collapsing would defeat the
+		// point of "show me where this name lives in the tree."
+		if q != "" {
+			expanded = true
+		}
 
 		out = append(out, treeNode{
 			Stage:     s,
@@ -129,6 +189,7 @@ func (m *Model) rebuildTree() {
 			HasKids:   hasKids,
 			Expanded:  expanded,
 			IsPrimary: true,
+			IsMatch:   matches[name],
 		})
 		if !expanded {
 			return
@@ -146,6 +207,7 @@ func (m *Model) rebuildTree() {
 					Prefix:        stubBranch,
 					IsPrimary:     false,
 					OtherUpstream: primaryParent[c],
+					IsMatch:       matches[c],
 				})
 				continue
 			}
@@ -153,6 +215,9 @@ func (m *Model) rebuildTree() {
 		}
 	}
 	for i, r := range roots {
+		if !isVisible(r) {
+			continue
+		}
 		walk(r, "", i == len(roots)-1, true)
 	}
 	m.treeNodes = out
@@ -199,6 +264,19 @@ func (m Model) renderTreeBody(width, height int) string {
 			toggle = "    "
 		}
 		name := stageNameCell(n.Stage.Name, n.Stage.Health)
+		if n.IsMatch {
+			// Underline matches so users can scan to "where" the filter
+			// hit even when ancestor rows are also rendered for context.
+			name = lipgloss.NewStyle().Background(bg).Underline(true).Render(n.Stage.Name)
+			switch n.Stage.Health {
+			case "Healthy":
+				name = lipgloss.NewStyle().Foreground(healthy).Background(bg).Bold(true).Underline(true).Render(n.Stage.Name)
+			case "Unhealthy":
+				name = lipgloss.NewStyle().Foreground(degraded).Background(bg).Bold(true).Underline(true).Render(n.Stage.Name)
+			case "Progressing":
+				name = lipgloss.NewStyle().Foreground(progressing).Background(bg).Bold(true).Underline(true).Render(n.Stage.Name)
+			}
+		}
 		if n.Stage.IsControlFlow {
 			name += " " + dimStyle.Render("(control)")
 		}
@@ -333,15 +411,20 @@ func (m Model) treeView() tea.View {
 		m.renderTreeBody(m.width-2, bodyH))
 
 	hint := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).
-		Render("↑/↓ move · +/- expand · enter toggle · l logs · P promote · t/d/f switch view · ? help · q quit")
+		Render("↑/↓ move · +/- expand · enter toggle · / filter · l logs · P promote · t/d/f switch · ? help · q quit")
 
+	var statusLine string
+	switch {
+	case m.filtering || m.filter.Value() != "":
+		statusLine = lipgloss.NewStyle().Background(bg).Render(m.filter.View())
+	case m.deploysError != nil:
+		statusLine = lipgloss.NewStyle().Foreground(degraded).Background(bg).Padding(0, 1).Render(m.deploysError.Error())
+	case m.yankedMessage != "":
+		statusLine = lipgloss.NewStyle().Foreground(healthy).Background(bg).Padding(0, 1).Render(m.yankedMessage)
+	}
 	var content string
-	if m.deploysError != nil {
-		errLine := lipgloss.NewStyle().Foreground(degraded).Background(bg).Padding(0, 1).Render(m.deploysError.Error())
-		content = lipgloss.JoinVertical(lipgloss.Left, header, body, errLine, hint)
-	} else if m.yankedMessage != "" {
-		yankLine := lipgloss.NewStyle().Foreground(healthy).Background(bg).Padding(0, 1).Render(m.yankedMessage)
-		content = lipgloss.JoinVertical(lipgloss.Left, header, body, yankLine, hint)
+	if statusLine != "" {
+		content = lipgloss.JoinVertical(lipgloss.Left, header, body, statusLine, hint)
 	} else {
 		content = lipgloss.JoinVertical(lipgloss.Left, header, body, hint)
 	}
