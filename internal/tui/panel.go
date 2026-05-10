@@ -282,6 +282,9 @@ func (m *Model) renderPanel(width, height int) string {
 }
 
 func (m Model) selectedStage() *kargo.Stage {
+	if m.view == viewTree {
+		return m.selectedTreeStage()
+	}
 	i := m.deploysTable.Cursor()
 	if i < 0 || i >= len(m.visibleDeploys) {
 		return nil

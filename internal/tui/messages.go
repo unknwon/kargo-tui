@@ -113,6 +113,16 @@ func runContextLoginCmd(
 	}
 }
 
+// promoteResultMsg carries the outcome of a PromoteToStage call. Posted by
+// promoteCmd; consumed by the promote overlay's submit step.
+type promoteResultMsg struct {
+	stage         string
+	freight       string
+	promotionName string
+	phase         string
+	err           error
+}
+
 // loadLogsCmd fetches Promotions and Events for the given stage.
 func loadLogsCmd(c *kargo.Client, project, stageName string) tea.Cmd {
 	return func() tea.Msg {

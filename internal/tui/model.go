@@ -29,6 +29,7 @@ const (
 	viewDeploys view = iota
 	viewFreights
 	viewControlFlow
+	viewTree
 )
 
 type phase int
@@ -45,6 +46,7 @@ const (
 	overlayNone overlayMode = iota
 	overlayLogs
 	overlayDiff
+	overlayPromote
 )
 
 // Model is the Bubble Tea model that drives the kargo-tui interface. It
@@ -143,6 +145,21 @@ type Model struct {
 	ctxLoginStatus string
 	ctxLoginCancel context.CancelFunc
 	ctxURLInput    textinput.Model
+
+	// Tree view state. treeNodes is the flat list of currently-visible rows
+	// (rebuilt on each data refresh and on every expand/collapse). Persists
+	// across view switches so navigating away and back keeps your place.
+	treeNodes    []treeNode
+	treeCursor   int
+	treeExpanded map[string]bool
+
+	// Promote overlay state.
+	promoteStage      string // target stage name
+	promoteCandidates []kargo.Freight
+	promoteCursor     int
+	promoteStep       promoteStep
+	promoteResult     string // promotion name on success
+	promoteError      error
 
 	width, height int
 

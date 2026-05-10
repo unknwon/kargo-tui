@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"time"
+
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 )
@@ -143,6 +145,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshPanel()
 		return m, nil
 
+	case promoteResultMsg:
+		// The overlay may have been dismissed before the response landed
+		// (the user hit esc on the submitting screen). We still record
+		// the outcome as a transient yank-style status so they see it.
+		if msg.err != nil {
+			m.promoteError = msg.err
+			m.yankedMessage = "promote failed: " + msg.err.Error()
+		} else {
+			m.promoteResult = msg.promotionName
+			m.yankedMessage = "promotion created: " + msg.promotionName
+		}
+		m.yankedAt = time.Now()
+		if m.overlay == overlayPromote {
+			m.promoteStep = promoteDone
+		}
+		// Force an immediate data refresh so the new promotion appears in
+		// the deploy/tree views without waiting for the next tick.
+		if !m.loading {
+			m.loading = true
+			return m, tea.Batch(
+				loadDeploysCmd(m.client, m.project),
+				loadFreightsCmd(m.client, m.project),
+			)
+		}
+		return m, nil
+
 	case tea.MouseWheelMsg:
 		// Mouse wheel scrolls whichever surface is currently visible:
 		// help and the logs/diff overlay both have their own viewport, the
@@ -224,6 +252,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, nil
+		}
+
+		// Promote overlay: distinct flow (pick → confirm → submit → done).
+		if m.overlay == overlayPromote {
+			return m.updatePromoteOverlay(key)
 		}
 
 		// Logs/Diff overlay: scroll & dismiss only.
@@ -326,6 +359,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			m.setView(viewControlFlow)
 			return m, nil
+		case "t":
+			m.setView(viewTree)
+			return m, nil
+		case "P":
+			s := m.selectedStage()
+			if s == nil {
+				return m, nil
+			}
+			m.openPromoteOverlay(s)
+			return m, nil
 		case "?":
 			m.showHelp = true
 			return m, nil
@@ -340,7 +383,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openArgoCDForSelection()
 			return m, nil
 		case "l":
-			if m.view == viewDeploys || m.view == viewControlFlow {
+			if m.view == viewDeploys || m.view == viewControlFlow || m.view == viewTree {
 				if s := m.selectedStage(); s != nil {
 					m.openLogsOverlay(s.Name)
 					return m, loadLogsCmd(m.client, m.project, s.Name)
@@ -348,8 +391,46 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "D":
-			if m.view == viewDeploys || m.view == viewControlFlow {
+			if m.view == viewDeploys || m.view == viewControlFlow || m.view == viewTree {
 				m.openDiffOverlay()
+				return m, nil
+			}
+			return m, nil
+		}
+
+		// Tree view owns its own navigation: arrow keys move the tree
+		// cursor, +/- expand/collapse, enter toggles. Bypass the table
+		// dispatch below so nothing leaks through to the hidden table.
+		if m.view == viewTree {
+			switch key {
+			case "up", "k":
+				m.moveTreeCursor(-1)
+				return m, nil
+			case "down", "j":
+				m.moveTreeCursor(1)
+				return m, nil
+			case "pgup":
+				m.moveTreeCursor(-10)
+				return m, nil
+			case "pgdown", "pgdn", " ":
+				m.moveTreeCursor(10)
+				return m, nil
+			case "home", "g":
+				m.treeCursor = 0
+				return m, nil
+			case "end", "G":
+				if len(m.treeNodes) > 0 {
+					m.treeCursor = len(m.treeNodes) - 1
+				}
+				return m, nil
+			case "+", "right":
+				m.setTreeNodeExpansion(true)
+				return m, nil
+			case "-", "left":
+				m.setTreeNodeExpansion(false)
+				return m, nil
+			case "enter":
+				m.toggleTreeNode()
 				return m, nil
 			}
 			return m, nil

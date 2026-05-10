@@ -21,8 +21,14 @@ func (m Model) View() tea.View {
 	if m.showHelp {
 		return m.helpView()
 	}
+	if m.overlay == overlayPromote {
+		return m.promoteOverlayView()
+	}
 	if m.overlay != overlayNone {
 		return m.overlayView()
+	}
+	if m.view == viewTree {
+		return m.treeView()
 	}
 	var (
 		title   string
@@ -80,7 +86,7 @@ func (m Model) View() tea.View {
 	}
 
 	help := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).
-		Render("d deploys · c controls · f freights · v details · l logs · D diff · o argo · s sort · y yank · p projects · C contexts · / filter · ? help · q quit")
+		Render("d deploys · c controls · f freights · t tree · v details · l logs · D diff · P promote · o argo · s sort · y yank · p projects · C contexts · / filter · ? help · q quit")
 
 	bodyArea := body
 
