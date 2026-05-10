@@ -325,11 +325,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "left":
+			// Graph and tree views consume arrow keys themselves
+			// (spatial cursor / collapse). Tables get column scroll.
+			if m.view == viewGraph {
+				m.moveGraphCursor("left")
+				return m, nil
+			}
+			if m.view == viewTree {
+				m.setTreeNodeExpansion(false)
+				return m, nil
+			}
 			m.scrollLeft()
 			return m, nil
 		case "right":
+			if m.view == viewGraph {
+				m.moveGraphCursor("right")
+				return m, nil
+			}
+			if m.view == viewTree {
+				m.setTreeNodeExpansion(true)
+				return m, nil
+			}
 			m.scrollRight()
 			return m, nil
+		case "up", "k":
+			if m.view == viewGraph {
+				m.moveGraphCursor("up")
+				return m, nil
+			}
+			if m.view == viewTree {
+				m.moveTreeCursor(-1)
+				return m, nil
+			}
+		case "down", "j":
+			if m.view == viewGraph {
+				m.moveGraphCursor("down")
+				return m, nil
+			}
+			if m.view == viewTree {
+				m.moveTreeCursor(1)
+				return m, nil
+			}
 		case "p":
 			// Re-open the project picker. nsExplicit prevents the
 			// auto-select branch from short-circuiting the picker when only
@@ -363,9 +399,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setView(viewTree)
 			return m, nil
 		case "g":
-			// Top-level `g` opens the graph view. In detailsOnly the
-			// `g` key still goes to the panel-top scroll handler below.
-			if !m.detailsOnly {
+			// Top-level `g` opens the graph view. In detailsOnly mode it
+			// scrolls the panel to top (handled lower down); in tree view
+			// it jumps to the first row (handled in the tree block).
+			if !m.detailsOnly && m.view != viewTree {
 				m.setView(viewGraph)
 				return m, nil
 			}
@@ -405,43 +442,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Graph view: arrow keys move the cursor along edges/siblings,
-		// enter opens the logs overlay for the selected node.
+		// Graph view: enter opens logs for the selected node. Arrow keys
+		// were already handled in the top-level switch above.
 		if m.view == viewGraph {
-			switch key {
-			case "left":
-				m.moveGraphCursor("left")
-				return m, nil
-			case "right":
-				m.moveGraphCursor("right")
-				return m, nil
-			case "up", "k":
-				m.moveGraphCursor("up")
-				return m, nil
-			case "down", "j":
-				m.moveGraphCursor("down")
-				return m, nil
-			case "enter":
+			if key == "enter" {
 				if s := m.selectedStage(); s != nil {
 					m.openLogsOverlay(s.Name)
 					return m, loadLogsCmd(m.client, m.project, s.Name)
 				}
-				return m, nil
 			}
 			return m, nil
 		}
 
-		// Tree view owns its own navigation: arrow keys move the tree
-		// cursor, +/- expand/collapse, enter toggles. Bypass the table
-		// dispatch below so nothing leaks through to the hidden table.
+		// Tree view owns its own page/expand/toggle keys. Arrow + j/k
+		// nav was already handled in the top-level switch above.
 		if m.view == viewTree {
 			switch key {
-			case "up", "k":
-				m.moveTreeCursor(-1)
-				return m, nil
-			case "down", "j":
-				m.moveTreeCursor(1)
-				return m, nil
 			case "pgup":
 				m.moveTreeCursor(-10)
 				return m, nil
@@ -456,10 +472,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.treeCursor = len(m.treeNodes) - 1
 				}
 				return m, nil
-			case "+", "right":
+			case "+":
 				m.setTreeNodeExpansion(true)
 				return m, nil
-			case "-", "left":
+			case "-":
 				m.setTreeNodeExpansion(false)
 				return m, nil
 			case "enter":
