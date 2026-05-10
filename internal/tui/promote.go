@@ -189,9 +189,16 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 	if rowBudget < 1 {
 		rowBudget = 1
 	}
+	// Padding(0, 1) on header/hint claims 2 horizontal cells, so the
+	// text budget is w-2. Clamp to >= 1 because clipToWidth treats
+	// width<=0 as "don't clip", which would re-introduce wrap.
+	headHintBudget := w - 2
+	if headHintBudget < 1 {
+		headHintBudget = 1
+	}
 
-	header := titleStyle.Padding(0, 1).Render(clipToWidth(m.overlayTitle, w-2))
-	hint := hintStyle.Padding(0, 1).Render(clipToWidth("↑/↓ select · pgup/pgdn/space/home/end jump · enter pick · v details · esc cancel", w-2))
+	header := titleStyle.Padding(0, 1).Render(clipToWidth(m.overlayTitle, headHintBudget))
+	hint := hintStyle.Padding(0, 1).Render(clipToWidth("↑/↓ select · pgup/pgdn/space/home/end jump · enter pick · v details · esc cancel", headHintBudget))
 
 	bodyH := m.height - 2
 	if bodyH < 1 {
@@ -283,8 +290,8 @@ func (m *Model) preparePromoteViewingViewport() {
 		innerW = 1
 	}
 	innerH := m.height - promoteViewingChromeRows
-	if innerH < 3 {
-		innerH = 3
+	if innerH < 1 {
+		innerH = 1
 	}
 	m.overlayVP.SetWidth(innerW)
 	m.overlayVP.SetHeight(innerH)
