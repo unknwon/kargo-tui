@@ -18,10 +18,21 @@ type promoteStep int
 
 const (
 	promotePicking promoteStep = iota
+	promoteViewing
 	promoteConfirming
 	promoteSubmitting
 	promoteDone
 )
+
+// promotePickerPage returns the number of rows pgup/pgdown moves the
+// picker cursor — roughly the visible window minus one row of overlap.
+func promotePickerPage(termHeight int) int {
+	n := termHeight - 12
+	if n < 3 {
+		n = 3
+	}
+	return n
+}
 
 // openPromoteOverlay seeds promote state for the given stage and computes
 // the freight pickable for that stage's warehouse.
@@ -101,56 +112,22 @@ func (m Model) promoteOverlayView() tea.View {
 
 	innerW := popupInnerWidth(m.width)
 
+	// The picking and viewing steps run full-screen so a long candidate
+	// list (or detail body) can't push content past the terminal edge.
+	// Confirm / submitting / done remain in the compact popup frame
+	// below — they're 1–3 lines and the popup looks better there.
+	if m.promoteStep == promoteViewing {
+		return m.promoteViewingView(titleStyle, hintStyle)
+	}
+	if m.promoteStep == promotePicking {
+		return m.promotePickingView(titleStyle, hintStyle, itemStyle, selStyle)
+	}
+
 	var lines []string
 	lines = append(lines, titleStyle.Render(m.overlayTitle))
 	lines = append(lines, "")
 
 	switch m.promoteStep {
-	case promotePicking:
-		if len(m.promoteCandidates) == 0 {
-			lines = append(lines,
-				hintStyle.Render("no candidate freight found for this stage"),
-				"",
-				hintStyle.Render("esc dismiss"),
-			)
-			break
-		}
-		lines = append(lines, hintStyle.Render("↑/↓ select · enter pick · esc cancel"))
-		lines = append(lines, "")
-		maxItems := m.height - len(lines) - 6
-		if maxItems < 5 {
-			maxItems = 5
-		}
-		start := 0
-		if m.promoteCursor >= maxItems {
-			start = m.promoteCursor - maxItems + 1
-		}
-		end := start + maxItems
-		if end > len(m.promoteCandidates) {
-			end = len(m.promoteCandidates)
-		}
-		for i := start; i < end; i++ {
-			f := m.promoteCandidates[i]
-			label := shortFreight(f.Name) + aliasSuffix(f.Alias)
-			meta := []string{}
-			if f.Warehouse != "" {
-				meta = append(meta, "wh="+f.Warehouse)
-			}
-			if !f.Created.IsZero() {
-				meta = append(meta, ageString(f.Created)+" old")
-			}
-			if len(meta) > 0 {
-				label += "  " + strings.Join(meta, " · ")
-			}
-			marker := "  "
-			if i == m.promoteCursor {
-				marker = "▌ "
-				lines = append(lines, selStyle.Render(marker+label))
-			} else {
-				lines = append(lines, itemStyle.Render(marker+label))
-			}
-		}
-
 	case promoteConfirming:
 		f := m.promoteCandidates[m.promoteCursor]
 		lines = append(lines,
@@ -188,6 +165,138 @@ func (m Model) promoteOverlayView() tea.View {
 	return v
 }
 
+// promotePickingView renders the freight-candidate picker as a
+// full-screen frame: 1-row header, N-row body, 1-row hint. Because the
+// chrome is a fixed 3 rows the body height is unambiguous (`m.height -
+// 3`) and the cursor windowing always keeps the highlighted row visible.
+func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lipgloss.Style) tea.View {
+	header := titleStyle.Padding(0, 1).Render(m.overlayTitle)
+	hint := hintStyle.Padding(0, 1).Render("↑/↓ select · pgup/pgdn/home/end jump · enter pick · v details · esc cancel")
+
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
+	bodyH := m.height - 3
+	if bodyH < 3 {
+		bodyH = 3
+	}
+
+	var body string
+	if len(m.promoteCandidates) == 0 {
+		body = hintStyle.Padding(0, 1).Render("no candidate freight found for this stage")
+	} else {
+		// Window the candidate slice so the cursor row stays inside the
+		// visible body. clipToWidth on each label keeps every entry on a
+		// single terminal row even when the freight name + warehouse +
+		// age would otherwise wrap.
+		start := 0
+		if m.promoteCursor >= bodyH {
+			start = m.promoteCursor - bodyH + 1
+		}
+		end := start + bodyH
+		if end > len(m.promoteCandidates) {
+			end = len(m.promoteCandidates)
+		}
+		rows := make([]string, 0, end-start)
+		for i := start; i < end; i++ {
+			f := m.promoteCandidates[i]
+			label := shortFreight(f.Name) + aliasSuffix(f.Alias)
+			meta := []string{}
+			if f.Warehouse != "" {
+				meta = append(meta, "wh="+f.Warehouse)
+			}
+			if !f.Created.IsZero() {
+				meta = append(meta, ageString(f.Created)+" old")
+			}
+			if len(meta) > 0 {
+				label += "  " + strings.Join(meta, " · ")
+			}
+			marker := "  "
+			row := marker + label
+			row = clipToWidth(row, w-2)
+			if i == m.promoteCursor {
+				row = "▌ " + clipToWidth(label, w-2)
+				rows = append(rows, selStyle.Padding(0, 1).Render(row))
+			} else {
+				rows = append(rows, itemStyle.Padding(0, 1).Render(row))
+			}
+		}
+		body = strings.Join(rows, "\n")
+	}
+
+	content := lipgloss.JoinVertical(lipgloss.Left, header, body, hint)
+	v := tea.NewView(content)
+	v.AltScreen = true
+	v.BackgroundColor = bg
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+// preparePromoteViewingViewport sizes overlayVP and loads the highlighted
+// candidate's detail block. Must be called both when entering the viewing
+// step (so the keyboard handler operates on a populated viewport with the
+// correct dimensions — maxYOffset depends on both) and from any handler
+// that may have been called before the first View() pass.
+func (m *Model) preparePromoteViewingViewport() {
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
+	h := m.height - 4
+	if h < 5 {
+		h = 5
+	}
+	innerW := w - 4
+	m.overlayVP.SetWidth(innerW)
+	m.overlayVP.SetHeight(h - 2)
+	m.overlayVP.SetContent(m.promoteViewingContent(innerW))
+}
+
+// promoteViewingView renders the highlighted candidate's full freight
+// detail inside the shared overlayVP viewport so long detail bodies are
+// scrollable (j/k, pgup/pgdn, home/end).
+func (m Model) promoteViewingView(titleStyle, hintStyle lipgloss.Style) tea.View {
+	m.preparePromoteViewingViewport()
+	header := titleStyle.Render(m.overlayTitle)
+	hint := hintStyle.Render("v/esc back · enter promote · j/k scroll · home/end top/bottom")
+	body := lipgloss.JoinVertical(lipgloss.Left, header, "", m.overlayVP.View(), "", hint)
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(muted).
+		Background(bg).
+		Padding(1, 2).
+		Render(body)
+	v := tea.NewView(box)
+	v.AltScreen = true
+	v.BackgroundColor = bg
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+// promoteViewingContent builds the scrollable detail body for the
+// highlighted candidate. Mirrors the freight-detail render used in the
+// side panel.
+func (m Model) promoteViewingContent(innerW int) string {
+	if m.promoteCursor < 0 || m.promoteCursor >= len(m.promoteCandidates) {
+		return ""
+	}
+	f := m.promoteCandidates[m.promoteCursor]
+	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
+	keyStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
+	valStyle := lipgloss.NewStyle().Foreground(normal).Background(bg)
+	row := func(k, v string) string {
+		return keyStyle.Render(padRight(k+":", 12)) + " " + valStyle.Render(wrap(v, innerW-13))
+	}
+	var lines []string
+	lines = append(lines, titleStyle.Render(shortFreight(f.Name)+aliasSuffix(f.Alias)))
+	if f.Alias != "" {
+		lines = append(lines, keyStyle.Render(f.Alias))
+	}
+	lines = append(lines, freightDetailLines(f, innerW, row, keyStyle, valStyle)...)
+	return strings.Join(lines, "\n")
+}
+
 // updatePromoteOverlay routes a key press while the promote overlay is open.
 // Each promoteStep accepts a different key set: pick (arrows + enter),
 // confirm (y/n), submitting (esc to dismiss without cancelling the in-flight
@@ -209,11 +318,65 @@ func (m Model) updatePromoteOverlay(key string) (tea.Model, tea.Cmd) {
 				m.promoteCursor++
 			}
 			return m, nil
+		case "pgup":
+			m.promoteCursor -= promotePickerPage(m.height)
+			if m.promoteCursor < 0 {
+				m.promoteCursor = 0
+			}
+			return m, nil
+		case "pgdown", "pgdn", " ":
+			m.promoteCursor += promotePickerPage(m.height)
+			if m.promoteCursor > len(m.promoteCandidates)-1 {
+				m.promoteCursor = len(m.promoteCandidates) - 1
+			}
+			return m, nil
+		case "home":
+			m.promoteCursor = 0
+			return m, nil
+		case "end":
+			m.promoteCursor = len(m.promoteCandidates) - 1
+			return m, nil
 		case "enter":
 			if len(m.promoteCandidates) == 0 {
 				return m, nil
 			}
 			m.promoteStep = promoteConfirming
+			return m, nil
+		case "v":
+			if len(m.promoteCandidates) == 0 {
+				return m, nil
+			}
+			m.promoteStep = promoteViewing
+			m.preparePromoteViewingViewport()
+			m.overlayVP.GotoTop()
+			return m, nil
+		}
+	case promoteViewing:
+		m.preparePromoteViewingViewport()
+		switch key {
+		case "v", "esc", "q":
+			m.promoteStep = promotePicking
+			return m, nil
+		case "enter":
+			m.promoteStep = promoteConfirming
+			return m, nil
+		case "up", "k":
+			m.overlayVP.ScrollUp(1)
+			return m, nil
+		case "down", "j":
+			m.overlayVP.ScrollDown(1)
+			return m, nil
+		case "pgup":
+			m.overlayVP.PageUp()
+			return m, nil
+		case "pgdown", "pgdn", " ":
+			m.overlayVP.PageDown()
+			return m, nil
+		case "home":
+			m.overlayVP.GotoTop()
+			return m, nil
+		case "end":
+			m.overlayVP.GotoBottom()
 			return m, nil
 		}
 	case promoteConfirming:
