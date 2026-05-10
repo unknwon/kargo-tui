@@ -88,23 +88,9 @@ func (m Model) composePanelLines(innerW int) []string {
 			lines = append(lines, row("Promo Name", s.LastPromoName))
 		}
 		if !s.LastPromoAt.IsZero() {
-			lines = append(lines, row("Promoted", ageString(s.LastPromoAt)+" ago"))
+			lines = append(lines, row("Promoted", whenString(s.LastPromoAt)))
 		}
-		lines = append(lines, row("Age", ageString(s.Created)))
-		if len(s.CurrentFreight) > 0 {
-			lines = append(lines, "")
-			lines = append(lines, keyStyle.Render("Current Freight:"))
-			for _, fn := range s.CurrentFreight {
-				disp := fn
-				if isFreightName(disp) {
-					disp = disp[:8]
-					if a := m.aliasOf(fn); a != "" {
-						disp += " (" + a + ")"
-					}
-				}
-				lines = append(lines, valStyle.Render("  • "+wrap(disp, innerW-4)))
-			}
-		}
+		lines = append(lines, row("Age", whenString(s.Created)))
 		if len(s.ArgoCDApps) > 0 {
 			lines = append(lines, "")
 			lines = append(lines, keyStyle.Render("Argo CD Apps:"))
@@ -167,51 +153,12 @@ func freightDetailLines(
 	var lines []string
 	lines = append(lines, "")
 	lines = append(lines, row("Warehouse", emptyDash(f.Warehouse)))
-	lines = append(lines, row("Created", f.Created.Local().Format("2006-01-02 15:04:05 MST")))
-	lines = append(lines, row("Age", ageString(f.Created)))
+	lines = append(lines, row("Created", whenString(f.Created)))
 	lines = append(lines, row("Verified", fmt.Sprintf("%d", f.VerifiedIn)))
 	lines = append(lines, row("Approved", fmt.Sprintf("%d", f.ApprovedFor)))
-	if len(f.CurrentlyIn) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, keyStyle.Render("Currently In:"))
-		for _, st := range f.CurrentlyIn {
-			lines = append(lines, valStyle.Render("  • "+st))
-		}
-	}
-	if len(f.VerifiedStages) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, keyStyle.Render("Verified In:"))
-		for _, st := range f.VerifiedStages {
-			lines = append(lines, valStyle.Render("  • "+st))
-		}
-	}
-	if len(f.ApprovedStages) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, keyStyle.Render("Approved For:"))
-		for _, st := range f.ApprovedStages {
-			lines = append(lines, valStyle.Render("  • "+st))
-		}
-	}
-	if len(f.Commits) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, keyStyle.Render("Commits:"))
-		for _, c := range f.Commits {
-			lines = append(lines, valStyle.Render("  • "+wrap(c.RepoURL, innerW-4)))
-			lines = append(lines, valStyle.Render("    "+wrap(c.ID, innerW-4)))
-			if c.Branch != "" {
-				lines = append(lines, keyStyle.Render("    branch: "+c.Branch))
-			}
-			if c.Tag != "" {
-				lines = append(lines, keyStyle.Render("    tag:    "+c.Tag))
-			}
-			if c.Author != "" {
-				lines = append(lines, keyStyle.Render("    author: "+c.Author))
-			}
-			if c.Message != "" {
-				lines = append(lines, valStyle.Render("    "+wrap(c.Message, innerW-4)))
-			}
-		}
-	}
+	// Artifact contents (Images / Charts / Commits) come before membership
+	// lists (Currently In / Verified In / Approved For) so the reader sees
+	// "what is this freight" before "where has it been".
 	if len(f.Images) > 0 {
 		lines = append(lines, "")
 		lines = append(lines, keyStyle.Render("Images:"))
@@ -239,6 +186,47 @@ func freightDetailLines(
 			}
 		}
 	}
+	if len(f.Commits) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, keyStyle.Render("Commits:"))
+		for _, c := range f.Commits {
+			lines = append(lines, valStyle.Render("  • "+wrap(c.RepoURL, innerW-4)))
+			lines = append(lines, valStyle.Render("    "+wrap(c.ID, innerW-4)))
+			if c.Branch != "" {
+				lines = append(lines, keyStyle.Render("    branch: "+c.Branch))
+			}
+			if c.Tag != "" {
+				lines = append(lines, keyStyle.Render("    tag:    "+c.Tag))
+			}
+			if c.Author != "" {
+				lines = append(lines, keyStyle.Render("    author: "+c.Author))
+			}
+			if c.Message != "" {
+				lines = append(lines, valStyle.Render("    "+wrap(c.Message, innerW-4)))
+			}
+		}
+	}
+	if len(f.CurrentlyIn) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, keyStyle.Render("Currently In:"))
+		for _, st := range f.CurrentlyIn {
+			lines = append(lines, valStyle.Render("  • "+st))
+		}
+	}
+	if len(f.VerifiedStages) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, keyStyle.Render("Verified In:"))
+		for _, st := range f.VerifiedStages {
+			lines = append(lines, valStyle.Render("  • "+st))
+		}
+	}
+	if len(f.ApprovedStages) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, keyStyle.Render("Approved For:"))
+		for _, st := range f.ApprovedStages {
+			lines = append(lines, valStyle.Render("  • "+st))
+		}
+	}
 	return lines
 }
 
@@ -264,7 +252,7 @@ func (m *Model) renderPanel(width, height int) string {
 		Padding(0, 1).
 		Width(width).
 		Height(height)
-	if m.panelFocused {
+	if m.detailsOnly {
 		border = border.BorderForeground(selected)
 	} else {
 		border = border.BorderForeground(muted)

@@ -8,12 +8,15 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// View renders the current frame. It dispatches between the namespace
+// View renders the current frame. It dispatches between the project
 // picker, the help overlay, the logs/diff overlay, and the main
 // table+details layout depending on Model state.
 func (m Model) View() tea.View {
-	if m.phase == phasePickingNamespace {
+	if m.phase == phasePickingProject {
 		return m.pickerView()
+	}
+	if m.phase == phasePickingContext {
+		return m.contextPickerView()
 	}
 	if m.showHelp {
 		return m.helpView()
@@ -51,8 +54,8 @@ func (m Model) View() tea.View {
 		}
 	}
 
-	headerText := fmt.Sprintf("kargo-tui · %s · namespace=%s · %d items · updated %s",
-		title, m.namespace, count, ageString(m.lastUpdate))
+	headerText := fmt.Sprintf("kargo-tui · %s · %s · project=%s · %d items",
+		title, m.contextName, m.project, count)
 	if m.loading {
 		headerText += " · refreshing…"
 	}
@@ -77,7 +80,7 @@ func (m Model) View() tea.View {
 	}
 
 	help := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).
-		Render("d deploys · c controls · f freights · v details · l logs · D diff · o argo · s sort · y yank · n namespace · / filter · ? help · q quit")
+		Render("d deploys · c controls · f freights · v details · l logs · D diff · o argo · s sort · y yank · p projects · C contexts · / filter · ? help · q quit")
 
 	bodyArea := body
 
@@ -99,5 +102,6 @@ func (m Model) View() tea.View {
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.BackgroundColor = bg
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }

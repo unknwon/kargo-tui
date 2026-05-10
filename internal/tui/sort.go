@@ -59,11 +59,20 @@ func (m *Model) sortDeploys(in []kargo.Stage) []kargo.Stage {
 		case sortByName:
 			return out[i].Name < out[j].Name
 		case sortByAge:
-			return out[i].Created.After(out[j].Created)
+			if !out[i].Created.Equal(out[j].Created) {
+				return out[i].Created.After(out[j].Created)
+			}
+			return out[i].Name < out[j].Name
 		case sortByHealth:
-			return healthRank(out[i].Health) < healthRank(out[j].Health)
+			if ri, rj := healthRank(out[i].Health), healthRank(out[j].Health); ri != rj {
+				return ri < rj
+			}
+			return out[i].Name < out[j].Name
 		case sortByLastPromo:
-			return out[i].LastPromoAt.After(out[j].LastPromoAt)
+			if !out[i].LastPromoAt.Equal(out[j].LastPromoAt) {
+				return out[i].LastPromoAt.After(out[j].LastPromoAt)
+			}
+			return out[i].Name < out[j].Name
 		}
 		return false
 	})
@@ -85,7 +94,10 @@ func (m *Model) sortFreights(in []kargo.Freight) []kargo.Freight {
 		case sortByName:
 			return out[i].Name < out[j].Name
 		case sortByAge:
-			return out[i].Created.After(out[j].Created)
+			if !out[i].Created.Equal(out[j].Created) {
+				return out[i].Created.After(out[j].Created)
+			}
+			return out[i].Name < out[j].Name
 		}
 		return false
 	})

@@ -20,7 +20,7 @@ func (m Model) helpView() tea.View {
 		{"Views", "d", "deploys"},
 		{"", "c", "controls"},
 		{"", "f", "freights"},
-		{"", "n", "switch namespace"},
+		{"", "p", "switch project"},
 		{"", "v", "toggle full-screen details"},
 		{"", "?", "show this help overlay"},
 		{"Actions", "l", "logs (promotions + events) for selected stage"},
@@ -30,16 +30,17 @@ func (m Model) helpView() tea.View {
 		{"", "y", "yank (copy) selected resource name to clipboard"},
 		{"Navigation", "↑/k", "move cursor up"},
 		{"", "↓/j", "move cursor down"},
+		{"", "wheel", "mouse wheel scrolls cursor / overlay / details"},
 		{"", "←", "scroll columns left"},
 		{"", "→", "scroll columns right"},
-		{"", "tab", "toggle focus between table and details panel"},
-		{"", "pgup/pgdn", "page details panel (when focused)"},
-		{"", "g/G", "jump to top / bottom of details panel (when focused)"},
+		{"", "pgup/pgdn", "page details panel (full-screen mode)"},
+		{"", "g/G", "jump to top / bottom of details panel (full-screen mode)"},
 		{"Filtering", "/", "start filtering (per list)"},
 		{"", "enter", "apply filter"},
 		{"", "esc", "dismiss details/overlay, then clear filter"},
 		{"Other", "r", "refresh now"},
 		{"", "q / ctrl+c", "quit"},
+		{"Contexts", "C", "switch Kargo context (then press + to log in to a new URL)"},
 	}
 
 	keyW := 12
@@ -79,5 +80,6 @@ func (m Model) helpView() tea.View {
 	v := tea.NewView(box)
 	v.AltScreen = true
 	v.BackgroundColor = bg
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }

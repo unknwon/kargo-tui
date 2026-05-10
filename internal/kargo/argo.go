@@ -2,14 +2,10 @@ package kargo
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"sort"
 	"strings"
-
-	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // ArgoCDAppRef points at an Argo CD Application referenced by a Stage's
@@ -21,54 +17,33 @@ type ArgoCDAppRef struct {
 	Sync      string
 }
 
-// DiscoverArgoCDBaseURL returns the configured Argo CD UI URL by reading the
-// argocd-cm ConfigMap; falls back to scanning Ingresses in the argocd
-// namespace for the argocd-server service. Returns "" when nothing is found
-// so callers can degrade gracefully.
-func DiscoverArgoCDBaseURL(ctx context.Context) string {
-	c, err := newClient()
-	if err != nil {
+// DiscoverArgoCDBaseURL queries the Kargo server's GetConfig endpoint for
+// the URL of any configured Argo CD shard. Returns "" when nothing is
+// configured so callers can degrade gracefully.
+func (c *Client) DiscoverArgoCDBaseURL(ctx context.Context) string {
+	var resp struct {
+		ArgoCDShards map[string]struct {
+			URL       string `json:"url"`
+			Namespace string `json:"namespace"`
+		} `json:"argocdShards"`
+	}
+	if err := c.rpc.call(ctx, "GetConfig", struct{}{}, &resp); err != nil {
 		return ""
 	}
-	for _, ns := range []string{"argocd", "argo-cd"} {
-		var cm corev1.ConfigMap
-		if err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: "argocd-cm"}, &cm); err == nil {
-			if u := strings.TrimRight(cm.Data["url"], "/"); u != "" {
-				return u
-			}
-		}
-		var ings networkingv1.IngressList
-		if err := c.List(ctx, &ings, client.InNamespace(ns)); err == nil {
-			for _, ing := range ings.Items {
-				for _, rule := range ing.Spec.Rules {
-					if rule.Host != "" && referencesArgoCDServer(ing) {
-						scheme := "https"
-						if len(ing.Spec.TLS) == 0 {
-							scheme = "http"
-						}
-						return scheme + "://" + rule.Host
-					}
-				}
-			}
+	if shard, ok := resp.ArgoCDShards["default"]; ok && shard.URL != "" {
+		return strings.TrimRight(shard.URL, "/")
+	}
+	names := make([]string, 0, len(resp.ArgoCDShards))
+	for name := range resp.ArgoCDShards {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if shard := resp.ArgoCDShards[name]; shard.URL != "" {
+			return strings.TrimRight(shard.URL, "/")
 		}
 	}
 	return ""
-}
-
-// referencesArgoCDServer returns true if any of the Ingress's rules backs an
-// argocd-server Service. Used as a heuristic for which Ingress to trust.
-func referencesArgoCDServer(ing networkingv1.Ingress) bool {
-	for _, rule := range ing.Spec.Rules {
-		if rule.HTTP == nil {
-			continue
-		}
-		for _, p := range rule.HTTP.Paths {
-			if p.Backend.Service != nil && strings.Contains(p.Backend.Service.Name, "argocd-server") {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // parseArgoApps extracts Argo CD Application references from a Stage's
@@ -76,9 +51,37 @@ func referencesArgoCDServer(ing networkingv1.Ingress) bool {
 // containing an applicationStatuses entry with name/namespace and nested
 // health/sync state. We tolerate inconsistent casing ("Name" vs "name") since
 // the upstream payload mixes both.
+//
+// Wire shape: under Connect-RPC over JSON the proto `bytes` field comes
+// through as {"raw": "<base64>"} (the protojson canonical form for bytes
+// fields nested in a map<string, RawExtension>-style value). The OpenAPI
+// transport used to inline the JSON; we accept both for safety.
 func parseArgoApps(raw []byte) []ArgoCDAppRef {
 	if len(raw) == 0 {
 		return nil
+	}
+	// {"raw": "<base64>"} → decode the wrapped bytes and parse those.
+	if raw[0] == '{' {
+		var wrap struct {
+			Raw string `json:"raw"`
+		}
+		if err := json.Unmarshal(raw, &wrap); err == nil && wrap.Raw != "" {
+			if decoded, err := base64.StdEncoding.DecodeString(wrap.Raw); err == nil {
+				raw = decoded
+			}
+		}
+	}
+	// Bare quoted base64 (older shape). Fall through to plain-JSON parse on
+	// failure so a non-base64 quoted payload still works.
+	if raw[0] == '"' {
+		var s string
+		if err := json.Unmarshal(raw, &s); err == nil {
+			if decoded, err := base64.StdEncoding.DecodeString(s); err == nil {
+				raw = decoded
+			} else {
+				raw = []byte(s)
+			}
+		}
 	}
 	var entries []map[string]any
 	if err := json.Unmarshal(raw, &entries); err != nil {

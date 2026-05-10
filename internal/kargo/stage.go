@@ -2,11 +2,12 @@ package kargo
 
 import (
 	"context"
-	"fmt"
+	"sort"
 	"time"
 
 	kargoapi "github.com/akuity/kargo/api/v1alpha1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	svcv1alpha1 "unknwon.dev/kargo-tui/internal/kargoapi/svc"
 )
 
 // Stage is a flattened, UI-friendly view of a kargoapi.Stage.
@@ -27,74 +28,104 @@ type Stage struct {
 	Labels         map[string]string
 }
 
-// ListStages loads all Stages in the given namespace using the user's
-// kubeconfig.
-func ListStages(ctx context.Context, namespace string) ([]Stage, error) {
-	c, err := newClient()
-	if err != nil {
+// ListStages loads all Stages in the given project via the Kargo API server.
+// An empty project falls back to the client's default. Results are sorted
+// newest-first with name as tiebreaker so refreshes don't reshuffle stages
+// that share a creation timestamp.
+//
+// Uses Connect-RPC binary protobuf rather than JSON because the Kargo
+// server's proto-JSON encoder elides every metav1.Time value to `{}` —
+// see internal/kargoapi/README.md for the full story.
+func (c *Client) ListStages(ctx context.Context, project string) ([]Stage, error) {
+	if project == "" {
+		project = c.project
+	}
+	req := &svcv1alpha1.ListStagesRequest{Project: project}
+	resp := &svcv1alpha1.ListStagesResponse{}
+	if err := c.rpc.callProto(ctx, "ListStages", req, resp); err != nil {
 		return nil, err
 	}
 
-	var sl kargoapi.StageList
-	if err := c.List(ctx, &sl, client.InNamespace(namespace)); err != nil {
-		return nil, fmt.Errorf("list stages in %q: %w", namespace, err)
+	out := make([]Stage, 0, len(resp.Stages))
+	for _, s := range resp.Stages {
+		if s == nil {
+			continue
+		}
+		stage := flattenStage(s)
+		out = append(out, stage)
 	}
-
-	out := make([]Stage, 0, len(sl.Items))
-	for _, s := range sl.Items {
-		var (
-			health       string
-			healthIssues []string
-			argoApps     []ArgoCDAppRef
-		)
-		if s.Status.Health != nil {
-			health = string(s.Status.Health.Status)
-			healthIssues = s.Status.Health.Issues
-			if s.Status.Health.Output != nil {
-				argoApps = parseArgoApps(s.Status.Health.Output.Raw)
-			}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].Created.Equal(out[j].Created) {
+			return out[i].Created.After(out[j].Created)
 		}
-		var (
-			lastPromo     string
-			lastPromoName string
-			lastPromoAt   time.Time
-		)
-		if s.Status.LastPromotion != nil {
-			lastPromoName = s.Status.LastPromotion.Name
-			if s.Status.LastPromotion.Status != nil {
-				lastPromo = string(s.Status.LastPromotion.Status.Phase)
-			}
-			if s.Status.LastPromotion.FinishedAt != nil {
-				lastPromoAt = s.Status.LastPromotion.FinishedAt.Time
-			}
-		}
-
-		var current []string
-		if len(s.Status.FreightHistory) > 0 {
-			head := s.Status.FreightHistory[0]
-			if head != nil {
-				for _, fr := range head.Freight {
-					current = append(current, fr.Name)
-				}
-			}
-		}
-
-		out = append(out, Stage{
-			Name:           s.Name,
-			Namespace:      s.Namespace,
-			Shard:          s.Spec.Shard,
-			IsControlFlow:  s.IsControlFlow(),
-			Health:         health,
-			HealthIssues:   healthIssues,
-			FreightSummary: s.Status.FreightSummary,
-			LastPromo:      lastPromo,
-			LastPromoName:  lastPromoName,
-			LastPromoAt:    lastPromoAt,
-			CurrentFreight: current,
-			ArgoCDApps:     argoApps,
-			Created:        s.CreationTimestamp.Time,
-			Labels:         s.Labels,
-		})
-	}
+		return out[i].Name < out[j].Name
+	})
 	return out, nil
+}
+
+// flattenStage projects a single kargoapi.Stage into the TUI's Stage view.
+func flattenStage(s *kargoapi.Stage) Stage {
+	var (
+		health       string
+		healthIssues []string
+		argoApps     []ArgoCDAppRef
+	)
+	if s.Status.Health != nil {
+		health = string(s.Status.Health.Status)
+		healthIssues = s.Status.Health.Issues
+		if len(s.Status.Health.Output.Raw) > 0 {
+			argoApps = parseArgoApps(s.Status.Health.Output.Raw)
+		}
+	}
+
+	var (
+		lastPromo     string
+		lastPromoName string
+		lastPromoAt   time.Time
+	)
+	if lp := s.Status.LastPromotion; lp != nil {
+		lastPromoName = lp.Name
+		if !lp.FinishedAt.IsZero() {
+			lastPromoAt = lp.FinishedAt.Time
+		}
+		if lp.Status != nil {
+			lastPromo = string(lp.Status.Phase)
+			if lastPromoAt.IsZero() && !lp.Status.FinishedAt.IsZero() {
+				lastPromoAt = lp.Status.FinishedAt.Time
+			}
+		}
+	}
+
+	// Resolve currently-deployed freight names from the most recent
+	// freight-history entry.
+	var current []string
+	if len(s.Status.FreightHistory) > 0 {
+		for _, ref := range s.Status.FreightHistory[0].Freight {
+			if ref.Name != "" {
+				current = append(current, ref.Name)
+			}
+		}
+	}
+	if len(current) == 0 && s.Status.LastPromotion != nil && s.Status.LastPromotion.Freight != nil {
+		if n := s.Status.LastPromotion.Freight.Name; n != "" {
+			current = append(current, n)
+		}
+	}
+
+	return Stage{
+		Name:           s.Name,
+		Namespace:      s.Namespace,
+		Shard:          s.Spec.Shard,
+		IsControlFlow:  s.IsControlFlow(),
+		Health:         health,
+		HealthIssues:   healthIssues,
+		FreightSummary: s.Status.FreightSummary,
+		LastPromo:      lastPromo,
+		LastPromoName:  lastPromoName,
+		LastPromoAt:    lastPromoAt,
+		CurrentFreight: current,
+		ArgoCDApps:     argoApps,
+		Created:        s.CreationTimestamp.Time,
+		Labels:         s.Labels,
+	}
 }
