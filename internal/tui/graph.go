@@ -62,8 +62,8 @@ type graphCfg struct {
 
 func defaultGraphCfg() graphCfg {
 	return graphCfg{
-		NodeW:   16, // fits ~14 chars of name + a 4-glyph status row
-		NodeH:   6,  // top border + name + glyphs + freight + age/shard + bottom border
+		NodeW:   22, // room for words like "OutOfSync" + freight short SHA
+		NodeH:   6,  // top border + name + status word + freight + age/shard + bottom border
 		ColGap:  6,
 		RowGap:  1,
 		HMargin: 1,
@@ -415,7 +415,6 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int, m Model) string {
 
 	edgeStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
 	cursorEdgeStyle := lipgloss.NewStyle().Foreground(selected).Background(bg).Bold(true)
-	defaultBorderStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
 	cursorBorderStyle := lipgloss.NewStyle().Foreground(selected).Background(bg).Bold(true)
 	bgStyle := lipgloss.NewStyle().Background(bg)
 
@@ -476,16 +475,20 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int, m Model) string {
 		}
 	}
 
-	// Nodes (skip dummies — they're invisible routing slots).
+	// Nodes (skip dummies — they're invisible routing slots). Border
+	// colour = worst-of-state for the stage (heatmap effect — the eye
+	// catches red/yellow boxes against a sea of green/grey). The cursor
+	// row swaps in a thicker, brighter border so selection wins.
 	for i, n := range g.nodes {
 		if n.Dummy {
 			continue
 		}
-		border := defaultBorderStyle
+		_, stateColor := worstState(n.Stage)
+		border := lipgloss.NewStyle().Foreground(stateColor).Background(bg)
 		if i == cursorIdx {
 			border = cursorBorderStyle
 		}
-		drawNode(cv, n, g.cfg, border, bgStyle, m)
+		drawNode(cv, n, g.cfg, border, bgStyle, m, i == cursorIdx)
 	}
 
 	// Viewport pan: shift the visible window so the cursor node stays
@@ -529,31 +532,36 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int, m Model) string {
 
 // drawNode paints a single node box. Layout (NodeH-2 inner rows):
 //
-//	row 0 : name (truncated, coloured by stage health)
-//	row 1 : status glyphs — health · last-promo · argo health · argo sync
-//	row 2 : freight short SHA + alias hint
-//	row 3 : age + shard (only when shard is non-default)
+//	row 0 : name (truncated)
+//	row 1 : status word — picked by worstState, coloured to match border
+//	row 2 : freight short SHA + alias
+//	row 3 : age + shard (when non-default)
 //
-// The status row uses single-cell glyphs so a 16-wide node fits the
-// whole picture without wrapping. Borders use border style; everything
-// inside paints over an explicit bg-cleared cell so edge glyphs from
-// the routing pass don't bleed into node text.
-func drawNode(cv *canvas, n graphNode, cfg graphCfg, border, bgStyle lipgloss.Style, m Model) {
+// The border carries the urgency signal so a glance across the graph
+// reveals where attention is needed; the inside reads like the deploy
+// list. Selected cursor uses a heavy double-line border so it wins
+// against any state colour.
+func drawNode(cv *canvas, n graphNode, cfg graphCfg, border, bgStyle lipgloss.Style, m Model, cursor bool) {
 	x, y := n.X, n.Y
 	w, h := cfg.NodeW, cfg.NodeH
 
-	// Border.
-	cv.set(x, y, '┌', border)
-	cv.set(x+w-1, y, '┐', border)
-	cv.set(x, y+h-1, '└', border)
-	cv.set(x+w-1, y+h-1, '┘', border)
+	// Border. Heavy box-drawing chars on the cursor row so selection
+	// reads as more important than any state colour.
+	tl, tr, bl, br, hor, ver := '┌', '┐', '└', '┘', '─', '│'
+	if cursor {
+		tl, tr, bl, br, hor, ver = '╔', '╗', '╚', '╝', '═', '║'
+	}
+	cv.set(x, y, tl, border)
+	cv.set(x+w-1, y, tr, border)
+	cv.set(x, y+h-1, bl, border)
+	cv.set(x+w-1, y+h-1, br, border)
 	for i := x + 1; i < x+w-1; i++ {
-		cv.set(i, y, '─', border)
-		cv.set(i, y+h-1, '─', border)
+		cv.set(i, y, hor, border)
+		cv.set(i, y+h-1, hor, border)
 	}
 	for i := y + 1; i < y+h-1; i++ {
-		cv.set(x, i, '│', border)
-		cv.set(x+w-1, i, '│', border)
+		cv.set(x, i, ver, border)
+		cv.set(x+w-1, i, ver, border)
 	}
 	// Clear interior.
 	for iy := y + 1; iy < y+h-1; iy++ {
@@ -563,52 +571,25 @@ func drawNode(cv *canvas, n graphNode, cfg graphCfg, border, bgStyle lipgloss.St
 	}
 
 	innerW := w - 2
+	if innerW < 1 {
+		return
+	}
 	rowY := y + 1
+	mutedStyle := bgStyle.Foreground(muted)
 
-	// Row 0: name.
-	name := n.Stage.Name
-	if ansi.StringWidth(name) > innerW {
-		name = ansi.Truncate(name, innerW, "…")
-	}
-	nameStyle := bgStyle.Foreground(normal).Bold(true)
-	switch n.Stage.Health {
-	case "Healthy":
-		nameStyle = nameStyle.Foreground(healthy)
-	case "Unhealthy":
-		nameStyle = nameStyle.Foreground(degraded)
-	case "Progressing":
-		nameStyle = nameStyle.Foreground(progressing)
-	}
-	cv.writeAt(x+1, rowY, padOrTrim(name, innerW), nameStyle)
+	// Row 0: name. Truncate via fitToWidth which always returns exactly
+	// innerW visible cells (truncates with ellipsis or pads with spaces),
+	// so the writeAt loop never overruns into the right border.
+	cv.writeAt(x+1, rowY, fitToWidth(n.Stage.Name, innerW), bgStyle.Foreground(normal).Bold(true))
 	rowY++
 	if rowY >= y+h-1 {
 		return
 	}
 
-	// Row 1: status glyphs. Health · last-promo · argo health · argo sync.
-	// Each painted in its own colour so semantics survive at-a-glance.
-	col := x + 1
-	mutedStyle := bgStyle.Foreground(muted)
-	cv.writeAt(col, rowY, healthGlyph(n.Stage.Health), bgStyle.Foreground(healthColor(n.Stage.Health)))
-	col += 2
-	cv.writeAt(col, rowY, promoGlyph(n.Stage.LastPromo), bgStyle.Foreground(promoColor(n.Stage.LastPromo)))
-	col += 2
-	if n.Stage.IsControlFlow {
-		// Control-flow stages have no Argo wiring; show a flow glyph in
-		// place of the Argo pair so users can spot them at a glance.
-		cv.writeAt(col, rowY, "⇶", bgStyle.Foreground(progressing).Italic(true))
-	} else {
-		ah, as := worstArgo(n.Stage.ArgoCDApps)
-		if ah != "" || as != "" || len(n.Stage.ArgoCDApps) > 0 {
-			cv.writeAt(col, rowY, argoHealthGlyph(ah), bgStyle.Foreground(argoHealthColor(ah)))
-			col += 1
-			cv.writeAt(col, rowY, argoSyncGlyph(as), bgStyle.Foreground(argoSyncColor(as)))
-			col += 1
-		} else {
-			cv.writeAt(col, rowY, "··", mutedStyle)
-			col += 2
-		}
-	}
+	// Row 1: status word, coloured the same as the border so the inside
+	// echoes the outside ("the red box says 'Promo failed'").
+	stateLabel, stateColor := worstState(n.Stage)
+	cv.writeAt(x+1, rowY, fitToWidth(stateLabel, innerW), bgStyle.Foreground(stateColor).Bold(true))
 	rowY++
 	if rowY >= y+h-1 {
 		return
@@ -627,13 +608,13 @@ func drawNode(cv *canvas, n graphNode, cfg graphCfg, border, bgStyle lipgloss.St
 		freight = shortFreight(n.Stage.FreightSummary)
 		freightStyle = bgStyle.Foreground(normal)
 	}
-	cv.writeAt(x+1, rowY, padOrTrim(freight, innerW), freightStyle)
+	cv.writeAt(x+1, rowY, fitToWidth(freight, innerW), freightStyle)
 	rowY++
 	if rowY >= y+h-1 {
 		return
 	}
 
-	// Row 3: age + shard (when non-default).
+	// Row 3: age + shard.
 	var age string
 	switch {
 	case !n.Stage.LastPromoAt.IsZero():
@@ -647,67 +628,70 @@ func drawNode(cv *canvas, n graphNode, cfg graphCfg, border, bgStyle lipgloss.St
 	if n.Stage.Shard != "" {
 		tail = age + " " + n.Stage.Shard
 	}
-	cv.writeAt(x+1, rowY, padOrTrim(tail, innerW), mutedStyle)
+	cv.writeAt(x+1, rowY, fitToWidth(tail, innerW), mutedStyle)
 }
 
-// healthGlyph picks a single-cell symbol for a Kargo stage health value.
-func healthGlyph(h string) string {
-	switch h {
-	case "Healthy":
-		return "✓"
-	case "Unhealthy":
-		return "✗"
-	case "Progressing":
-		return "⟳"
-	case "NotApplicable":
-		return "—"
-	default:
-		return "·"
+// worstState picks the most urgent state to surface on the node — a
+// single short label + the colour to render it in. Severity ordering,
+// most urgent first:
+//
+//  1. Promo failed/aborted     → "Promo failed"   (red)
+//  2. Stage health unhealthy   → "Unhealthy"      (red)
+//  3. Argo degraded/missing    → "Argo degraded"  (red)
+//  4. Argo out-of-sync         → "OutOfSync"      (red)
+//  5. Promo running/pending    → "Promoting…"     (yellow)
+//  6. Stage progressing        → "Progressing"    (yellow)
+//  7. Argo progressing/sus.    → "Argo syncing"   (yellow)
+//  8. Control-flow stage       → "Control-flow"   (yellow, italic)
+//  9. Healthy + Synced         → "Healthy"        (green)
+//  10. Anything else / unknown → "—"              (muted)
+func worstState(s *kargo.Stage) (string, color.Color) {
+	if s == nil {
+		return "—", muted
 	}
-}
-
-// healthColor returns the foreground colour for a stage health glyph,
-// matching the table view's health column.
-func healthColor(h string) color.Color {
-	switch h {
-	case "Healthy":
-		return healthy
-	case "Unhealthy":
-		return degraded
-	case "Progressing":
-		return progressing
-	default:
-		return muted
-	}
-}
-
-// promoGlyph picks a glyph for a Promotion phase.
-func promoGlyph(p string) string {
-	switch p {
-	case "Succeeded":
-		return "▶"
+	switch s.LastPromo {
 	case "Failed", "Errored", "Aborted":
-		return "✗"
-	case "Running", "Pending":
-		return "…"
-	case "":
-		return "·"
-	default:
-		return "?"
+		return "Promo failed", degraded
 	}
+	if s.Health == "Unhealthy" {
+		return "Unhealthy", degraded
+	}
+	ah, as := worstArgo(s.ArgoCDApps)
+	switch ah {
+	case "Degraded", "Missing":
+		return "Argo " + lower(ah), degraded
+	}
+	if as == "OutOfSync" {
+		return "OutOfSync", degraded
+	}
+	switch s.LastPromo {
+	case "Running", "Pending":
+		return "Promoting…", progressing
+	}
+	if s.Health == "Progressing" {
+		return "Progressing", progressing
+	}
+	if ah == "Progressing" || ah == "Suspended" {
+		return "Argo syncing", progressing
+	}
+	if s.IsControlFlow {
+		return "Control-flow", progressing
+	}
+	if s.Health == "Healthy" {
+		return "Healthy", healthy
+	}
+	return "—", muted
 }
 
-func promoColor(p string) color.Color {
-	switch p {
-	case "Succeeded":
-		return healthy
-	case "Failed", "Errored", "Aborted":
-		return degraded
-	case "Running", "Pending":
-		return progressing
-	default:
-		return muted
+func lower(s string) string {
+	if s == "" {
+		return s
 	}
+	b := []byte(s)
+	if b[0] >= 'A' && b[0] <= 'Z' {
+		b[0] += 'a' - 'A'
+	}
+	return string(b)
 }
 
 // worstArgo collapses a stage's per-app Argo CD state into a single
@@ -750,65 +734,26 @@ func worstArgo(apps []kargo.ArgoCDAppRef) (health, sync string) {
 	return health, sync
 }
 
-func argoHealthGlyph(h string) string {
-	switch h {
-	case "Healthy":
-		return "●"
-	case "Progressing":
-		return "◐"
-	case "Degraded", "Missing":
-		return "○"
-	case "Suspended":
-		return "◌"
-	default:
-		return "·"
+// fitToWidth returns s sized to exactly w visible cells: truncated with
+// an ellipsis when too long, padded with spaces when too short. Unlike
+// padOrTrim it always uses an ellipsis on truncation so callers know
+// the row was clipped.
+func fitToWidth(s string, w int) string {
+	if w <= 0 {
+		return ""
 	}
-}
-
-func argoHealthColor(h string) color.Color {
-	switch h {
-	case "Healthy":
-		return healthy
-	case "Progressing":
-		return progressing
-	case "Degraded", "Missing":
-		return degraded
-	case "Suspended":
-		return progressing
-	default:
-		return muted
-	}
-}
-
-func argoSyncGlyph(s string) string {
-	switch s {
-	case "Synced":
-		return "◎"
-	case "OutOfSync":
-		return "◌"
-	default:
-		return "·"
-	}
-}
-
-func argoSyncColor(s string) color.Color {
-	switch s {
-	case "Synced":
-		return healthy
-	case "OutOfSync":
-		return degraded
-	default:
-		return muted
-	}
-}
-
-func padOrTrim(s string, w int) string {
 	cur := ansi.StringWidth(s)
 	if cur == w {
 		return s
 	}
 	if cur > w {
-		return ansi.Truncate(s, w, "")
+		t := ansi.Truncate(s, w, "…")
+		// Truncate may return slightly under w when the ellipsis pushes
+		// the boundary; re-pad to guarantee exact width.
+		if tw := ansi.StringWidth(t); tw < w {
+			t += strings.Repeat(" ", w-tw)
+		}
+		return t
 	}
 	return s + strings.Repeat(" ", w-cur)
 }
