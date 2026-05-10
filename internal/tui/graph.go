@@ -848,7 +848,7 @@ func (m Model) graphView() tea.View {
 
 	statusLine := graphStatusLine(g, cursorIdx)
 	hint := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).
-		Render("←/→/↑/↓ move along edges · enter logs · P promote · t tree · d deploys · ? help · q quit")
+		Render("←/→/↑/↓ move along edges · l logs · P promote · > downstream · t tree · d deploys · ? help · q quit")
 
 	var content string
 	if m.deploysError != nil {

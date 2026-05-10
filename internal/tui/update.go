@@ -498,15 +498,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Graph view: enter opens logs for the selected node. Arrow keys
-		// were already handled in the top-level switch above.
+		// Graph view consumes any other unhandled key so it doesn't leak
+		// into the hidden table dispatch below. Arrow keys are handled
+		// in the top-level switch; logs / promote / diff use l / P / D
+		// like every other view.
 		if m.view == viewGraph {
-			if key == "enter" {
-				if s := m.selectedStage(); s != nil {
-					m.openLogsOverlay(s.Name)
-					return m, loadLogsCmd(m.client, m.project, s.Name)
-				}
-			}
 			return m, nil
 		}
 
