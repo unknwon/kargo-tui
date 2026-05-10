@@ -31,10 +31,23 @@ type graphNode struct {
 	Layer int // 0-based column
 	Slot  int // 0-based row within layer
 	X, Y  int // top-left cell of the node box
+	// Dummy nodes carry no Stage; they exist purely so multi-layer edges
+	// can be routed as a chain of single-layer segments. They aren't drawn
+	// or selectable.
+	Dummy bool
+	// LongEdge identifies which original edge a dummy node belongs to,
+	// so the segment renderer can colour them consistently when the
+	// cursor highlights an edge.
+	LongEdge int
 }
 
 type graphEdge struct {
 	From, To int // indices into nodes
+	// Original is the index into the *user-visible* edge that this
+	// segment belongs to. For non-dummy single-layer edges it equals the
+	// segment's own index; for dummy chain segments, every segment in the
+	// chain shares the originating edge's index.
+	Original int
 }
 
 type graphCfg struct {
@@ -115,7 +128,59 @@ func layoutGraph(stages []kargo.Stage, cfg graphCfg) graphLayout {
 		depth(s.Name)
 	}
 
-	// Group nodes by layer.
+	// Long-edge handling: split any (parent, child) edge spanning more
+	// than one layer into a chain of single-layer segments by inserting
+	// dummy node names into intermediate layers. Dummies carry no Stage
+	// and aren't selectable; they exist only so the renderer routes the
+	// chain through dedicated gutter slots in each layer instead of
+	// drawing across other nodes' columns.
+	type segment struct{ from, to string }
+	var segments []segment
+	dummyNames := make(map[string]bool)
+	dummyOrigEdge := make(map[string]int) // dummy → original edge index (for cursor highlight)
+	dummyLayer := make(map[string]int)
+	origEdges := make([]struct{ from, to string }, 0)
+	for parent, kids := range children {
+		for _, k := range kids {
+			origEdgeIdx := len(origEdges)
+			origEdges = append(origEdges, struct{ from, to string }{parent, k})
+			lp, lc := layer[parent], layer[k]
+			if lc-lp <= 1 {
+				segments = append(segments, segment{parent, k})
+				continue
+			}
+			prev := parent
+			for l := lp + 1; l < lc; l++ {
+				name := fmt.Sprintf("__dummy:%s→%s@%d", parent, k, l)
+				dummyNames[name] = true
+				dummyOrigEdge[name] = origEdgeIdx
+				dummyLayer[name] = l
+				segments = append(segments, segment{prev, name})
+				prev = name
+			}
+			segments = append(segments, segment{prev, k})
+		}
+	}
+	// origEdgeOf returns the original edge index for a single-layer
+	// segment (for non-dummy real edges, equal to the per-edge index;
+	// for chain segments, equal to the chain's source edge).
+	origEdgeOf := func(seg segment) int {
+		if i, ok := dummyOrigEdge[seg.from]; ok {
+			return i
+		}
+		if i, ok := dummyOrigEdge[seg.to]; ok {
+			return i
+		}
+		// Real single-layer edge — find it by linear scan; cheap (small N).
+		for i, e := range origEdges {
+			if e.from == seg.from && e.to == seg.to {
+				return i
+			}
+		}
+		return -1
+	}
+
+	// Group node names (real + dummy) by layer.
 	byLayer := make(map[int][]string)
 	maxLayer := 0
 	for name, l := range layer {
@@ -124,25 +189,37 @@ func layoutGraph(stages []kargo.Stage, cfg graphCfg) graphLayout {
 			maxLayer = l
 		}
 	}
-	// Initial within-layer order: alphabetical for determinism.
+	for name, l := range dummyLayer {
+		byLayer[l] = append(byLayer[l], name)
+		if l > maxLayer {
+			maxLayer = l
+		}
+	}
+	// Initial within-layer order: alphabetical for determinism (dummies
+	// sort by their generated name, which keeps siblings of the same
+	// origin edge clustered).
 	for l := range byLayer {
 		sort.Strings(byLayer[l])
 	}
 
-	// Barycenter pass: for layers > 0, reorder by mean parent slot. We
-	// need slot indexes from the previous layer to compute barycentres,
-	// so build slot indexes layer-by-layer.
+	// Build a segment-aware parents map (real + dummy). Used only for
+	// the barycenter ordering pass below.
+	segParents := make(map[string][]string)
+	for _, s := range segments {
+		segParents[s.to] = append(segParents[s.to], s.from)
+	}
+
+	// Barycenter pass: for layers > 0, reorder by mean parent slot using
+	// the segment graph so dummies pull toward their real source.
 	slot := make(map[string]int)
 	for i, n := range byLayer[0] {
 		slot[n] = i
 	}
 	for l := 1; l <= maxLayer; l++ {
 		layerNodes := byLayer[l]
-		// score(node) = mean parent slot, fallback to 0 when no parents
-		// fall in a previous layer.
 		score := make(map[string]float64, len(layerNodes))
 		for _, n := range layerNodes {
-			ps := parents[n]
+			ps := segParents[n]
 			if len(ps) == 0 {
 				score[n] = 0
 				continue
@@ -172,39 +249,42 @@ func layoutGraph(stages []kargo.Stage, cfg graphCfg) graphLayout {
 		}
 	}
 
-	// Materialise nodes with cell coordinates.
-	nodes := make([]graphNode, 0, len(stages))
-	idxByName := make(map[string]int, len(stages))
+	// Materialise nodes with cell coordinates. Dummies use the same
+	// box dimensions for layout but render as nothing — they simply
+	// reserve a slot that subsequent edge segments can route through.
+	nodes := make([]graphNode, 0, len(stages)+len(dummyNames))
+	idxByName := make(map[string]int, len(stages)+len(dummyNames))
 	for l := 0; l <= maxLayer; l++ {
 		for s, name := range byLayer[l] {
-			st := byName[name]
 			x := cfg.HMargin + l*(cfg.NodeW+cfg.ColGap)
 			y := cfg.VMargin + s*(cfg.NodeH+cfg.RowGap)
 			idxByName[name] = len(nodes)
-			nodes = append(nodes, graphNode{
-				Stage: st,
+			node := graphNode{
 				Layer: l,
 				Slot:  s,
 				X:     x,
 				Y:     y,
-			})
+			}
+			if dummyNames[name] {
+				node.Dummy = true
+				node.LongEdge = dummyOrigEdge[name]
+			} else {
+				node.Stage = byName[name]
+			}
+			nodes = append(nodes, node)
 		}
 	}
 
-	// Edges (parent → child).
-	edges := make([]graphEdge, 0)
-	for parent, kids := range children {
-		fi, ok := idxByName[parent]
-		if !ok {
+	// Edges = single-layer segments, each tagged with its originating
+	// edge index so the cursor highlight follows the whole chain.
+	edges := make([]graphEdge, 0, len(segments))
+	for _, s := range segments {
+		fi, ok1 := idxByName[s.from]
+		ti, ok2 := idxByName[s.to]
+		if !ok1 || !ok2 {
 			continue
 		}
-		for _, k := range kids {
-			ti, ok := idxByName[k]
-			if !ok {
-				continue
-			}
-			edges = append(edges, graphEdge{From: fi, To: ti})
-		}
+		edges = append(edges, graphEdge{From: fi, To: ti, Original: origEdgeOf(s)})
 	}
 
 	// Total canvas size.
@@ -338,29 +418,47 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int, m Model) string {
 	cursorBorderStyle := lipgloss.NewStyle().Foreground(selected).Background(bg).Bold(true)
 	bgStyle := lipgloss.NewStyle().Background(bg)
 
-	// Edges first so node boxes paint over them at the boundary.
+	// Determine which original edge the cursor highlights (if any). An
+	// edge is highlighted when either of its real endpoints is the
+	// cursor; for chained long edges, every segment with a matching
+	// Original index lights up too.
+	highlightedOrig := -1
+	if cursorIdx >= 0 && cursorIdx < len(g.nodes) {
+		for _, e := range g.edges {
+			if e.From == cursorIdx || e.To == cursorIdx {
+				highlightedOrig = e.Original
+				break
+			}
+		}
+	}
+
+	// Paint each segment. Real edges and dummy chain segments share the
+	// same routing math: out the source's right edge, vertical in a
+	// per-segment gutter, into the target's left edge.
 	for _, e := range g.edges {
 		from := g.nodes[e.From]
 		to := g.nodes[e.To]
 		style := edgeStyle
-		if e.From == cursorIdx || e.To == cursorIdx {
+		if e.Original == highlightedOrig && highlightedOrig != -1 {
 			style = cursorEdgeStyle
 		}
-		// Path: out the right side of `from`, left to the gutter column,
-		// vertical to to.Y midline, then right into the left side of `to`.
 		startX := from.X + g.cfg.NodeW
 		startY := from.Y + g.cfg.NodeH/2
 		endX := to.X - 1
 		endY := to.Y + g.cfg.NodeH/2
+		// When the source is a dummy, "right side" is the centre of the
+		// dummy's reserved slot — there's no box edge to paint outside
+		// of, so start one cell into the gutter.
+		if from.Dummy {
+			startX = from.X
+		}
+		if to.Dummy {
+			endX = to.X + g.cfg.NodeW - 1
+		}
 		gutter := from.X + g.cfg.NodeW + g.cfg.ColGap/2
-		// Horizontal out of source.
 		cv.hLine(startX, gutter, startY, style)
-		// Vertical in the gutter (skipped if startY == endY).
 		if startY != endY {
 			cv.vLine(gutter, startY, endY, style)
-			// Corner glyphs: top-left bend at the higher end, bottom-left
-			// at the lower end. The "bend" is from the perspective of the
-			// gutter column.
 			if endY > startY {
 				cv.set(gutter, startY, '┐', style)
 				cv.set(gutter, endY, '└', style)
@@ -369,14 +467,19 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int, m Model) string {
 				cv.set(gutter, endY, '┌', style)
 			}
 		}
-		// Horizontal into target.
 		cv.hLine(gutter, endX, endY, style)
-		// Arrowhead at the target side.
-		cv.set(endX, endY, '▶', style)
+		// Arrowhead only when the target is a real node (terminal segment
+		// of any chain). Mid-chain dummies extend the line plainly.
+		if !to.Dummy {
+			cv.set(endX, endY, '▶', style)
+		}
 	}
 
-	// Nodes.
+	// Nodes (skip dummies — they're invisible routing slots).
 	for i, n := range g.nodes {
+		if n.Dummy {
+			continue
+		}
 		border := defaultBorderStyle
 		if i == cursorIdx {
 			border = cursorBorderStyle
@@ -585,15 +688,47 @@ func graphStatusLine(g graphLayout, cursorIdx int) string {
 	return muted.Render(strings.Join(parts, " · "))
 }
 
-// graphNeighbors returns the indices of incoming and outgoing nodes for
-// the node at idx.
+// graphNeighbors returns the indices of real (non-dummy) incoming and
+// outgoing nodes for the node at idx, walking through any dummy chain
+// nodes that sit on multi-layer edges. The cursor never lands on a
+// dummy, so navigation always jumps to the real node at the far end.
 func graphNeighbors(g graphLayout, idx int) (in, out []int) {
+	// Outgoing: follow each successor; if it's a dummy, recurse to
+	// its successor until we hit a real node.
+	var followForward func(start int) int
+	followForward = func(start int) int {
+		if !g.nodes[start].Dummy {
+			return start
+		}
+		for _, e := range g.edges {
+			if e.From == start {
+				return followForward(e.To)
+			}
+		}
+		return -1
+	}
+	var followBackward func(start int) int
+	followBackward = func(start int) int {
+		if !g.nodes[start].Dummy {
+			return start
+		}
+		for _, e := range g.edges {
+			if e.To == start {
+				return followBackward(e.From)
+			}
+		}
+		return -1
+	}
 	for _, e := range g.edges {
 		switch {
 		case e.To == idx:
-			in = append(in, e.From)
+			if r := followBackward(e.From); r >= 0 {
+				in = append(in, r)
+			}
 		case e.From == idx:
-			out = append(out, e.To)
+			if r := followForward(e.To); r >= 0 {
+				out = append(out, r)
+			}
 		}
 	}
 	return in, out
@@ -611,22 +746,43 @@ func pickNeighbor(g graphLayout, candidates []int, _ string) (int, bool) {
 
 // rebuildGraph recomputes the layout from the current m.deploys. Called
 // from refreshRows so the graph stays in sync with the rest of the UI.
+// Ensures the cursor lands on a real (non-dummy) node afterwards.
 func (m *Model) rebuildGraph() {
 	m.graphLayout = layoutGraph(m.deploys, defaultGraphCfg())
+	if len(m.graphLayout.nodes) == 0 {
+		m.graphCursor = 0
+		return
+	}
 	if m.graphCursor >= len(m.graphLayout.nodes) {
 		m.graphCursor = len(m.graphLayout.nodes) - 1
 	}
 	if m.graphCursor < 0 {
 		m.graphCursor = 0
 	}
+	if m.graphLayout.nodes[m.graphCursor].Dummy {
+		// Walk forward until we find a real node — happens when the
+		// previous cursor index now points at a freshly-inserted dummy
+		// after a layout change.
+		for i, n := range m.graphLayout.nodes {
+			if !n.Dummy {
+				m.graphCursor = i
+				return
+			}
+		}
+	}
 }
 
-// selectedGraphStage returns the stage under the graph cursor, or nil.
+// selectedGraphStage returns the stage under the graph cursor, or nil
+// for dummy waypoints / out-of-range cursors.
 func (m Model) selectedGraphStage() *kargo.Stage {
 	if m.graphCursor < 0 || m.graphCursor >= len(m.graphLayout.nodes) {
 		return nil
 	}
-	return m.graphLayout.nodes[m.graphCursor].Stage
+	n := m.graphLayout.nodes[m.graphCursor]
+	if n.Dummy {
+		return nil
+	}
+	return n.Stage
 }
 
 // moveGraphCursor advances the graph cursor in a spatial direction. left
@@ -671,10 +827,11 @@ func (m *Model) moveGraphCursor(dir string) {
 		}
 		m.graphCursor = best
 	case "up", "down":
-		// Walk siblings within the same layer.
+		// Walk siblings within the same layer; skip dummies since they're
+		// not selectable.
 		var sibs []int
 		for i, n := range g.nodes {
-			if n.Layer == cur.Layer {
+			if n.Layer == cur.Layer && !n.Dummy {
 				sibs = append(sibs, i)
 			}
 		}
