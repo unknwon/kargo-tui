@@ -25,9 +25,11 @@ const (
 )
 
 // promotePickerPage returns the number of rows pgup/pgdown moves the
-// picker cursor — roughly the visible window minus one row of overlap.
+// picker cursor — the visible body height minus one row of overlap so
+// the user keeps a row of context across page jumps. Body height
+// mirrors promotePickingView (m.height - 3 for header + hint).
 func promotePickerPage(termHeight int) int {
-	n := termHeight - 12
+	n := termHeight - 4
 	if n < 3 {
 		n = 3
 	}
@@ -170,13 +172,22 @@ func (m Model) promoteOverlayView() tea.View {
 // chrome is a fixed 3 rows the body height is unambiguous (`m.height -
 // 3`) and the cursor windowing always keeps the highlighted row visible.
 func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lipgloss.Style) tea.View {
-	header := titleStyle.Padding(0, 1).Render(m.overlayTitle)
-	hint := hintStyle.Padding(0, 1).Render("↑/↓ select · pgup/pgdn/home/end jump · enter pick · v details · esc cancel")
-
 	w := m.width
 	if w <= 0 {
 		w = 80
 	}
+	// Each row uses Padding(0, 1) (2 horizontal cells) and the marker
+	// occupies 2 leading cells inside the padded area. Clip the label
+	// to (terminal width - 2 padding - 2 marker) so a wide freight
+	// name + warehouse + age can never wrap to a second terminal row.
+	rowBudget := w - 4
+	if rowBudget < 8 {
+		rowBudget = 8
+	}
+
+	header := titleStyle.Padding(0, 1).Render(clipToWidth(m.overlayTitle, w-2))
+	hint := hintStyle.Padding(0, 1).Render(clipToWidth("↑/↓ select · pgup/pgdn/home/end jump · enter pick · v details · esc cancel", w-2))
+
 	bodyH := m.height - 3
 	if bodyH < 3 {
 		bodyH = 3
@@ -186,10 +197,8 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 	if len(m.promoteCandidates) == 0 {
 		body = hintStyle.Padding(0, 1).Render("no candidate freight found for this stage")
 	} else {
-		// Window the candidate slice so the cursor row stays inside the
-		// visible body. clipToWidth on each label keeps every entry on a
-		// single terminal row even when the freight name + warehouse +
-		// age would otherwise wrap.
+		// Window the candidate slice so the cursor row stays inside
+		// the visible body.
 		start := 0
 		if m.promoteCursor >= bodyH {
 			start = m.promoteCursor - bodyH + 1
@@ -212,11 +221,13 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 			if len(meta) > 0 {
 				label += "  " + strings.Join(meta, " · ")
 			}
+			label = clipToWidth(label, rowBudget)
 			marker := "  "
-			row := marker + label
-			row = clipToWidth(row, w-2)
 			if i == m.promoteCursor {
-				row = "▌ " + clipToWidth(label, w-2)
+				marker = "▌ "
+			}
+			row := marker + label
+			if i == m.promoteCursor {
 				rows = append(rows, selStyle.Padding(0, 1).Render(row))
 			} else {
 				rows = append(rows, itemStyle.Padding(0, 1).Render(row))
@@ -234,10 +245,12 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 }
 
 // preparePromoteViewingViewport sizes overlayVP and loads the highlighted
-// candidate's detail block. Must be called both when entering the viewing
-// step (so the keyboard handler operates on a populated viewport with the
-// correct dimensions — maxYOffset depends on both) and from any handler
-// that may have been called before the first View() pass.
+// candidate's detail block. promoteOverlayView is a value receiver, so
+// any width/height/content set inside View() mutates a throwaway copy
+// and never reaches the real model — meaning the key handler would
+// compute scroll offsets against a zero-sized, empty viewport and clamp
+// every j/k to no-op. Call this from the handler itself (with a pointer
+// receiver) before reading or scrolling the viewport.
 func (m *Model) preparePromoteViewingViewport() {
 	w := m.width
 	if w <= 0 {
