@@ -1,0 +1,187 @@
+package tui
+
+import (
+	"strings"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+)
+
+// updatePicker handles input while the namespace picker is active. It owns
+// keypress, namespace-loaded, and window-size events for the picker phase.
+func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		return m, nil
+
+	case namespacesLoadedMsg:
+		m.nsLoading = false
+		m.namespaces = msg.namespaces
+		m.namespacesError = msg.err
+		// Auto-select when exactly one Kargo project namespace exists.
+		if msg.err == nil && len(msg.namespaces) == 1 {
+			return m.startWithNamespace(msg.namespaces[0])
+		}
+		return m, nil
+
+	case tea.KeyPressMsg:
+		key := msg.String()
+		filtered := m.filteredNamespaces()
+		switch key {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "esc":
+			// If picker was opened from a running session, allow esc back out.
+			if m.namespace != "" {
+				m.phase = phaseRunning
+				return m, nil
+			}
+			return m, tea.Quit
+		case "up", "ctrl+p":
+			if m.nsCursor > 0 {
+				m.nsCursor--
+			}
+			return m, nil
+		case "down", "ctrl+n":
+			if m.nsCursor < len(filtered)-1 {
+				m.nsCursor++
+			}
+			return m, nil
+		case "enter":
+			if m.nsCursor < 0 || m.nsCursor >= len(filtered) {
+				return m, nil
+			}
+			ns := filtered[m.nsCursor]
+			return m.startWithNamespace(ns)
+		case "r":
+			if !m.nsLoading {
+				m.nsLoading = true
+				return m, loadNamespacesCmd()
+			}
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.nsFilter, cmd = m.nsFilter.Update(msg)
+		// Reset cursor when the filter narrows to fewer rows.
+		if m.nsCursor >= len(m.filteredNamespaces()) {
+			m.nsCursor = 0
+		}
+		return m, cmd
+	}
+	return m, nil
+}
+
+// filteredNamespaces returns the namespaces matching the current picker
+// search text (case-insensitive substring match), or all namespaces when
+// the filter is empty.
+func (m Model) filteredNamespaces() []string {
+	q := strings.ToLower(strings.TrimSpace(m.nsFilter.Value()))
+	if q == "" {
+		return m.namespaces
+	}
+	out := make([]string, 0, len(m.namespaces))
+	for _, n := range m.namespaces {
+		if strings.Contains(strings.ToLower(n), q) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// startWithNamespace transitions out of the picker into the running phase
+// for the given namespace, clearing stale data and dispatching initial
+// loaders + the refresh ticker.
+func (m Model) startWithNamespace(ns string) (Model, tea.Cmd) {
+	m.namespace = ns
+	m.phase = phaseRunning
+	m.nsFilter.Blur()
+	// Clear stale data and force a fresh load + tick loop.
+	m.deploys = nil
+	m.freights = nil
+	m.visibleDeploys = nil
+	m.visibleFreights = nil
+	m.lastUpdate = time.Time{}
+	m.refreshRows()
+	// Re-fit tables in case window size message already arrived.
+	if m.width > 0 {
+		h := m.height - 4
+		if h < 3 {
+			h = 3
+		}
+		m.deploysTable.SetHeight(h)
+		m.deploysTable.SetWidth(m.width)
+		m.freightsTable.SetHeight(h)
+		m.freightsTable.SetWidth(m.width)
+	}
+	m.refreshPanel()
+	m.loading = true
+	return m, tea.Batch(
+		loadDeploysCmd(ns),
+		loadFreightsCmd(ns),
+		tickCmd(),
+	)
+}
+
+// pickerView renders the namespace picker (used during phasePickingNamespace).
+func (m Model) pickerView() tea.View {
+	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
+	hintStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
+	itemStyle := lipgloss.NewStyle().Foreground(normal).Background(bg)
+	selStyle := lipgloss.NewStyle().Foreground(bg).Background(selected).Bold(true)
+	errStyle := lipgloss.NewStyle().Foreground(degraded).Background(bg)
+
+	var lines []string
+	lines = append(lines, titleStyle.Render("Select a Kargo project namespace"))
+	lines = append(lines, hintStyle.Render("type to filter · ↑/↓ select · enter open · r reload · esc quit"))
+	lines = append(lines, "")
+	lines = append(lines, m.nsFilter.View())
+	lines = append(lines, "")
+
+	if m.namespacesError != nil {
+		lines = append(lines, errStyle.Render("error: "+m.namespacesError.Error()))
+	} else if m.nsLoading {
+		lines = append(lines, hintStyle.Render("loading namespaces…"))
+	} else {
+		filtered := m.filteredNamespaces()
+		if len(filtered) == 0 {
+			lines = append(lines, hintStyle.Render("no Kargo project namespaces found"))
+		} else {
+			maxItems := m.height - len(lines) - 4
+			if maxItems < 5 {
+				maxItems = 5
+			}
+			start := 0
+			if m.nsCursor >= maxItems {
+				start = m.nsCursor - maxItems + 1
+			}
+			end := start + maxItems
+			if end > len(filtered) {
+				end = len(filtered)
+			}
+			for i := start; i < end; i++ {
+				marker := "  "
+				if i == m.nsCursor {
+					marker = "▌ "
+					lines = append(lines, selStyle.Render(marker+filtered[i]))
+				} else {
+					lines = append(lines, itemStyle.Render(marker+filtered[i]))
+				}
+			}
+		}
+	}
+
+	body := strings.Join(lines, "\n")
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(muted).
+		Background(bg).
+		Padding(1, 2).
+		Render(body)
+
+	v := tea.NewView(box)
+	v.AltScreen = true
+	v.BackgroundColor = bg
+	return v
+}

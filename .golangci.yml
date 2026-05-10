@@ -1,0 +1,36 @@
+version: "2"
+linters:
+  enable:
+    - nakedret
+    - rowserrcheck
+    - unconvert
+    - unparam
+  settings:
+    staticcheck:
+      checks:
+        - all
+        - "-QF1001" # I'm a math noob
+        - "-ST1016" # Some legit code uses this pattern
+    nakedret:
+      max-func-lines: 0 # Disallow any unnamed return statement
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
