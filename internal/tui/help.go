@@ -7,16 +7,12 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// helpView renders the keybindings overlay. The body lives inside a
-// scrollable viewport so it stays usable on small terminals.
-func (m Model) helpView() tea.View {
-	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
-	keyStyle := lipgloss.NewStyle().Foreground(selected).Bold(true).Background(bg)
-	descStyle := lipgloss.NewStyle().Foreground(normal).Background(bg)
-	hintStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
-	sectStyle := lipgloss.NewStyle().Foreground(progressing).Bold(true).Background(bg)
-
-	bindings := []struct{ section, key, desc string }{
+// helpBindings returns the static binding table rendered in the help
+// overlay. Pulled out of helpView so prepareHelpViewport can use it
+// from Update — viewport state set in View() doesn't persist back into
+// the reducer's model, which broke j/k scroll.
+func helpBindings() []struct{ section, key, desc string } {
+	return []struct{ section, key, desc string }{
 		{"Views", "d", "deploys"},
 		{"", "c", "controls"},
 		{"", "f", "freights"},
@@ -47,10 +43,20 @@ func (m Model) helpView() tea.View {
 		{"", "q / ctrl+c", "quit"},
 		{"Contexts", "C", "switch Kargo context (then press + to log in to a new URL)"},
 	}
+}
+
+// prepareHelpViewport sizes the help viewport and loads its content
+// into m.helpVP. Called from Update when the help overlay opens or the
+// terminal resizes — the mutation persists in the reducer so j/k scroll
+// keys can move past their no-op state.
+func (m *Model) prepareHelpViewport() {
+	keyStyle := lipgloss.NewStyle().Foreground(selected).Bold(true).Background(bg)
+	descStyle := lipgloss.NewStyle().Foreground(normal).Background(bg)
+	sectStyle := lipgloss.NewStyle().Foreground(progressing).Bold(true).Background(bg)
 
 	keyW := 12
 	var lines []string
-	for _, b := range bindings {
+	for _, b := range helpBindings() {
 		if b.section != "" {
 			lines = append(lines, "")
 			lines = append(lines, sectStyle.Render(b.section))
@@ -70,6 +76,14 @@ func (m Model) helpView() tea.View {
 	m.helpVP.SetWidth(w - 4)
 	m.helpVP.SetHeight(h - 4)
 	m.helpVP.SetContent(strings.Join(lines, "\n"))
+}
+
+// helpView renders the keybindings overlay. The viewport content is
+// loaded by prepareHelpViewport from Update; here we just compose the
+// frame around m.helpVP.View().
+func (m Model) helpView() tea.View {
+	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
+	hintStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
 
 	header := titleStyle.Render("Keybindings")
 	hint := hintStyle.Render("j/k scroll · g/G top/bottom · esc/? dismiss")

@@ -88,6 +88,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.overlayVP.SetHeight(oh)
 		m.helpVP.SetWidth(ow)
 		m.helpVP.SetHeight(oh)
+		// Reload help content so its viewport's max-Y-offset reflects
+		// the new size — without this, scroll keys are no-ops after
+		// resize until the help is re-opened.
+		if m.showHelp {
+			m.prepareHelpViewport()
+		}
 		m.refreshPanel()
 		return m, nil
 
@@ -471,6 +477,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, promoteDownstreamCmd(m.client, m.project, s.Name, fr)
 		case "?":
 			m.showHelp = true
+			m.prepareHelpViewport()
 			return m, nil
 		case "s":
 			m.cycleSort()
