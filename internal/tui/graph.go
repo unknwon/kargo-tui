@@ -82,64 +82,60 @@ func defaultGraphCfg() graphCfg {
 }
 
 // buildNodeRows produces the key/value lines a stage box should show,
-// mirroring the deploy list's columns. ValueColor is set on rows whose
-// value carries a semantic state colour (Health, Last Promo, Argo,
-// Sync) so the box still reads "where the problem is" at a glance.
+// mirroring the deploy list's columns. Rows with no value are omitted
+// (e.g. a stage with no Argo apps drops the Argo/Sync rows entirely)
+// so each box hugs only the data the stage actually has.
 func buildNodeRows(s *kargo.Stage, m Model) []nodeRow {
-	rows := []nodeRow{
-		{Key: "Health", Value: stageHealthLabel(s.Health), ValueColor: stageHealthColor(s.Health), ValueBold: true},
+	var rows []nodeRow
+	if s.Health != "" {
+		rows = append(rows, nodeRow{
+			Key: "Health", Value: s.Health,
+			ValueColor: stageHealthColor(s.Health), ValueBold: true,
+		})
 	}
 	if s.IsControlFlow {
 		rows = append(rows, nodeRow{Key: "Argo", Value: "control-flow", ValueColor: progressing})
-	} else {
+	} else if len(s.ArgoCDApps) > 0 {
 		ah, as := worstArgo(s.ArgoCDApps)
-		if ah == "" && as == "" && len(s.ArgoCDApps) == 0 {
-			rows = append(rows, nodeRow{Key: "Argo", Value: "—", ValueColor: muted})
-		} else {
-			rows = append(rows,
-				nodeRow{Key: "Argo", Value: argoLabel(ah), ValueColor: argoHealthColorVal(ah)},
-				nodeRow{Key: "Sync", Value: argoLabel(as), ValueColor: argoSyncColorVal(as)},
-			)
+		if ah != "" {
+			rows = append(rows, nodeRow{Key: "Argo", Value: ah, ValueColor: argoHealthColorVal(ah)})
+		}
+		if as != "" {
+			rows = append(rows, nodeRow{Key: "Sync", Value: as, ValueColor: argoSyncColorVal(as)})
 		}
 	}
-	rows = append(rows, nodeRow{Key: "Promo", Value: promoLabel(s.LastPromo), ValueColor: promoColorVal(s.LastPromo)})
-	freightVal := "—"
-	freightColor := color.Color(muted)
-	if len(s.CurrentFreight) > 0 {
-		freightVal = shortFreight(s.CurrentFreight[0])
+	if s.LastPromo != "" {
+		rows = append(rows, nodeRow{Key: "Promo", Value: s.LastPromo, ValueColor: promoColorVal(s.LastPromo)})
+	}
+	freight := ""
+	switch {
+	case len(s.CurrentFreight) > 0:
+		freight = shortFreight(s.CurrentFreight[0])
 		if a := m.aliasOf(s.CurrentFreight[0]); a != "" {
-			freightVal += " " + a
+			freight += " " + a
 		}
-		freightColor = nil
-	} else if isFreightName(s.FreightSummary) {
-		freightVal = shortFreight(s.FreightSummary)
-		freightColor = nil
-	} else if s.FreightSummary != "" {
-		freightVal = s.FreightSummary
-		freightColor = nil
+	case isFreightName(s.FreightSummary):
+		freight = shortFreight(s.FreightSummary)
+	case s.FreightSummary != "":
+		freight = s.FreightSummary
 	}
-	rows = append(rows, nodeRow{Key: "Freight", Value: freightVal, ValueColor: freightColor})
+	if freight != "" {
+		rows = append(rows, nodeRow{Key: "Freight", Value: freight})
+	}
 	var age string
 	switch {
 	case !s.LastPromoAt.IsZero():
 		age = ageString(s.LastPromoAt) + " ago"
 	case !s.Created.IsZero():
 		age = ageString(s.Created) + " ago"
-	default:
-		age = "—"
 	}
-	rows = append(rows, nodeRow{Key: "Age", Value: age, ValueColor: muted})
+	if age != "" {
+		rows = append(rows, nodeRow{Key: "Age", Value: age, ValueColor: muted})
+	}
 	if s.Shard != "" {
 		rows = append(rows, nodeRow{Key: "Shard", Value: s.Shard, ValueColor: muted})
 	}
 	return rows
-}
-
-func stageHealthLabel(h string) string {
-	if h == "" {
-		return "—"
-	}
-	return h
 }
 
 func stageHealthColor(h string) color.Color {
@@ -153,13 +149,6 @@ func stageHealthColor(h string) color.Color {
 	default:
 		return muted
 	}
-}
-
-func argoLabel(s string) string {
-	if s == "" {
-		return "—"
-	}
-	return s
 }
 
 func argoHealthColorVal(h string) color.Color {
@@ -184,13 +173,6 @@ func argoSyncColorVal(s string) color.Color {
 	default:
 		return muted
 	}
-}
-
-func promoLabel(p string) string {
-	if p == "" {
-		return "—"
-	}
-	return p
 }
 
 func promoColorVal(p string) color.Color {
