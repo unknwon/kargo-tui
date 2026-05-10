@@ -20,6 +20,7 @@ func (m *Model) openLogsOverlay(stageName string) {
 	m.overlayError = nil
 	m.overlayPromos = nil
 	m.overlayEvents = nil
+	m.overlayStageName = stageName
 	m.overlayTitle = "Logs · " + stageName
 	m.overlayVP.SetContent("loading…")
 	m.overlayVP.GotoTop()
@@ -268,22 +269,43 @@ func (m *Model) renderLogs() {
 	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
 	valStyle := lipgloss.NewStyle().Foreground(normal).Background(bg)
 
+	bodyW := popupInnerWidth(m.width)
+
 	var lines []string
 	if m.overlayError != nil {
-		lines = append(lines, lipgloss.NewStyle().Foreground(degraded).Background(bg).Render(m.overlayError.Error()))
+		lines = append(lines, lipgloss.NewStyle().Foreground(degraded).Background(bg).Render(wrap(m.overlayError.Error(), bodyW)))
 	}
 	lines = append(lines, titleStyle.Render("Promotions"))
 	if len(m.overlayPromos) == 0 {
 		lines = append(lines, keyStyle.Render("  (none)"))
 	}
 	for _, p := range m.overlayPromos {
-		lines = append(lines, valStyle.Render(fmt.Sprintf("  %s %s %s",
-			ageString(p.Created), promoCell(p.Phase), p.Name)))
+		lines = append(lines, valStyle.Render(wrapIndent(fmt.Sprintf("  %s  %s  %s",
+			promoCell(p.Phase), whenString(p.Created), p.Name), bodyW, "    ")))
 		if p.Freight != "" {
-			lines = append(lines, keyStyle.Render("    freight: "+shortFreight(p.Freight)))
+			lines = append(lines, keyStyle.Render(wrapIndent("    freight: "+shortFreight(p.Freight), bodyW, "      ")))
 		}
 		if p.Message != "" {
-			lines = append(lines, keyStyle.Render("    "+p.Message))
+			lines = append(lines, keyStyle.Render(wrapIndent("    "+p.Message, bodyW, "      ")))
+		}
+		for i, s := range p.Steps {
+			marker := " "
+			if int32(i) == p.CurrentStep && (p.Phase == "Running" || p.Phase == "Pending") {
+				marker = "▶"
+			}
+			alias := s.Alias
+			if alias == "" {
+				alias = fmt.Sprintf("step-%d", i+1)
+			}
+			ts := stepWhen(s, p.Created)
+			lines = append(lines, valStyle.Render(wrapIndent(fmt.Sprintf("    %s %2d. %s  %s  %s",
+				marker, i+1, padRight(promoCell(s.Status), 9), alias, ts), bodyW, "         ")))
+			if s.Message != "" {
+				lines = append(lines, keyStyle.Render(wrapIndent("       "+s.Message, bodyW, "         ")))
+			}
+			if s.ErrorCount > 0 {
+				lines = append(lines, keyStyle.Render(fmt.Sprintf("       errors: %d", s.ErrorCount)))
+			}
 		}
 	}
 	lines = append(lines, "")
@@ -301,10 +323,10 @@ func (m *Model) renderLogs() {
 		if e.Count > 1 {
 			count = fmt.Sprintf(" ×%d", e.Count)
 		}
-		lines = append(lines, style.Render(fmt.Sprintf("  %s %s %s%s — %s",
-			ageString(e.Last), etype, e.Reason, count, e.Source)))
+		lines = append(lines, style.Render(wrapIndent(fmt.Sprintf("  %s %s%s — %s  %s",
+			etype, e.Reason, count, e.Source, whenString(e.Last)), bodyW, "    ")))
 		if e.Message != "" {
-			lines = append(lines, keyStyle.Render("    "+e.Message))
+			lines = append(lines, keyStyle.Render(wrapIndent("    "+e.Message, bodyW, "      ")))
 		}
 	}
 	m.overlayVP.SetContent(strings.Join(lines, "\n"))
@@ -343,5 +365,6 @@ func (m Model) overlayView() tea.View {
 	v := tea.NewView(box)
 	v.AltScreen = true
 	v.BackgroundColor = bg
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }

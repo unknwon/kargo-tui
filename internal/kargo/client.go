@@ -1,115 +1,99 @@
-// Package kargo wraps the Kargo OpenAPI client to read Stages, Freight,
-// Promotions, Projects and supporting data, returning flattened, UI-friendly
-// types tailored for the TUI. The Kargo Connect-RPC client is currently
-// unusable as a standalone Go module (it requires v2 protobuf descriptors for
-// k8s.io/api/core/v1 types that aren't shipped), so we use the upstream
-// OpenAPI/Swagger client which speaks the same REST API as `kargo` CLI.
+// Package kargo wraps the Kargo API to read Stages, Freight, Promotions,
+// Projects and supporting data, returning flattened, UI-friendly types
+// tailored for the TUI.
+//
+// The Kargo Connect-RPC client generated under github.com/akuity/kargo/api
+// panics at init() because it depends on v2 protobuf descriptors for
+// k8s.io/api/core/v1 types that aren't shipped as a standalone module. The
+// OpenAPI/Swagger client at github.com/akuity/kargo/pkg/client/generated
+// works against locally-installed Kargo, but Akuity-hosted Kargo only
+// exposes the Connect-RPC surface (the REST gateway path returns 405).
+//
+// To support both, this package speaks Connect-RPC over HTTP+JSON directly:
+// POST <baseURL>/akuity.io.kargo.service.v1alpha1.KargoService/<Method>
+// with a JSON body and a JSON response. No protobuf reflection is involved
+// (sidestepping the init panic), and the wire format is identical to what
+// the official server emits (sidestepping the missing-REST issue).
 package kargo
 
 import (
-	"crypto/tls"
-	"net/http"
-	"net/url"
+	"context"
 	"sort"
 	"strings"
-
-	"github.com/go-openapi/runtime"
-	httptransport "github.com/go-openapi/runtime/client"
-	"github.com/go-openapi/strfmt"
-
-	apiclient "github.com/akuity/kargo/pkg/client/generated"
 
 	"unknwon.dev/kargo-tui/internal/config"
 )
 
-// Client wraps the Kargo OpenAPI client. It carries a default project so
-// callers don't have to thread the project string through every call site,
-// plus the bearer token for outgoing requests.
+// Client wraps the Kargo Connect-RPC-over-JSON transport. It carries a
+// default project so callers don't have to thread the project string
+// through every call site, plus the bearer token for outgoing requests.
 type Client struct {
-	api      *apiclient.KargoAPI
-	authInfo runtime.ClientAuthInfoWriter
-	project  string
-	baseURL  string
+	rpc     *connectJSON
+	project string
+	baseURL string
 }
 
-// NewClient builds an OpenAPI client for the configured Kargo context. The
-// returned Client uses the context's bearer token for every request and the
+// NewClient builds a client for the configured Kargo context. The returned
+// Client uses the context's bearer token for every request and the
 // context's default project when the caller doesn't override it.
 func NewClient(ctx *config.Context) (*Client, error) {
-	api, authInfo, err := newAPIClient(ctx.APIAddress, ctx.BearerToken, ctx.InsecureSkipTLSVerify)
-	if err != nil {
-		return nil, err
-	}
+	rpc := newConnectJSON(ctx.APIAddress, ctx.BearerToken, ctx.InsecureSkipTLSVerify)
 	return &Client{
-		api:      api,
-		authInfo: authInfo,
-		project:  ctx.Project,
-		baseURL:  strings.TrimRight(ctx.APIAddress, "/"),
+		rpc:     rpc,
+		project: ctx.Project,
+		baseURL: strings.TrimRight(ctx.APIAddress, "/"),
 	}, nil
 }
 
-// NewUnauthenticatedAPI is used by `auth login` to call AdminLogin and
-// GetPublicConfig before any token has been issued. It returns the bare
-// OpenAPI client; the caller passes the password as the "credential" so it
-// gets placed in the Bearer header (which is what AdminLogin expects).
-func NewUnauthenticatedAPI(apiAddress string, insecureSkipTLSVerify bool) (*apiclient.KargoAPI, error) {
-	api, _, err := newAPIClient(apiAddress, "", insecureSkipTLSVerify)
-	return api, err
+// NewUnauthenticatedRPC is used by `auth login` to call AdminLogin and
+// GetPublicConfig before any token has been issued.
+func NewUnauthenticatedRPC(apiAddress string, insecureSkipTLSVerify bool) *connectJSONWrapper {
+	return &connectJSONWrapper{rpc: newConnectJSON(apiAddress, "", insecureSkipTLSVerify)}
 }
 
-// NewAPIWithCredential builds a client whose Authorization header is set to
-// the given credential string. Used during the AdminLogin handshake where the
-// admin password is passed as the "bearer" credential.
-func NewAPIWithCredential(apiAddress, credential string, insecureSkipTLSVerify bool) (*apiclient.KargoAPI, runtime.ClientAuthInfoWriter, error) {
-	return newAPIClient(apiAddress, credential, insecureSkipTLSVerify)
+// connectJSONWrapper is a tiny adapter that exposes a couple of pre-auth
+// methods to the auth package without leaking the unexported transport.
+type connectJSONWrapper struct{ rpc *connectJSON }
+
+// PublicConfig is the subset of GetPublicConfigResponse we care about
+// during the login flow.
+type PublicConfig struct {
+	OIDC                *OIDCConfig `json:"oidcConfig,omitempty"`
+	AdminAccountEnabled bool        `json:"adminAccountEnabled,omitempty"`
+	SkipAuth            bool        `json:"skipAuth,omitempty"`
 }
 
-// newAPIClient is the shared transport setup for both authenticated and
-// unauthenticated clients.
-func newAPIClient(apiAddress, credential string, insecureSkipTLSVerify bool) (*apiclient.KargoAPI, runtime.ClientAuthInfoWriter, error) {
-	u, err := url.Parse(strings.TrimRight(apiAddress, "/"))
-	if err != nil {
-		return nil, nil, err
-	}
-	if u.Host == "" {
-		return nil, nil, &url.Error{Op: "parse", URL: apiAddress, Err: errInvalidURL}
-	}
-	scheme := u.Scheme
-	if scheme == "" {
-		scheme = "https"
-	}
-
-	httpClient := &http.Client{}
-	if insecureSkipTLSVerify {
-		t := http.DefaultTransport.(*http.Transport).Clone()
-		t.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
-		httpClient.Transport = t
-	}
-
-	transport := httptransport.NewWithClient(u.Host, "/", []string{scheme}, httpClient)
-	api := apiclient.New(transport, strfmt.Default)
-
-	var authInfo runtime.ClientAuthInfoWriter
-	if credential != "" {
-		authInfo = httptransport.BearerToken(credential)
-	}
-	return api, authInfo, nil
+// OIDCConfig mirrors the Kargo server's published OIDC client config.
+type OIDCConfig struct {
+	IssuerURL   string   `json:"issuerUrl"`
+	ClientID    string   `json:"clientId"`
+	CLIClientID string   `json:"cliClientId"`
+	Scopes      []string `json:"scopes"`
 }
 
-// errInvalidURL is returned when the user supplies an API address that
-// doesn't parse to a usable host. Wrapped in a url.Error for consistency.
-var errInvalidURL = &simpleError{"missing host in URL"}
+// GetPublicConfig calls the unauthenticated GetPublicConfig RPC.
+func (w *connectJSONWrapper) GetPublicConfig(ctx context.Context) (*PublicConfig, error) {
+	var out PublicConfig
+	if err := w.rpc.call(ctx, "GetPublicConfig", struct{}{}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
 
-type simpleError struct{ s string }
-
-func (e *simpleError) Error() string { return e.s }
-
-// API returns the underlying OpenAPI client. Sub-package functions use this
-// to call individual operations.
-func (c *Client) API() *apiclient.KargoAPI { return c.api }
-
-// AuthInfo returns the bearer auth writer for the configured context.
-func (c *Client) AuthInfo() runtime.ClientAuthInfoWriter { return c.authInfo }
+// AdminLogin calls AdminLogin with the given password and returns the
+// issued bearer/id token.
+func (w *connectJSONWrapper) AdminLogin(ctx context.Context, password string) (string, error) {
+	req := struct {
+		Password string `json:"password"`
+	}{Password: password}
+	var resp struct {
+		IDToken string `json:"idToken"`
+	}
+	if err := w.rpc.call(ctx, "AdminLogin", req, &resp); err != nil {
+		return "", err
+	}
+	return resp.IDToken, nil
+}
 
 // Project returns the default project for this client.
 func (c *Client) Project() string { return c.project }
@@ -142,6 +126,3 @@ func pickString(m map[string]any, keys ...string) string {
 	}
 	return ""
 }
-
-// stringPtr returns a pointer to s. Used for OpenAPI optional parameters.
-func stringPtr(s string) *string { return &s }

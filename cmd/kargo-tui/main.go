@@ -42,13 +42,14 @@ func main() {
 }
 
 // runTUI is the root command's action: open the TUI against the active
-// Kargo context.
+// Kargo context. If no context is configured, prompt to log in. If multiple
+// are configured and none is selected, prompt the user to pick one.
 func runTUI(ctx context.Context, cmd *cli.Command) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-	active, err := cfg.Active(cmd.String("context"))
+	active, err := resolveContext(ctx, cfg, cmd.String("context"))
 	if err != nil {
 		return err
 	}
@@ -71,9 +72,12 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 		}
 	}
 
+	ctxNames, ctxBuilder, ctxLogin := contextSwitcher(cfg)
+
 	var p *tea.Program
 	if project == "" {
-		p = tea.NewProgram(tui.NewWithPicker(client, active.Name))
+		p = tea.NewProgram(tui.NewWithPicker(client, active.Name).
+			WithContexts(ctxNames, ctxBuilder, ctxLogin))
 	} else {
 		client.SetProject(project)
 		deploys, err := client.ListStages(ctx, project)
@@ -84,13 +88,66 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 		if err != nil {
 			return fmt.Errorf("load freights: %w", err)
 		}
-		p = tea.NewProgram(tui.New(client, active.Name, project, deploys, freights))
+		p = tea.NewProgram(tui.New(client, active.Name, project, deploys, freights).
+			WithContexts(ctxNames, ctxBuilder, ctxLogin))
 	}
+
+	// Inject the program's thread-safe Send so the SSO login goroutine can
+	// stream status updates back into the TUI.
+	go p.Send(tui.SetSendMsg{Send: p.Send})
 
 	if _, err := p.Run(); err != nil {
 		return err
 	}
 	return nil
+}
+
+// contextSwitcher returns the list of configured context names, a builder
+// that constructs a fresh client + that context's default project for a
+// chosen name, and a login callback that runs the SSO flow against a new
+// Kargo URL and saves it as a new context. The builder also persists the
+// chosen context as CurrentContext so the next launch is non-interactive;
+// failures from Save are non-fatal — the in-memory switch still completes.
+func contextSwitcher(cfg *config.Config) (
+	[]string,
+	func(string) (*kargo.Client, string, error),
+	func(ctx context.Context, url string, status func(string)) (string, error),
+) {
+	names := make([]string, 0, len(cfg.Contexts))
+	for _, c := range cfg.Contexts {
+		names = append(names, c.Name)
+	}
+	build := func(name string) (*kargo.Client, string, error) {
+		c := cfg.Find(name)
+		if c == nil {
+			return nil, "", fmt.Errorf("context %q not found", name)
+		}
+		client, err := kargo.NewClient(c)
+		if err != nil {
+			return nil, "", err
+		}
+		cfg.CurrentContext = name
+		_ = config.Save(cfg)
+		return client, c.Project, nil
+	}
+	login := func(ctx context.Context, url string, status func(string)) (string, error) {
+		saved, err := auth.SSOLogin(ctx, auth.LoginOptions{
+			APIAddress:  url,
+			MakeCurrent: true,
+			Quiet:       true, // TUI is in alt-screen; stderr writes corrupt the view
+		}, status)
+		if err != nil {
+			return "", err
+		}
+		// Refresh the in-memory config from disk so subsequent build()
+		// calls see the new context.
+		fresh, err := config.Load()
+		if err == nil {
+			*cfg = *fresh
+		}
+		return saved.Name, nil
+	}
+	return names, build, login
 }
 
 // authCommand builds the `kargo-tui auth ...` subcommand tree.
@@ -101,7 +158,7 @@ func authCommand() *cli.Command {
 		Commands: []*cli.Command{
 			{
 				Name:      "login",
-				Usage:     "Log in to a Kargo API server with the admin password",
+				Usage:     "Log in to a Kargo API server via SSO (OIDC)",
 				ArgsUsage: "<url>",
 				Flags: []cli.Flag{
 					&cli.StringFlag{
@@ -113,10 +170,9 @@ func authCommand() *cli.Command {
 						Aliases: []string{"p"},
 						Usage:   "Default project for this context",
 					},
-					&cli.StringFlag{
-						Name:    "password",
-						Usage:   "Admin password (omit for interactive prompt)",
-						Sources: cli.EnvVars("KARGO_PASSWORD"),
+					&cli.IntFlag{
+						Name:  "callback-port",
+						Usage: "Port to listen on for the OIDC callback (0 = pick a free port)",
 					},
 					&cli.BoolFlag{
 						Name:  "insecure-skip-tls-verify",
@@ -131,14 +187,14 @@ func authCommand() *cli.Command {
 					if cmd.NArg() < 1 {
 						return fmt.Errorf("usage: kargo-tui auth login <url>")
 					}
-					saved, err := auth.AdminLogin(ctx, auth.LoginOptions{
+					saved, err := auth.SSOLogin(ctx, auth.LoginOptions{
 						APIAddress:            cmd.Args().First(),
 						ContextName:           cmd.String("name"),
 						Project:               cmd.String("project"),
-						Password:              cmd.String("password"),
+						CallbackPort:          int(cmd.Int("callback-port")),
 						InsecureSkipTLSVerify: cmd.Bool("insecure-skip-tls-verify"),
 						MakeCurrent:           !cmd.Bool("no-make-current"),
-					})
+					}, nil)
 					if err != nil {
 						return err
 					}

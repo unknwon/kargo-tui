@@ -23,6 +23,29 @@ func (m *Model) setView(v view) {
 	m.refreshPanel()
 }
 
+// moveCursor advances the active table's cursor by delta rows. It uses the
+// bubbles table's MoveUp/MoveDown rather than SetCursor because those also
+// adjust the viewport's Y-offset — without them the cursor can scroll past
+// the bottom of the visible window when driven by the mouse wheel.
+func (m *Model) moveCursor(delta int) {
+	var t = &m.deploysTable
+	if m.view == viewFreights {
+		t = &m.freightsTable
+	}
+	if len(t.Rows()) == 0 {
+		return
+	}
+	switch {
+	case delta < 0:
+		t.MoveUp(-delta)
+	case delta > 0:
+		t.MoveDown(delta)
+	}
+	applyCursorMarker(t)
+	m.resetPanelScroll()
+	m.refreshPanel()
+}
+
 // yankSelection copies the selected resource's identifier to the clipboard
 // and posts a transient status message.
 func (m *Model) yankSelection() {

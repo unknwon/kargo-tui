@@ -2,7 +2,6 @@ package tui
 
 import (
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -11,6 +10,12 @@ import (
 // updatePicker handles input while the project picker is active. It owns
 // keypress, projects-loaded, and window-size events for the picker phase.
 func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if pm, ok := msg.(tea.PasteMsg); ok {
+		var cmd tea.Cmd
+		m.nsFilter, cmd = m.nsFilter.Update(pm)
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -20,8 +25,10 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nsLoading = false
 		m.projects = msg.projects
 		m.projectsError = msg.err
-		// Auto-select when exactly one Kargo project exists.
-		if msg.err == nil && len(msg.projects) == 1 {
+		// Auto-select on initial startup only — when the user explicitly
+		// invoked the picker mid-session, always show the list even if it
+		// contains a single entry.
+		if !m.nsExplicit && msg.err == nil && len(msg.projects) == 1 {
 			return m.startWithProject(msg.projects[0])
 		}
 		return m, nil
@@ -102,7 +109,6 @@ func (m Model) startWithProject(p string) (Model, tea.Cmd) {
 	m.freights = nil
 	m.visibleDeploys = nil
 	m.visibleFreights = nil
-	m.lastUpdate = time.Time{}
 	m.refreshRows()
 	// Re-fit tables in case window size message already arrived.
 	if m.width > 0 {
@@ -132,15 +138,17 @@ func (m Model) pickerView() tea.View {
 	selStyle := lipgloss.NewStyle().Foreground(bg).Background(selected).Bold(true)
 	errStyle := lipgloss.NewStyle().Foreground(degraded).Background(bg)
 
+	innerW := popupInnerWidth(m.width)
+
 	var lines []string
 	lines = append(lines, titleStyle.Render("Select a Kargo project"))
-	lines = append(lines, hintStyle.Render("type to filter · ↑/↓ select · enter open · r reload · esc quit"))
+	lines = append(lines, hintStyle.Render(wrap("type to filter · ↑/↓ select · enter open · r reload · esc quit", innerW)))
 	lines = append(lines, "")
 	lines = append(lines, m.nsFilter.View())
 	lines = append(lines, "")
 
 	if m.projectsError != nil {
-		lines = append(lines, errStyle.Render("error: "+m.projectsError.Error()))
+		lines = append(lines, errStyle.Render(wrap("error: "+m.projectsError.Error(), innerW)))
 	} else if m.nsLoading {
 		lines = append(lines, hintStyle.Render("loading projects…"))
 	} else {
@@ -162,11 +170,12 @@ func (m Model) pickerView() tea.View {
 			}
 			for i := start; i < end; i++ {
 				marker := "  "
+				name := wrapIndent(filtered[i], innerW-2, "  ")
 				if i == m.nsCursor {
 					marker = "▌ "
-					lines = append(lines, selStyle.Render(marker+filtered[i]))
+					lines = append(lines, selStyle.Render(marker+name))
 				} else {
-					lines = append(lines, itemStyle.Render(marker+filtered[i]))
+					lines = append(lines, itemStyle.Render(marker+name))
 				}
 			}
 		}
@@ -178,6 +187,7 @@ func (m Model) pickerView() tea.View {
 		BorderForeground(muted).
 		Background(bg).
 		Padding(1, 2).
+		Width(innerW).
 		Render(body)
 
 	v := tea.NewView(box)

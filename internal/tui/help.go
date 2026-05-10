@@ -20,7 +20,7 @@ func (m Model) helpView() tea.View {
 		{"Views", "d", "deploys"},
 		{"", "c", "controls"},
 		{"", "f", "freights"},
-		{"", "n", "switch project"},
+		{"", "p", "switch project"},
 		{"", "v", "toggle full-screen details"},
 		{"", "?", "show this help overlay"},
 		{"Actions", "l", "logs (promotions + events) for selected stage"},
@@ -30,6 +30,7 @@ func (m Model) helpView() tea.View {
 		{"", "y", "yank (copy) selected resource name to clipboard"},
 		{"Navigation", "↑/k", "move cursor up"},
 		{"", "↓/j", "move cursor down"},
+		{"", "wheel", "mouse wheel scrolls cursor / overlay / details"},
 		{"", "←", "scroll columns left"},
 		{"", "→", "scroll columns right"},
 		{"", "pgup/pgdn", "page details panel (full-screen mode)"},
@@ -39,6 +40,7 @@ func (m Model) helpView() tea.View {
 		{"", "esc", "dismiss details/overlay, then clear filter"},
 		{"Other", "r", "refresh now"},
 		{"", "q / ctrl+c", "quit"},
+		{"Contexts", "C", "switch Kargo context (then press + to log in to a new URL)"},
 	}
 
 	keyW := 12
@@ -78,5 +80,6 @@ func (m Model) helpView() tea.View {
 	v := tea.NewView(box)
 	v.AltScreen = true
 	v.BackgroundColor = bg
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }

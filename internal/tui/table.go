@@ -118,7 +118,14 @@ func (m *Model) refreshRows() {
 	switch m.view {
 	case viewDeploys, viewControlFlow:
 		controlOnly := m.view == viewControlFlow
-		cursor := m.deploysTable.Cursor()
+		// Preserve the selected stage by name across refreshes. Cursor index
+		// alone is not enough: when the server returns rows in a slightly
+		// different order, the cursor would land on a different stage even
+		// though its numeric position is unchanged.
+		var prevName string
+		if cur := m.deploysTable.Cursor(); cur >= 0 && cur < len(m.visibleDeploys) {
+			prevName = m.visibleDeploys[cur].Name
+		}
 		sorted := m.sortDeploys(m.deploys)
 		rows := make([]table.Row, 0, len(sorted))
 		visible := make([]kargo.Stage, 0, len(sorted))
@@ -139,10 +146,11 @@ func (m *Model) refreshRows() {
 				" ",
 				stageNameCell(s.Name, s.Health),
 				healthCell(s.Health),
-				stageFreightSummary(s.FreightSummary, s.IsControlFlow, m.aliasOf(s.FreightSummary)),
+				stageArgoCell(s.ArgoCDApps),
 				promoCell(s.LastPromo),
-				stringOrDash(s.Shard),
+				stageFreightSummary(s.FreightSummary, s.IsControlFlow, m.aliasOf(s.FreightSummary)),
 				ageString(s.Created),
+				stringOrDash(s.Shard),
 			})
 			visible = append(visible, s)
 		}
@@ -151,18 +159,40 @@ func (m *Model) refreshRows() {
 		for i, r := range rows {
 			slicedRows[i] = sliceRow(r, idx)
 		}
-		// Order matters: clear rows BEFORE changing columns. The bubbles
-		// table re-renders on SetColumns, and panics if any row has more
-		// cells than the new column count.
-		m.deploysTable.SetRows(nil)
-		m.deploysTable.SetColumns(sliceColumns(allStageColumns, idx))
-		m.deploysTable.SetRows(slicedRows)
-		m.visibleDeploys = visible
-		clampCursor(&m.deploysTable, cursor)
+		// Skip the rebuild entirely when the visible rows are unchanged.
+		// SetRows + SetColumns reset the table's internal viewport offset
+		// (no public accessor for YOffset) which causes the visible window
+		// to "jump" on every auto-refresh even though nothing the user can
+		// see has actually changed.
+		if !sameStageRows(m.visibleDeploys, visible) || !sameColumnSlice(m.deploysTable.Columns(), sliceColumns(allStageColumns, idx)) {
+			// Order matters: clear rows BEFORE changing columns. The bubbles
+			// table re-renders on SetColumns, and panics if any row has more
+			// cells than the new column count.
+			m.deploysTable.SetRows(nil)
+			m.deploysTable.SetColumns(sliceColumns(allStageColumns, idx))
+			m.deploysTable.SetRows(slicedRows)
+			m.visibleDeploys = visible
+			want := -1
+			if prevName != "" {
+				for i, s := range visible {
+					if s.Name == prevName {
+						want = i
+						break
+					}
+				}
+			}
+			clampCursor(&m.deploysTable, want)
+		} else {
+			m.visibleDeploys = visible
+		}
 		applyCursorMarker(&m.deploysTable)
 
 	case viewFreights:
-		cursor := m.freightsTable.Cursor()
+		// Same identity-preserving cursor logic as the deploys branch above.
+		var prevName string
+		if cur := m.freightsTable.Cursor(); cur >= 0 && cur < len(m.visibleFreights) {
+			prevName = m.visibleFreights[cur].Name
+		}
 		sorted := m.sortFreights(m.freights)
 		rows := make([]table.Row, 0, len(sorted))
 		visible := make([]kargo.Freight, 0, len(sorted))
@@ -188,13 +218,101 @@ func (m *Model) refreshRows() {
 		for i, r := range rows {
 			slicedRows[i] = sliceRow(r, idx)
 		}
-		m.freightsTable.SetRows(nil)
-		m.freightsTable.SetColumns(sliceColumns(allFreightColumns, idx))
-		m.freightsTable.SetRows(slicedRows)
-		m.visibleFreights = visible
-		clampCursor(&m.freightsTable, cursor)
+		// See the deploys branch above for why we skip the rebuild on
+		// equal-row refreshes — preserves the table's internal scroll.
+		if !sameFreightRows(m.visibleFreights, visible) || !sameColumnSlice(m.freightsTable.Columns(), sliceColumns(allFreightColumns, idx)) {
+			m.freightsTable.SetRows(nil)
+			m.freightsTable.SetColumns(sliceColumns(allFreightColumns, idx))
+			m.freightsTable.SetRows(slicedRows)
+			m.visibleFreights = visible
+			want := -1
+			if prevName != "" {
+				for i, f := range visible {
+					if f.Name == prevName {
+						want = i
+						break
+					}
+				}
+			}
+			clampCursor(&m.freightsTable, want)
+		} else {
+			m.visibleFreights = visible
+		}
 		applyCursorMarker(&m.freightsTable)
 	}
+}
+
+// sameStageRows returns true when two stage slices would render identically
+// in the table — same length, same names in the same order, same health,
+// freight summary, last-promo phase, shard, and Argo CD state (the visible
+// columns). When this is true, the auto-refresh can skip SetRows entirely
+// and preserve the table's scroll offset.
+func sameStageRows(a, b []kargo.Stage) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name ||
+			a[i].Health != b[i].Health ||
+			a[i].FreightSummary != b[i].FreightSummary ||
+			a[i].LastPromo != b[i].LastPromo ||
+			a[i].Shard != b[i].Shard ||
+			!sameArgoApps(a[i].ArgoCDApps, b[i].ArgoCDApps) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameArgoApps returns true when two Argo app slices render identically in
+// the deploy list's "Argo" cell — same set of apps in the same order with
+// the same health and sync state. Cell rendering only consumes Health and
+// Sync, so other ArgoCDAppRef fields don't affect equality.
+func sameArgoApps(a, b []kargo.ArgoCDAppRef) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Namespace != b[i].Namespace ||
+			a[i].Name != b[i].Name ||
+			a[i].Health != b[i].Health ||
+			a[i].Sync != b[i].Sync {
+			return false
+		}
+	}
+	return true
+}
+
+// sameFreightRows is the freight-side counterpart to sameStageRows.
+func sameFreightRows(a, b []kargo.Freight) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name ||
+			a[i].Alias != b[i].Alias ||
+			a[i].Warehouse != b[i].Warehouse ||
+			a[i].VerifiedIn != b[i].VerifiedIn ||
+			a[i].ApprovedFor != b[i].ApprovedFor {
+			return false
+		}
+	}
+	return true
+}
+
+// sameColumnSlice returns true when two column slices have the same titles
+// in the same order. Used to detect when horizontal scroll has changed and
+// we therefore must rebuild the table.
+func sameColumnSlice(a, b []table.Column) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Title != b[i].Title {
+			return false
+		}
+	}
+	return true
 }
 
 func clampCursor(t *table.Model, want int) {
@@ -209,5 +327,13 @@ func clampCursor(t *table.Model, want int) {
 	if want < 0 {
 		want = 0
 	}
-	t.SetCursor(want)
+	// SetCursor moves the cursor index but does NOT adjust the viewport's
+	// Y-offset, so after a refresh the visible window can scroll
+	// independently of where the cursor lands. Reset to top first, then
+	// MoveDown so the underlying offset tracks the cursor — this matches the
+	// motion the table does when arrow keys are pressed.
+	t.GotoTop()
+	if want > 0 {
+		t.MoveDown(want)
+	}
 }

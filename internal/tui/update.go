@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"time"
-
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 )
@@ -34,8 +32,29 @@ func (m Model) layoutDims() (int, int) {
 // loaded data, key presses, and overlay/picker events to the right handler
 // and returns a possibly-mutated model plus any follow-up commands.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if sm, ok := msg.(SetSendMsg); ok {
+		m.ctxSend = sm.Send
+		return m, nil
+	}
+
 	if m.phase == phasePickingProject {
 		return m.updatePicker(msg)
+	}
+	if m.phase == phasePickingContext {
+		return m.updateContextPicker(msg)
+	}
+
+	// Forward terminal paste events to the filter text input when the user
+	// is actively filtering. Without this the textinput never sees the
+	// pasted content because the main key switch only handles KeyPressMsg.
+	if pm, ok := msg.(tea.PasteMsg); ok {
+		if m.filtering {
+			var cmd tea.Cmd
+			m.filter, cmd = m.filter.Update(pm)
+			m.refreshRows()
+			return m, cmd
+		}
+		return m, nil
 	}
 
 	switch msg := msg.(type) {
@@ -71,11 +90,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tickCmd()
 		}
 		m.loading = true
-		return m, tea.Batch(
+		cmds := []tea.Cmd{
 			loadDeploysCmd(m.client, m.project),
 			loadFreightsCmd(m.client, m.project),
 			tickCmd(),
-		)
+		}
+		// Refresh the logs overlay in place if it's open. The logsLoadedMsg
+		// handler ignores stale results when the overlay has been dismissed,
+		// so a tick that races with a close is harmless.
+		if m.overlay == overlayLogs && m.overlayStageName != "" {
+			cmds = append(cmds, loadLogsCmd(m.client, m.project, m.overlayStageName))
+		}
+		return m, tea.Batch(cmds...)
 
 	case deploysLoadedMsg:
 		m.loading = false
@@ -84,7 +110,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.deploysError = nil
 			m.deploys = msg.deploys
-			m.lastUpdate = time.Now()
 			m.refreshRows()
 			m.refreshPanel()
 		}
@@ -97,7 +122,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.freightsError = nil
 			m.freights = msg.freights
-			m.lastUpdate = time.Now()
 			m.refreshRows()
 			m.refreshPanel()
 		}
@@ -117,6 +141,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case argoURLMsg:
 		m.argoBaseURL = string(msg)
 		m.refreshPanel()
+		return m, nil
+
+	case tea.MouseWheelMsg:
+		// Mouse wheel scrolls whichever surface is currently visible:
+		// help and the logs/diff overlay both have their own viewport, the
+		// details panel has its viewport when it's full-screen, and
+		// otherwise we move the table cursor a row at a time.
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			switch {
+			case m.showHelp:
+				m.helpVP.ScrollUp(3)
+			case m.overlay != overlayNone:
+				m.overlayVP.ScrollUp(3)
+			case m.detailsOnly:
+				m.panelVP.ScrollUp(3)
+			default:
+				m.moveCursor(-1)
+			}
+		case tea.MouseWheelDown:
+			switch {
+			case m.showHelp:
+				m.helpVP.ScrollDown(3)
+			case m.overlay != overlayNone:
+				m.overlayVP.ScrollDown(3)
+			case m.detailsOnly:
+				m.panelVP.ScrollDown(3)
+			default:
+				m.moveCursor(1)
+			}
+		}
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -178,6 +233,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			case "esc", "enter":
 				m.overlay = overlayNone
+				m.overlayStageName = ""
 				return m, nil
 			case "up", "k":
 				m.overlayVP.ScrollUp(1)
@@ -241,14 +297,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "right":
 			m.scrollRight()
 			return m, nil
-		case "n":
-			// Re-open the project picker.
+		case "p":
+			// Re-open the project picker. nsExplicit prevents the
+			// auto-select branch from short-circuiting the picker when only
+			// one project is configured.
 			m.phase = phasePickingProject
 			m.nsLoading = true
 			m.nsCursor = 0
+			m.nsExplicit = true
 			m.nsFilter.SetValue("")
 			m.nsFilter.Focus()
 			return m, tea.Batch(loadProjectsCmd(m.client), textinput.Blink)
+		case "C":
+			// Open the context picker if main wired one in via WithContexts.
+			if m.ctxBuilder == nil {
+				return m, nil
+			}
+			m.phase = phasePickingContext
+			m.ctxCursor = 0
+			m.ctxError = nil
+			m.ctxAdding = false
+			m.ctxFilter.SetValue("")
+			m.ctxFilter.Focus()
+			return m, textinput.Blink
 		case "v":
 			m.detailsOnly = !m.detailsOnly
 			return m, nil

@@ -2,26 +2,84 @@ package kargo
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/akuity/kargo/pkg/client/generated/core"
-	"github.com/akuity/kargo/pkg/client/generated/events"
-	"github.com/akuity/kargo/pkg/client/generated/models"
+	kargoapi "github.com/akuity/kargo/api/v1alpha1"
+
+	svcv1alpha1 "unknwon.dev/kargo-tui/internal/kargoapi/svc"
 )
 
 // PromotionEntry is a flattened view of a kargoapi.Promotion record.
 type PromotionEntry struct {
-	Name       string
-	Stage      string
-	Freight    string
-	Phase      string
+	Name        string
+	Stage       string
+	Freight     string
+	Phase       string
+	Message     string
+	Created     time.Time
+	StartedAt   time.Time
+	FinishedAt  time.Time
+	CurrentStep int32
+	Steps       []PromotionStep
+}
+
+// PromotionStep is one entry from Promotion.Status.StepExecutionMetadata —
+// the per-step status reported by the Kargo controller while a promotion
+// runs through its template's ordered step list.
+type PromotionStep struct {
+	Alias      string
+	Status     string
 	Message    string
-	Created    time.Time
+	ErrorCount int32
 	StartedAt  time.Time
 	FinishedAt time.Time
+}
+
+// ulidTimeFromName extracts the timestamp encoded in a ULID embedded in a
+// Kargo promotion name. Kargo names promotions "<stage>.<ulid>.<freight>"
+// (the ULID is the unique-per-promotion segment). A ULID's first 10
+// Crockford-base32 chars encode the millisecond Unix timestamp of when it
+// was minted — i.e. when the promotion record was created. Returns the
+// zero time when no segment looks like a ULID.
+//
+// Kept around even after the proto-binary transport switch as a fallback
+// when the server *still* hands back a zero creation timestamp for some
+// reason (older Kargo versions, etc.).
+func ulidTimeFromName(name string) time.Time {
+	for _, seg := range strings.Split(name, ".") {
+		if len(seg) != 26 {
+			continue
+		}
+		ms, ok := decodeULIDTime(seg[:10])
+		if !ok {
+			continue
+		}
+		return time.UnixMilli(int64(ms)).UTC()
+	}
+	return time.Time{}
+}
+
+func decodeULIDTime(s string) (uint64, bool) {
+	const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+	if len(s) != 10 {
+		return 0, false
+	}
+	var ms uint64
+	for i := 0; i < 10; i++ {
+		c := s[i]
+		if c >= 'a' && c <= 'z' {
+			c -= 'a' - 'A'
+		}
+		idx := strings.IndexByte(alphabet, c)
+		if idx < 0 {
+			return 0, false
+		}
+		ms = ms<<5 | uint64(idx)
+	}
+	return ms, true
 }
 
 // ListPromotionsForStage returns the most recent Promotions targeting the
@@ -30,42 +88,75 @@ func (c *Client) ListPromotionsForStage(ctx context.Context, project, stage stri
 	if project == "" {
 		project = c.project
 	}
-	params := core.NewListPromotionsParams().WithContext(ctx)
-	params.Project = project
-	params.Stage = stringPtr(stage)
-	resp, err := c.api.Core.ListPromotions(params, c.authInfo)
-	if err != nil {
-		return nil, fmt.Errorf("list promotions: %w", err)
+	stagePtr := &stage
+	if stage == "" {
+		stagePtr = nil
 	}
-	if resp.Payload == nil {
-		return nil, nil
+	req := &svcv1alpha1.ListPromotionsRequest{Project: project, Stage: stagePtr}
+	resp := &svcv1alpha1.ListPromotionsResponse{}
+	if err := c.rpc.callProto(ctx, "ListPromotions", req, resp); err != nil {
+		return nil, err
 	}
-	items := resp.Payload.Items
-	out := make([]PromotionEntry, 0, len(items))
-	for _, p := range items {
-		if p == nil || p.Metadata == nil {
+	out := make([]PromotionEntry, 0, len(resp.Promotions))
+	for _, p := range resp.Promotions {
+		if p == nil {
 			continue
 		}
-		entry := PromotionEntry{
-			Name:    p.Metadata.Name,
-			Phase:   p.Status.PromotionStatus.Phase,
-			Message: p.Status.PromotionStatus.Message,
-			Created: parseTime(p.Metadata.CreationTimestamp),
-		}
-		if p.Spec.PromotionSpec.Stage != nil {
-			entry.Stage = *p.Spec.PromotionSpec.Stage
-		}
-		if p.Spec.PromotionSpec.Freight != nil {
-			entry.Freight = *p.Spec.PromotionSpec.Freight
-		}
-		entry.StartedAt = parseTime(p.Status.PromotionStatus.StartedAt)
-		entry.FinishedAt = parseTime(p.Status.PromotionStatus.FinishedAt)
-		out = append(out, entry)
+		out = append(out, flattenPromotion(p))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Created.After(out[j].Created)
 	})
 	return out, nil
+}
+
+func flattenPromotion(p *kargoapi.Promotion) PromotionEntry {
+	steps := make([]PromotionStep, 0, len(p.Status.StepExecutionMetadata))
+	for _, s := range p.Status.StepExecutionMetadata {
+		steps = append(steps, PromotionStep{
+			Alias:      s.Alias,
+			Status:     string(s.Status),
+			Message:    s.Message,
+			ErrorCount: int32(s.ErrorCount),
+			StartedAt:  metaTime(s.StartedAt),
+			FinishedAt: metaTime(s.FinishedAt),
+		})
+	}
+	created := p.CreationTimestamp.Time
+	if created.IsZero() {
+		// Defensive fallback: if a future Kargo bump regresses on
+		// timestamps again, we still get a real moment from the ULID.
+		created = ulidTimeFromName(p.Name)
+	}
+	started := metaTime(p.Status.StartedAt)
+	if started.IsZero() {
+		started = created
+	}
+	return PromotionEntry{
+		Name:        p.Name,
+		Stage:       p.Spec.Stage,
+		Freight:     p.Spec.Freight,
+		Phase:       string(p.Status.Phase),
+		Message:     p.Status.Message,
+		Created:     created,
+		StartedAt:   started,
+		FinishedAt:  metaTime(p.Status.FinishedAt),
+		CurrentStep: int32(p.Status.CurrentStep),
+		Steps:       steps,
+	}
+}
+
+// metaTime extracts a plain time.Time from a metav1.Time value type. Returns
+// zero when the input is zero. The metav1.Time-as-pointer variants are
+// handled by the caller checking for nil first.
+func metaTime(t interface{ IsZero() bool }) time.Time {
+	if t == nil || t.IsZero() {
+		return time.Time{}
+	}
+	if v, ok := t.(interface{ UTC() time.Time }); ok {
+		return v.UTC()
+	}
+	return time.Time{}
 }
 
 // EventEntry is a flattened view of a corev1.Event scoped to a Kargo
@@ -81,29 +172,30 @@ type EventEntry struct {
 
 // ListEventsForStage returns recent Kubernetes events touching the given
 // stage (or its promotions), newest first.
+//
+// Events stay on the JSON transport instead of binary proto: the corev1.Event
+// type lives in k8s.io/api/core/v1 which is gogo-proto v1 and not vendor-
+// patchable to v2 the way Kargo's own messages are. Since the wire payload
+// for events is mostly nulls anyway under the current Kargo server, the
+// transport choice doesn't change what we can show. ULID-from-name remains
+// the meaningful timestamp source for promotion-attached events.
 func (c *Client) ListEventsForStage(ctx context.Context, project, stage string) ([]EventEntry, error) {
 	if project == "" {
 		project = c.project
 	}
-	params := events.NewListProjectEventsParams().WithContext(ctx)
-	params.Project = project
-	resp, err := c.api.Events.ListProjectEvents(params, c.authInfo)
-	if err != nil {
-		return nil, fmt.Errorf("list events: %w", err)
+	req := struct {
+		Project string `json:"project"`
+	}{Project: project}
+	var resp struct {
+		Events []rawEvent `json:"events"`
 	}
-	if resp.Payload == nil {
-		return nil, nil
+	if err := c.rpc.call(ctx, "ListProjectEvents", req, &resp); err != nil {
+		return nil, err
 	}
-	items := resp.Payload.Items
-	out := make([]EventEntry, 0, len(items))
+	out := make([]EventEntry, 0, len(resp.Events))
 	stageLower := strings.ToLower(stage)
-	for _, e := range items {
-		if e == nil {
-			continue
-		}
+	for _, e := range resp.Events {
 		obj := strings.ToLower(e.InvolvedObject.Name)
-		// Match events on the Stage itself, or Promotions whose name is
-		// prefixed with the stage name (Kargo's promotion naming convention).
 		if obj != stageLower && !strings.HasPrefix(obj, stageLower+".") {
 			continue
 		}
@@ -111,8 +203,8 @@ func (c *Client) ListEventsForStage(ctx context.Context, project, stage string) 
 			Type:    e.Type,
 			Reason:  e.Reason,
 			Message: e.Message,
-			Count:   int32(e.Count),
-			Last:    eventLastTime(e),
+			Count:   e.Count,
+			Last:    eventLastTime(&e),
 			Source:  e.InvolvedObject.Kind + "/" + e.InvolvedObject.Name,
 		})
 	}
@@ -122,27 +214,64 @@ func (c *Client) ListEventsForStage(ctx context.Context, project, stage string) 
 	return out, nil
 }
 
-// eventLastTime returns the most authoritative timestamp on a Kubernetes
-// event delivered through the Kargo API.
-func eventLastTime(e *models.V1Event) time.Time {
-	if t := parseTime(e.LastTimestamp); !t.IsZero() {
-		return t
-	}
-	if e.Metadata.CreationTimestamp != "" {
-		return parseTime(e.Metadata.CreationTimestamp)
-	}
-	return parseTime(e.FirstTimestamp)
+// rawEvent mirrors the corev1.Event JSON shape for the JSON event path.
+type rawEvent struct {
+	Type           string         `json:"type"`
+	Reason         string         `json:"reason"`
+	Message        string         `json:"message"`
+	Count          int32          `json:"count"`
+	FirstTimestamp jsonTimeString `json:"firstTimestamp"`
+	LastTimestamp  jsonTimeString `json:"lastTimestamp"`
+	Metadata       struct {
+		CreationTimestamp jsonTimeString `json:"creationTimestamp"`
+	} `json:"metadata"`
+	InvolvedObject struct {
+		Kind string `json:"kind"`
+		Name string `json:"name"`
+	} `json:"involvedObject"`
 }
 
-// parseTime parses an RFC3339 timestamp produced by the Kargo API. Returns
-// the zero time on empty input or parse failure.
-func parseTime(s string) time.Time {
-	if s == "" {
-		return time.Time{}
+// jsonTimeString decodes an RFC3339 timestamp string, tolerating empty
+// objects and nulls. We don't bother handling the {seconds,nanos} shape
+// since we only use this for JSON-path events and the JSON encoder never
+// uses that form.
+type jsonTimeString struct{ time.Time }
+
+func (t *jsonTimeString) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" || string(data) == "{}" {
+		t.Time = time.Time{}
+		return nil
 	}
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		return time.Time{}
+	if data[0] == '"' {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		if s == "" {
+			t.Time = time.Time{}
+			return nil
+		}
+		parsed, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Time = time.Time{}
+			return nil
+		}
+		t.Time = parsed
+		return nil
 	}
-	return t
+	t.Time = time.Time{}
+	return nil
+}
+
+func eventLastTime(e *rawEvent) time.Time {
+	if !e.LastTimestamp.IsZero() {
+		return e.LastTimestamp.Time
+	}
+	if !e.Metadata.CreationTimestamp.IsZero() {
+		return e.Metadata.CreationTimestamp.Time
+	}
+	if !e.FirstTimestamp.IsZero() {
+		return e.FirstTimestamp.Time
+	}
+	return ulidTimeFromName(e.InvolvedObject.Name)
 }

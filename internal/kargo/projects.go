@@ -2,28 +2,25 @@ package kargo
 
 import (
 	"context"
-	"fmt"
 	"sort"
-
-	"github.com/akuity/kargo/pkg/client/generated/core"
 )
 
 // ListProjects returns the names of Kargo projects accessible to the
 // authenticated user, sorted alphabetically.
 func (c *Client) ListProjects(ctx context.Context) ([]string, error) {
-	resp, err := c.api.Core.ListProjects(
-		core.NewListProjectsParams().WithContext(ctx),
-		c.authInfo,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("list projects: %w", err)
+	var resp struct {
+		Projects []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		} `json:"projects"`
 	}
-	if resp.Payload == nil {
-		return nil, nil
+	if err := c.rpc.call(ctx, "ListProjects", struct{}{}, &resp); err != nil {
+		return nil, err
 	}
-	out := make([]string, 0, len(resp.Payload.Items))
-	for _, p := range resp.Payload.Items {
-		if p == nil || p.Metadata == nil {
+	out := make([]string, 0, len(resp.Projects))
+	for _, p := range resp.Projects {
+		if p.Metadata.Name == "" {
 			continue
 		}
 		out = append(out, p.Metadata.Name)

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"time"
 
 	"charm.land/bubbles/v2/table"
@@ -35,6 +36,7 @@ type phase int
 const (
 	phaseRunning phase = iota
 	phasePickingProject
+	phasePickingContext
 )
 
 type overlayMode int
@@ -102,27 +104,49 @@ type Model struct {
 	helpVP viewport.Model
 
 	// Logs/Diff overlay state.
-	overlay         overlayMode
-	overlayVP       viewport.Model
-	overlayTitle    string
-	overlayLoading  bool
-	overlayError    error
-	overlayPromos   []kargo.PromotionEntry
-	overlayEvents   []kargo.EventEntry
-	overlayDiffFrom *kargo.Freight
-	overlayDiffTo   *kargo.Freight
+	overlay          overlayMode
+	overlayVP        viewport.Model
+	overlayTitle     string
+	overlayStageName string // remembered so the tick handler can refresh logs
+	overlayLoading   bool
+	overlayError     error
+	overlayPromos    []kargo.PromotionEntry
+	overlayEvents    []kargo.EventEntry
+	overlayDiffFrom  *kargo.Freight
+	overlayDiffTo    *kargo.Freight
 
-	// Project picker state.
+	// Project picker state. nsExplicit is true when the picker was opened
+	// from a running session (e.g. via the `n` key) rather than at startup,
+	// so we don't auto-jump past the picker when only one project exists.
 	projects      []string
 	projectsError error
 	nsFilter      textinput.Model
 	nsCursor      int
 	nsLoading     bool
+	nsExplicit    bool
+
+	// Context picker state. Populated when the user presses `N` to switch
+	// between configured Kargo instances. ctxBuilder is supplied by main and
+	// returns a fresh client + that context's default project for a chosen
+	// context name. ctxNames lists the available context names for display.
+	// ctxAdding/ctxURLInput drive the inline "add new instance" subform that
+	// kicks off an SSO login when the user presses `+` in the picker.
+	ctxNames    []string
+	ctxCursor   int
+	ctxFilter   textinput.Model
+	ctxError    error
+	ctxBuilder     func(name string) (*kargo.Client, string, error)
+	ctxLogin       func(ctx context.Context, url string, status func(string)) (newName string, err error)
+	ctxSend        func(tea.Msg) // injected from main so login goroutine can stream status updates
+	ctxAdding      bool
+	ctxLoggingIn   bool
+	ctxLoginStatus string
+	ctxLoginCancel context.CancelFunc
+	ctxURLInput    textinput.Model
 
 	width, height int
 
-	lastUpdate time.Time
-	loading    bool
+	loading bool
 }
 
 // allStageColumns / allFreightColumns are the full set of columns. Horizontal
@@ -132,10 +156,11 @@ var allStageColumns = []table.Column{
 	{Title: " ", Width: 2},
 	{Title: "Name", Width: 30},
 	{Title: "Health", Width: 14},
-	{Title: "Freight", Width: 32},
+	{Title: "Argo", Width: 22},
 	{Title: "Last Promo", Width: 12},
-	{Title: "Shard", Width: 10},
+	{Title: "Freight", Width: 32},
 	{Title: "Age", Width: 8},
+	{Title: "Shard", Width: 10},
 }
 
 var allFreightColumns = []table.Column{
@@ -156,7 +181,6 @@ func New(client *kargo.Client, contextName, project string, deploys []kargo.Stag
 	m.phase = phaseRunning
 	m.deploys = deploys
 	m.freights = freights
-	m.lastUpdate = time.Now()
 	m.refreshRows()
 	m.refreshPanel()
 	return m
@@ -173,19 +197,62 @@ func NewWithPicker(client *kargo.Client, contextName string) Model {
 	return m
 }
 
+// SetSendMsg is a tea.Msg that injects a thread-safe message sender into
+// the running model so background goroutines (notably the SSO login flow)
+// can stream status updates into the TUI. Sent by main after constructing
+// the tea.Program.
+type SetSendMsg struct{ Send func(tea.Msg) }
+
+// WithContexts wires in the list of configured Kargo contexts, a builder
+// that returns a fresh client for a chosen context, and a login callback
+// that authenticates a new Kargo URL via SSO. When set, pressing `C` inside
+// the TUI opens the context picker; `+` inside the picker triggers the
+// login flow for a new URL.
+func (m Model) WithContexts(
+	names []string,
+	build func(name string) (*kargo.Client, string, error),
+	login func(ctx context.Context, url string, status func(string)) (string, error),
+) Model {
+	m.ctxNames = names
+	m.ctxBuilder = build
+	m.ctxLogin = login
+	ti := newInput("› ", "type to filter contexts…", 64)
+	m.ctxFilter = ti
+	urlIn := newInput("URL › ", "https://kargo.example.com", 256)
+	m.ctxURLInput = urlIn
+	return m
+}
+
+// newInput builds a textinput.Model with kargo-tui's preferred cursor style:
+// a thin bar instead of the default white block, no blink. The default
+// virtual cursor reverses fg/bg on the cell under the cursor, which looks
+// like a stray "selection" highlight and confused early users.
+//
+// Width must be set: textinput's placeholder rendering clips to Width+1
+// runes, so an unset Width shows only the first letter of the placeholder
+// (e.g. "t" or "h" instead of the full hint).
+func newInput(prompt, placeholder string, charLimit int) textinput.Model {
+	ti := textinput.New()
+	ti.Prompt = prompt
+	ti.Placeholder = placeholder
+	ti.CharLimit = charLimit
+	ti.SetWidth(80)
+	styles := ti.Styles()
+	styles.Cursor.Color = selected
+	styles.Cursor.Shape = tea.CursorBar
+	styles.Cursor.Blink = false
+	ti.SetStyles(styles)
+	ti.SetVirtualCursor(false)
+	return ti
+}
+
 func newBase() Model {
 	deploysT := newTable(allStageColumns)
 	freightsT := newTable(allFreightColumns)
 
-	ti := textinput.New()
-	ti.Prompt = "/"
-	ti.Placeholder = "filter…"
-	ti.CharLimit = 64
+	ti := newInput("/", "filter…", 64)
 
-	nsTi := textinput.New()
-	nsTi.Prompt = "› "
-	nsTi.Placeholder = "type to filter projects…"
-	nsTi.CharLimit = 64
+	nsTi := newInput("› ", "type to filter projects…", 64)
 	nsTi.Focus()
 
 	vp := viewport.New(viewport.WithHeight(20), viewport.WithWidth(40))

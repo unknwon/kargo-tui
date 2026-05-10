@@ -2,12 +2,12 @@ package kargo
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
+	"sort"
 	"time"
 
-	"github.com/akuity/kargo/pkg/client/generated/core"
-	"github.com/akuity/kargo/pkg/client/generated/models"
+	kargoapi "github.com/akuity/kargo/api/v1alpha1"
+
+	svcv1alpha1 "unknwon.dev/kargo-tui/internal/kargoapi/svc"
 )
 
 // Stage is a flattened, UI-friendly view of a kargoapi.Stage.
@@ -29,83 +29,103 @@ type Stage struct {
 }
 
 // ListStages loads all Stages in the given project via the Kargo API server.
-// An empty project falls back to the client's default.
+// An empty project falls back to the client's default. Results are sorted
+// newest-first with name as tiebreaker so refreshes don't reshuffle stages
+// that share a creation timestamp.
+//
+// Uses Connect-RPC binary protobuf rather than JSON because the Kargo
+// server's proto-JSON encoder elides every metav1.Time value to `{}` —
+// see internal/kargoapi/README.md for the full story.
 func (c *Client) ListStages(ctx context.Context, project string) ([]Stage, error) {
 	if project == "" {
 		project = c.project
 	}
-	params := core.NewListStagesParams().WithContext(ctx)
-	params.Project = project
-	resp, err := c.api.Core.ListStages(params, c.authInfo)
-	if err != nil {
-		return nil, fmt.Errorf("list stages in %q: %w", project, err)
-	}
-	if resp.Payload == nil {
-		return nil, nil
+	req := &svcv1alpha1.ListStagesRequest{Project: project}
+	resp := &svcv1alpha1.ListStagesResponse{}
+	if err := c.rpc.callProto(ctx, "ListStages", req, resp); err != nil {
+		return nil, err
 	}
 
-	items := resp.Payload.Items
-	out := make([]Stage, 0, len(items))
-	for _, s := range items {
-		if s == nil || s.Metadata == nil {
+	out := make([]Stage, 0, len(resp.Stages))
+	for _, s := range resp.Stages {
+		if s == nil {
 			continue
 		}
-
-		health := s.Status.Health.Status
-		healthIssues := s.Status.Health.Issues
-		var argoApps []ArgoCDAppRef
-		if s.Status.Health.Output != nil {
-			if raw, err := json.Marshal(s.Status.Health.Output); err == nil {
-				argoApps = parseArgoApps(raw)
-			}
-		}
-
-		lastPromo := s.Status.LastPromotion.Status.Phase
-		lastPromoName := s.Status.LastPromotion.Name
-		lastPromoAt := parseTime(s.Status.LastPromotion.FinishedAt)
-
-		out = append(out, Stage{
-			Name:           s.Metadata.Name,
-			Namespace:      s.Metadata.Namespace,
-			Shard:          s.Spec.Shard,
-			IsControlFlow:  isControlFlow(s),
-			Health:         health,
-			HealthIssues:   healthIssues,
-			FreightSummary: s.Status.FreightSummary,
-			LastPromo:      lastPromo,
-			LastPromoName:  lastPromoName,
-			LastPromoAt:    lastPromoAt,
-			CurrentFreight: currentFreightNames(s.Status.FreightHistory),
-			ArgoCDApps:     argoApps,
-			Created:        parseTime(s.Metadata.CreationTimestamp),
-			Labels:         s.Metadata.Labels,
-		})
+		stage := flattenStage(s)
+		out = append(out, stage)
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].Created.Equal(out[j].Created) {
+			return out[i].Created.After(out[j].Created)
+		}
+		return out[i].Name < out[j].Name
+	})
 	return out, nil
 }
 
-// isControlFlow returns true when the stage has no PromotionTemplate steps —
-// the same definition as kargoapi.Stage.IsControlFlow().
-func isControlFlow(s *models.Stage) bool {
-	tmpl := s.Spec.PromotionTemplate.PromotionTemplate
-	if tmpl.Spec == nil {
-		return true
-	}
-	return len(tmpl.Spec.Steps) == 0
-}
-
-// currentFreightNames extracts the names of freight in the most recent entry
-// of the FreightHistory list.
-func currentFreightNames(history []*models.FreightCollection) []string {
-	if len(history) == 0 || history[0] == nil {
-		return nil
-	}
-	out := make([]string, 0, len(history[0].Items))
-	for _, ref := range history[0].Items {
-		if ref.Name == "" {
-			continue
+// flattenStage projects a single kargoapi.Stage into the TUI's Stage view.
+func flattenStage(s *kargoapi.Stage) Stage {
+	var (
+		health       string
+		healthIssues []string
+		argoApps     []ArgoCDAppRef
+	)
+	if s.Status.Health != nil {
+		health = string(s.Status.Health.Status)
+		healthIssues = s.Status.Health.Issues
+		if len(s.Status.Health.Output.Raw) > 0 {
+			argoApps = parseArgoApps(s.Status.Health.Output.Raw)
 		}
-		out = append(out, ref.Name)
 	}
-	return out
+
+	var (
+		lastPromo     string
+		lastPromoName string
+		lastPromoAt   time.Time
+	)
+	if lp := s.Status.LastPromotion; lp != nil {
+		lastPromoName = lp.Name
+		if !lp.FinishedAt.IsZero() {
+			lastPromoAt = lp.FinishedAt.Time
+		}
+		if lp.Status != nil {
+			lastPromo = string(lp.Status.Phase)
+			if lastPromoAt.IsZero() && !lp.Status.FinishedAt.IsZero() {
+				lastPromoAt = lp.Status.FinishedAt.Time
+			}
+		}
+	}
+
+	// Resolve currently-deployed freight names from the most recent
+	// freight-history entry.
+	var current []string
+	if len(s.Status.FreightHistory) > 0 {
+		for _, ref := range s.Status.FreightHistory[0].Freight {
+			if ref.Name != "" {
+				current = append(current, ref.Name)
+			}
+		}
+	}
+	if len(current) == 0 && s.Status.LastPromotion != nil && s.Status.LastPromotion.Freight != nil {
+		if n := s.Status.LastPromotion.Freight.Name; n != "" {
+			current = append(current, n)
+		}
+	}
+
+	return Stage{
+		Name:           s.Name,
+		Namespace:      s.Namespace,
+		Shard:          s.Spec.Shard,
+		IsControlFlow:  s.IsControlFlow(),
+		Health:         health,
+		HealthIssues:   healthIssues,
+		FreightSummary: s.Status.FreightSummary,
+		LastPromo:      lastPromo,
+		LastPromoName:  lastPromoName,
+		LastPromoAt:    lastPromoAt,
+		CurrentFreight: current,
+		ArgoCDApps:     argoApps,
+		Created:        s.CreationTimestamp.Time,
+		Labels:         s.Labels,
+	}
 }

@@ -83,6 +83,40 @@ func discoverArgoURLCmd(c *kargo.Client) tea.Cmd {
 	}
 }
 
+// contextLoginMsg carries the result of an in-app SSO login triggered from
+// the context picker.
+type contextLoginMsg struct {
+	name string
+	err  error
+}
+
+// loginStatusMsg lets the SSO goroutine report progress (e.g. the auth URL
+// to visit, "waiting for callback") back to the picker view without ending
+// the whole login operation. The picker just stores the latest text.
+type loginStatusMsg string
+
+// runContextLoginCmd invokes the supplied login callback on a goroutine.
+// The callback receives a `status` reporter so it can stream updates back
+// into the TUI via the supplied program reference. Final outcome is posted
+// as a contextLoginMsg.
+func runContextLoginCmd(
+	login func(ctx context.Context, url string, status func(string)) (string, error),
+	ctx context.Context,
+	url string,
+	send func(tea.Msg),
+) tea.Cmd {
+	return func() tea.Msg {
+		report := func(s string) { send(loginStatusMsg(s)) }
+		name, err := login(ctx, url, report)
+		return contextLoginMsg{name: name, err: err}
+	}
+}
+
+// contextLoginCanceledMsg is posted when the user dismisses an in-progress
+// SSO login from the TUI. It clears the loading flag and returns control to
+// the picker without ending the program.
+type contextLoginCanceledMsg struct{}
+
 // loadLogsCmd fetches Promotions and Events for the given stage.
 func loadLogsCmd(c *kargo.Client, project, stageName string) tea.Cmd {
 	return func() tea.Msg {
