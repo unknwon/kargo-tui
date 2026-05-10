@@ -244,6 +244,17 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 	return v
 }
 
+// promoteViewingChromeRows counts the non-viewport rows the viewing
+// box renders: top border (1) + top padding (1) + header (1) + blank
+// (1) + blank-after-viewport (1) + hint (1) + bottom padding (1) +
+// bottom border (1).
+const promoteViewingChromeRows = 8
+
+// promoteViewingChromeCols counts the non-content columns the viewing
+// box renders: left border (1) + left padding (2) + right padding (2)
+// + right border (1).
+const promoteViewingChromeCols = 6
+
 // preparePromoteViewingViewport sizes overlayVP and loads the highlighted
 // candidate's detail block. promoteOverlayView is a value receiver, so
 // any width/height/content set inside View() mutates a throwaway copy
@@ -256,13 +267,16 @@ func (m *Model) preparePromoteViewingViewport() {
 	if w <= 0 {
 		w = 80
 	}
-	h := m.height - 4
-	if h < 5 {
-		h = 5
+	innerW := w - promoteViewingChromeCols
+	if innerW < 20 {
+		innerW = 20
 	}
-	innerW := w - 4
+	innerH := m.height - promoteViewingChromeRows
+	if innerH < 3 {
+		innerH = 3
+	}
 	m.overlayVP.SetWidth(innerW)
-	m.overlayVP.SetHeight(h - 2)
+	m.overlayVP.SetHeight(innerH)
 	m.overlayVP.SetContent(m.promoteViewingContent(innerW))
 }
 
@@ -271,8 +285,19 @@ func (m *Model) preparePromoteViewingViewport() {
 // scrollable (j/k, pgup/pgdn, home/end).
 func (m Model) promoteViewingView(titleStyle, hintStyle lipgloss.Style) tea.View {
 	m.preparePromoteViewingViewport()
-	header := titleStyle.Render(m.overlayTitle)
-	hint := hintStyle.Render("v/esc back · enter promote · j/k scroll · home/end top/bottom")
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
+	innerW := w - promoteViewingChromeCols
+	if innerW < 20 {
+		innerW = 20
+	}
+	// Clip the title and hint so a narrow terminal can't wrap them —
+	// any extra row would push the viewport content past the bottom
+	// of the screen and hide the hint.
+	header := titleStyle.Render(clipToWidth(m.overlayTitle, innerW))
+	hint := hintStyle.Render(clipToWidth("v/esc back · enter promote · j/k scroll · home/end top/bottom", innerW))
 	body := lipgloss.JoinVertical(lipgloss.Left, header, "", m.overlayVP.View(), "", hint)
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -311,9 +336,10 @@ func (m Model) promoteViewingContent(innerW int) string {
 }
 
 // updatePromoteOverlay routes a key press while the promote overlay is open.
-// Each promoteStep accepts a different key set: pick (arrows + enter),
-// confirm (y/n), submitting (esc to dismiss without cancelling the in-flight
-// RPC), done (any key dismisses).
+// Each promoteStep accepts a different key set: pick (arrows + enter +
+// v to view), view (scroll keys + enter to advance to confirm + v/esc
+// to return), confirm (y/n), submitting (esc to dismiss without
+// cancelling the in-flight RPC), done (any key dismisses).
 func (m Model) updatePromoteOverlay(key string) (tea.Model, tea.Cmd) {
 	switch m.promoteStep {
 	case promotePicking:
@@ -338,6 +364,9 @@ func (m Model) updatePromoteOverlay(key string) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "pgdown", "pgdn", " ":
+			if len(m.promoteCandidates) == 0 {
+				return m, nil
+			}
 			m.promoteCursor += promotePickerPage(m.height)
 			if m.promoteCursor > len(m.promoteCandidates)-1 {
 				m.promoteCursor = len(m.promoteCandidates) - 1
@@ -347,6 +376,9 @@ func (m Model) updatePromoteOverlay(key string) (tea.Model, tea.Cmd) {
 			m.promoteCursor = 0
 			return m, nil
 		case "end":
+			if len(m.promoteCandidates) == 0 {
+				return m, nil
+			}
 			m.promoteCursor = len(m.promoteCandidates) - 1
 			return m, nil
 		case "enter":
