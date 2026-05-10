@@ -20,8 +20,15 @@ import (
 // refresh_token, and persists the rotated tokens back to the config file so
 // the next process start (and other in-flight callers) see the new values.
 //
-// It is safe for concurrent use: a sync.Mutex serialises refresh attempts so
-// a burst of 401s from parallel RPCs collapses into a single token exchange.
+// It is safe for concurrent use, and additionally *coalesces* concurrent
+// refresh attempts: a sync.Mutex serialises callers, and within the
+// coalesceWindow after a successful exchange the cached id_token is
+// returned to subsequent callers without re-exchanging. This matters
+// because most IdPs rotate the refresh_token on every exchange — without
+// coalescing, a burst of N parallel 401s would issue N exchanges back to
+// back, and exchanges 2..N would fail with `invalid_grant` because they'd
+// be presenting a now-stale refresh_token (the one they read from disk
+// before exchange #1 wrote the new one).
 type Refresher struct {
 	contextName string
 	insecure    bool
@@ -29,7 +36,20 @@ type Refresher struct {
 	mu       sync.Mutex
 	provider *oidc.Provider // lazily discovered on first refresh
 	clientID string         // from kargo PublicConfig (lazy)
+
+	// lastToken / lastAt cache the most recent successful exchange so
+	// coalesced callers can be served without re-hitting the IdP. lastAt
+	// is the wall-clock time of the exchange; callers arriving within
+	// coalesceWindow of it get lastToken back.
+	lastToken string
+	lastAt    time.Time
 }
+
+// coalesceWindow is how long after a successful exchange subsequent
+// Refresh() callers receive the cached id_token instead of triggering a
+// new exchange. Sized for "burst of parallel 401s from a single tick"
+// (sub-second in practice), well under any reasonable id_token lifetime.
+const coalesceWindow = 10 * time.Second
 
 // NewRefresher builds a Refresher bound to a named config context. The
 // RefreshToken field is read fresh from disk on every Refresh() so a
@@ -44,9 +64,18 @@ func NewRefresher(contextName string, insecureSkipTLSVerify bool) *Refresher {
 // Refresh exchanges the saved refresh_token for a new id_token and writes
 // both back to the config file. Returns the new id_token. The caller is
 // expected to update its in-memory copy (e.g. the connectJSON token field).
+//
+// Coalesces concurrent callers: within coalesceWindow of a successful
+// exchange, additional callers receive the cached id_token without a new
+// IdP round trip — see the type-level doc for why this matters with
+// rotating refresh tokens.
 func (r *Refresher) Refresh(ctx context.Context) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if r.lastToken != "" && time.Since(r.lastAt) < coalesceWindow {
+		return r.lastToken, nil
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -112,5 +141,7 @@ func (r *Refresher) Refresh(ctx context.Context) (string, error) {
 	if err := config.Save(cfg); err != nil {
 		return "", fmt.Errorf("persist refreshed tokens: %w", err)
 	}
+	r.lastToken = idToken
+	r.lastAt = time.Now()
 	return idToken, nil
 }
