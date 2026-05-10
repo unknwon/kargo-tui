@@ -41,6 +41,7 @@ func helpBindings() []struct{ section, key, desc string } {
 		{"Other", "r", "refresh now"},
 		{"", "q / ctrl+c", "quit"},
 		{"Contexts", "C", "switch Kargo context (then press + to log in to a new URL)"},
+		{"", "R", "re-login to current context (only when session expired)"},
 	}
 }
 

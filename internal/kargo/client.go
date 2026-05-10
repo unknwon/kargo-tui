@@ -45,6 +45,14 @@ func NewClient(ctx *config.Context) (*Client, error) {
 	}, nil
 }
 
+// SetTokenRefresher installs a callback the transport invokes after a
+// CodeUnauthenticated response, to obtain a fresh bearer token before
+// retrying. Pass nil to disable. Wired here rather than at construction
+// to avoid an import cycle between the auth and kargo packages.
+func (c *Client) SetTokenRefresher(refresh func(context.Context) (string, error)) {
+	c.rpc.refresh = refresh
+}
+
 // NewUnauthenticatedRPC is used by `auth login` to call AdminLogin and
 // GetPublicConfig before any token has been issued.
 func NewUnauthenticatedRPC(apiAddress string, insecureSkipTLSVerify bool) *connectJSONWrapper {

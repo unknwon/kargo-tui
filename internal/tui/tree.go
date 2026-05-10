@@ -417,6 +417,8 @@ func (m Model) treeView() tea.View {
 	switch {
 	case m.filtering || m.filter.Value() != "":
 		statusLine = lipgloss.NewStyle().Background(bg).Render(m.filter.View())
+	case m.authExpired:
+		statusLine = m.renderAuthBanner()
 	case m.deploysError != nil:
 		statusLine = lipgloss.NewStyle().Foreground(degraded).Background(bg).Padding(0, 1).Render(m.deploysError.Error())
 	case m.yankedMessage != "":

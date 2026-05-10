@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -119,9 +120,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		if msg.err != nil {
 			m.deploysError = msg.err
+			m.noteAuthFailure(msg.err)
 		} else {
 			m.deploysError = nil
 			m.deploys = msg.deploys
+			m.noteAuthSuccess()
 			m.refreshRows()
 			m.refreshPanel()
 		}
@@ -131,9 +134,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		if msg.err != nil {
 			m.freightsError = msg.err
+			m.noteAuthFailure(msg.err)
 		} else {
 			m.freightsError = nil
 			m.freights = msg.freights
+			m.noteAuthSuccess()
 			m.refreshRows()
 			m.refreshPanel()
 		}
@@ -147,6 +152,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.overlayPromos = msg.promos
 		m.overlayEvents = msg.events
 		m.overlayError = msg.err
+		if msg.err != nil {
+			m.noteAuthFailure(msg.err)
+		} else {
+			m.noteAuthSuccess()
+		}
 		m.renderLogs()
 		return m, nil
 
@@ -166,14 +176,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the streaming response). Tick-based refresh is still running,
 		// so the UI keeps working — surface a quiet status note.
 		if msg.err != nil {
-			m.yankedMessage = "stage watch ended: " + msg.err.Error()
-			m.yankedAt = time.Now()
+			if kargo.IsUnauthenticated(msg.err) {
+				m.noteAuthFailure(msg.err)
+			} else {
+				m.yankedMessage = "stage watch ended: " + msg.err.Error()
+				m.yankedAt = time.Now()
+			}
 		}
 		m.stageWatchCancel = nil
 		return m, nil
 
 	case promoteDownstreamResultMsg:
 		if msg.err != nil {
+			m.noteAuthFailure(msg.err)
 			m.yankedMessage = "promote-downstream failed: " + msg.err.Error()
 		} else if msg.promotions == 0 {
 			m.yankedMessage = "no eligible downstream stages for " + msg.source
@@ -196,6 +211,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// (the user hit esc on the submitting screen). We still record
 		// the outcome as a transient yank-style status so they see it.
 		if msg.err != nil {
+			m.noteAuthFailure(msg.err)
 			m.promoteError = msg.err
 			m.yankedMessage = "promote failed: " + msg.err.Error()
 		} else {
@@ -435,6 +451,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ctxFilter.SetValue("")
 			m.ctxFilter.Focus()
 			return m, textinput.Blink
+		case "R":
+			// Inline re-login for the current context. Only meaningful when
+			// the auth banner is up; otherwise the existing session is fine
+			// and `R` does nothing (avoids surprising the user). Reuses the
+			// ctxLogin callback main wired in, jumping the user into the
+			// context picker's login flow already targeted at this URL.
+			if !m.authExpired || m.ctxLogin == nil || m.client == nil {
+				return m, nil
+			}
+			url := m.client.BaseURL()
+			if url == "" {
+				return m, nil
+			}
+			m.phase = phasePickingContext
+			m.ctxAdding = true
+			m.ctxLoggingIn = true
+			m.ctxLoginStatus = "Re-authenticating against " + url + "…"
+			m.ctxError = nil
+			m.ctxURLInput.SetValue(url)
+			lctx, cancel := context.WithCancel(context.Background())
+			m.ctxLoginCancel = cancel
+			send := m.ctxSend
+			if send == nil {
+				send = func(tea.Msg) {}
+			}
+			return m, runContextLoginCmd(m.ctxLogin, lctx, url, send)
 		case "v":
 			m.detailsOnly = !m.detailsOnly
 			return m, nil

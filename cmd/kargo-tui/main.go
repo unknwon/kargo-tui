@@ -58,6 +58,7 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
+	attachRefresher(client, active)
 	project := cmd.String("project")
 	if project == "" {
 		project = active.Project
@@ -102,6 +103,19 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
+// attachRefresher wires an OIDC refresh-token exchange into the client's
+// transport. When a Kargo RPC fails with CodeUnauthenticated the transport
+// invokes the refresher, which swaps the saved refresh_token for a fresh
+// id_token, persists both back to the config, and the call is retried
+// once. No-op when the context has no refresh_token (admin-token logins).
+func attachRefresher(client *kargo.Client, c *config.Context) {
+	if c == nil || c.RefreshToken == "" {
+		return
+	}
+	r := auth.NewRefresher(c.Name, c.InsecureSkipTLSVerify)
+	client.SetTokenRefresher(r.Refresh)
+}
+
 // contextSwitcher returns the list of configured context names, a builder
 // that constructs a fresh client + that context's default project for a
 // chosen name, and a login callback that runs the SSO flow against a new
@@ -126,6 +140,7 @@ func contextSwitcher(cfg *config.Config) (
 		if err != nil {
 			return nil, "", err
 		}
+		attachRefresher(client, c)
 		cfg.CurrentContext = name
 		_ = config.Save(cfg)
 		return client, c.Project, nil

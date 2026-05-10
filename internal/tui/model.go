@@ -102,6 +102,14 @@ type Model struct {
 	yankedMessage string
 	yankedAt      time.Time
 
+	// authExpired is set when a Kargo RPC fails with CodeUnauthenticated
+	// after the transport's refresh attempt also failed (or no refresh
+	// token was saved). It drives a sticky red banner above the help line
+	// and unlocks the `R` shortcut to trigger an inline re-login. Cleared
+	// on the next successful tick or after a successful re-login.
+	authExpired    bool
+	authExpiredMsg string
+
 	// helpVP renders the keybindings overlay body so it can scroll
 	// independently of the table/details viewports.
 	helpVP viewport.Model
@@ -231,6 +239,32 @@ func NewWithPicker(client *kargo.Client, contextName string) Model {
 // can stream status updates into the TUI. Sent by main after constructing
 // the tea.Program.
 type SetSendMsg struct{ Send func(tea.Msg) }
+
+// noteAuthFailure sets the sticky auth-expired banner from an RPC error,
+// but only when the error is actually an auth failure. Non-auth errors
+// (network blips, server 5xx) are left to their existing handlers.
+func (m *Model) noteAuthFailure(err error) {
+	if !kargo.IsUnauthenticated(err) {
+		return
+	}
+	m.authExpired = true
+	m.authExpiredMsg = err.Error()
+}
+
+// noteAuthSuccess clears the auth-expired banner after a successful RPC,
+// and restarts the stage watch if it had previously died from a 401 (the
+// stream-end handler nils stageWatchCancel; a successful tick means the
+// new token is good and a fresh watch can be opened).
+func (m *Model) noteAuthSuccess() {
+	if !m.authExpired && m.stageWatchCancel != nil {
+		return
+	}
+	m.authExpired = false
+	m.authExpiredMsg = ""
+	if m.stageWatchCancel == nil {
+		m.restartStageWatch()
+	}
+}
 
 // restartStageWatch stops any in-flight WatchStages goroutine and
 // starts a fresh one for the current project. No-op when ctxSend isn't
