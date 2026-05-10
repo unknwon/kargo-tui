@@ -6,6 +6,8 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+
+	"unknwon.dev/kargo-tui/internal/kargo"
 )
 
 // layoutDims returns (tableWidth, panelWidth). Panel is shown only when
@@ -37,6 +39,7 @@ func (m Model) layoutDims() (int, int) {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if sm, ok := msg.(SetSendMsg); ok {
 		m.ctxSend = sm.Send
+		m.restartStageWatch()
 		return m, nil
 	}
 
@@ -144,6 +147,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case argoURLMsg:
 		m.argoBaseURL = string(msg)
 		m.refreshPanel()
+		return m, nil
+
+	case stageEventMsg:
+		m.deploys = kargo.MergeStageEvent(m.deploys, kargo.StageEvent(msg))
+		m.refreshRows()
+		m.refreshPanel()
+		return m, nil
+
+	case stageWatchEndedMsg:
+		// Stream closed (server hangup, network blip, or proxy stripped
+		// the streaming response). Tick-based refresh is still running,
+		// so the UI keeps working — surface a quiet status note.
+		if msg.err != nil {
+			m.yankedMessage = "stage watch ended: " + msg.err.Error()
+			m.yankedAt = time.Now()
+		}
+		m.stageWatchCancel = nil
 		return m, nil
 
 	case promoteDownstreamResultMsg:

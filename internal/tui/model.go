@@ -167,6 +167,12 @@ type Model struct {
 	promoteResult     string // promotion name on success
 	promoteError      error
 
+	// stageWatchCancel cancels the active WatchStages goroutine when the
+	// user switches projects or the program exits. nil when no watch is
+	// running (initial state, or after a stream error fell back to
+	// tick-only refresh).
+	stageWatchCancel context.CancelFunc
+
 	width, height int
 
 	loading bool
@@ -225,6 +231,21 @@ func NewWithPicker(client *kargo.Client, contextName string) Model {
 // can stream status updates into the TUI. Sent by main after constructing
 // the tea.Program.
 type SetSendMsg struct{ Send func(tea.Msg) }
+
+// restartStageWatch stops any in-flight WatchStages goroutine and
+// starts a fresh one for the current project. No-op when ctxSend isn't
+// wired yet (the watch needs a way to post events back, so we skip
+// starting until SetSendMsg has arrived).
+func (m *Model) restartStageWatch() {
+	if m.stageWatchCancel != nil {
+		m.stageWatchCancel()
+		m.stageWatchCancel = nil
+	}
+	if m.ctxSend == nil || m.project == "" || m.client == nil {
+		return
+	}
+	m.stageWatchCancel = startStageWatchGoroutine(m.client, m.project, m.ctxSend)
+}
 
 // WithContexts wires in the list of configured Kargo contexts, a builder
 // that returns a fresh client for a chosen context, and a login callback

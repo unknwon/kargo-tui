@@ -28,6 +28,10 @@ type connectJSON struct {
 	baseURL string
 	token   string
 	http    *http.Client
+	// streamHTTP is a separate client without a request timeout, used
+	// for long-lived server-streaming RPCs (WatchStages etc.). Built
+	// lazily by streamClient().
+	streamHTTP *http.Client
 }
 
 // newConnectJSON builds a hand-rolled Kargo Connect-RPC-over-JSON client.
