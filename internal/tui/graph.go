@@ -944,7 +944,9 @@ func (m Model) graphView() tea.View {
 		Render("←/→/↑/↓ move along edges · l logs · P promote · > downstream · t tree · d deploys · ? help · q quit")
 
 	var content string
-	if m.deploysError != nil {
+	if m.authExpired {
+		content = lipgloss.JoinVertical(lipgloss.Left, header, body, m.renderAuthBanner(), statusLine, hint)
+	} else if m.deploysError != nil {
 		errLine := lipgloss.NewStyle().Foreground(degraded).Background(bg).Padding(0, 1).Render(m.deploysError.Error())
 		content = lipgloss.JoinVertical(lipgloss.Left, header, body, errLine, statusLine, hint)
 	} else if m.yankedMessage != "" {

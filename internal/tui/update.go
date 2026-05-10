@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -119,9 +120,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		if msg.err != nil {
 			m.deploysError = msg.err
+			m.noteAuthFailure(msg.err)
 		} else {
 			m.deploysError = nil
 			m.deploys = msg.deploys
+			m.noteAuthSuccess()
 			m.refreshRows()
 			m.refreshPanel()
 		}
@@ -131,9 +134,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		if msg.err != nil {
 			m.freightsError = msg.err
+			m.noteAuthFailure(msg.err)
 		} else {
 			m.freightsError = nil
 			m.freights = msg.freights
+			m.noteAuthSuccess()
 			m.refreshRows()
 			m.refreshPanel()
 		}
@@ -147,6 +152,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.overlayPromos = msg.promos
 		m.overlayEvents = msg.events
 		m.overlayError = msg.err
+		if msg.err != nil {
+			m.noteAuthFailure(msg.err)
+		} else {
+			m.noteAuthSuccess()
+		}
 		m.renderLogs()
 		return m, nil
 
@@ -166,14 +176,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the streaming response). Tick-based refresh is still running,
 		// so the UI keeps working — surface a quiet status note.
 		if msg.err != nil {
-			m.yankedMessage = "stage watch ended: " + msg.err.Error()
-			m.yankedAt = time.Now()
+			if kargo.IsUnauthenticated(msg.err) {
+				m.noteAuthFailure(msg.err)
+			} else {
+				m.yankedMessage = "stage watch ended: " + msg.err.Error()
+				m.yankedAt = time.Now()
+			}
 		}
 		m.stageWatchCancel = nil
 		return m, nil
 
 	case promoteDownstreamResultMsg:
 		if msg.err != nil {
+			m.noteAuthFailure(msg.err)
 			m.yankedMessage = "promote-downstream failed: " + msg.err.Error()
 		} else if msg.promotions == 0 {
 			m.yankedMessage = "no eligible downstream stages for " + msg.source
@@ -196,6 +211,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// (the user hit esc on the submitting screen). We still record
 		// the outcome as a transient yank-style status so they see it.
 		if msg.err != nil {
+			m.noteAuthFailure(msg.err)
 			m.promoteError = msg.err
 			m.yankedMessage = "promote failed: " + msg.err.Error()
 		} else {
@@ -371,8 +387,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "left":
-			// Graph and tree views consume arrow keys themselves
-			// (spatial cursor / collapse). Tables get column scroll.
+			// In full-screen details mode, arrows scroll the panel
+			// regardless of the structural view behind it. Otherwise
+			// graph and tree views consume arrows themselves (spatial
+			// cursor / collapse) and tables get column scroll.
+			if m.detailsOnly {
+				m.panelVP.ScrollLeft(2)
+				return m, nil
+			}
 			if m.view == viewGraph {
 				m.moveGraphCursor("left")
 				return m, nil
@@ -384,6 +406,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollLeft()
 			return m, nil
 		case "right":
+			if m.detailsOnly {
+				m.panelVP.ScrollRight(2)
+				return m, nil
+			}
 			if m.view == viewGraph {
 				m.moveGraphCursor("right")
 				return m, nil
@@ -395,6 +421,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollRight()
 			return m, nil
 		case "up", "k":
+			if m.detailsOnly {
+				m.panelVP.ScrollUp(1)
+				return m, nil
+			}
 			if m.view == viewGraph {
 				m.moveGraphCursor("up")
 				return m, nil
@@ -404,6 +434,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "down", "j":
+			if m.detailsOnly {
+				m.panelVP.ScrollDown(1)
+				return m, nil
+			}
 			if m.view == viewGraph {
 				m.moveGraphCursor("down")
 				return m, nil
@@ -435,6 +469,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ctxFilter.SetValue("")
 			m.ctxFilter.Focus()
 			return m, textinput.Blink
+		case "R":
+			// Inline re-login for the current context. Only meaningful when
+			// the auth banner is up; otherwise the existing session is fine
+			// and `R` does nothing (avoids surprising the user). Uses the
+			// ctxRelogin callback (rather than ctxLogin) so the saved
+			// context's insecureSkipTLSVerify / project flags are preserved
+			// — ctxLogin would Upsert a brand-new context with default zero
+			// values for everything beyond the URL.
+			if !m.authExpired || m.ctxRelogin == nil || m.contextName == "" {
+				return m, nil
+			}
+			name := m.contextName
+			url := ""
+			if m.client != nil {
+				url = m.client.BaseURL()
+			}
+			m.phase = phasePickingContext
+			m.ctxAdding = false
+			m.ctxLoggingIn = true
+			if url != "" {
+				m.ctxLoginStatus = "Re-authenticating against " + url + "…"
+			} else {
+				m.ctxLoginStatus = "Re-authenticating " + name + "…"
+			}
+			m.ctxError = nil
+			lctx, cancel := context.WithCancel(context.Background())
+			m.ctxLoginCancel = cancel
+			send := m.ctxSend
+			if send == nil {
+				send = func(tea.Msg) {}
+			}
+			// Adapt the name-based relogin callback to the URL-based shape
+			// runContextLoginCmd expects — the name is closed over here.
+			loginByName := func(ctx context.Context, _ string, status func(string)) (string, error) {
+				return m.ctxRelogin(ctx, name, status)
+			}
+			return m, runContextLoginCmd(loginByName, lctx, name, send)
 		case "v":
 			m.detailsOnly = !m.detailsOnly
 			return m, nil
@@ -504,14 +575,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Graph view consumes any other unhandled key so it doesn't leak
 		// into the hidden table dispatch below. Arrow keys are handled
 		// in the top-level switch; logs / promote / diff use l / P / D
-		// like every other view.
-		if m.view == viewGraph {
+		// like every other view. Exception: in detailsOnly mode the
+		// panel viewport owns scroll keys (pgup/pgdn/home/end) so let
+		// them fall through to the panel scroll handler below.
+		if m.view == viewGraph && !m.detailsOnly {
 			return m, nil
 		}
 
 		// Tree view owns its own page/expand/toggle keys. Arrow + j/k
-		// nav was already handled in the top-level switch above.
-		if m.view == viewTree {
+		// nav was already handled in the top-level switch above. Same
+		// exception as graph: in detailsOnly mode let scroll keys fall
+		// through to the panel handler.
+		if m.view == viewTree && !m.detailsOnly {
 			switch key {
 			case "pgup":
 				m.moveTreeCursor(-10)

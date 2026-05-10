@@ -69,7 +69,10 @@ func (m Model) updateContextPicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.ctxLoggingIn = false
 				m.ctxLoginCancel = nil
-				m.ctxAdding = true
+				// Keep ctxAdding at whatever it was when login started:
+				// `+` opens the add form so esc returns to it for retry;
+				// `R` (inline relogin) opens with ctxAdding=false so esc
+				// drops back to the context list instead.
 				return m, nil
 			}
 			return m, nil

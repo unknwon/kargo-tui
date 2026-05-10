@@ -102,6 +102,14 @@ type Model struct {
 	yankedMessage string
 	yankedAt      time.Time
 
+	// authExpired is set when a Kargo RPC fails with CodeUnauthenticated
+	// after the transport's refresh attempt also failed (or no refresh
+	// token was saved). It drives a sticky red banner above the help line
+	// and unlocks the `R` shortcut to trigger an inline re-login. Cleared
+	// on the next successful tick or after a successful re-login.
+	authExpired    bool
+	authExpiredMsg string
+
 	// helpVP renders the keybindings overlay body so it can scroll
 	// independently of the table/details viewports.
 	helpVP viewport.Model
@@ -138,9 +146,14 @@ type Model struct {
 	ctxCursor   int
 	ctxFilter   textinput.Model
 	ctxError    error
-	ctxBuilder     func(name string) (*kargo.Client, string, error)
-	ctxLogin       func(ctx context.Context, url string, status func(string)) (newName string, err error)
-	ctxSend        func(tea.Msg) // injected from main so login goroutine can stream status updates
+	ctxBuilder func(name string) (*kargo.Client, string, error)
+	ctxLogin   func(ctx context.Context, url string, status func(string)) (newName string, err error)
+	// ctxRelogin re-runs SSO against an already-configured context,
+	// preserving its saved insecureSkipTLSVerify / project flags so the
+	// re-auth flow doesn't silently strip them. Used by the inline `R`
+	// handler when the persistent auth banner is up.
+	ctxRelogin func(ctx context.Context, contextName string, status func(string)) (string, error)
+	ctxSend    func(tea.Msg) // injected from main so login goroutine can stream status updates
 	ctxAdding      bool
 	ctxLoggingIn   bool
 	ctxLoginStatus string
@@ -232,6 +245,35 @@ func NewWithPicker(client *kargo.Client, contextName string) Model {
 // the tea.Program.
 type SetSendMsg struct{ Send func(tea.Msg) }
 
+// noteAuthFailure sets the sticky auth-expired banner from an RPC error,
+// but only when the error is actually an auth failure. Non-auth errors
+// (network blips, server 5xx) are left to their existing handlers.
+func (m *Model) noteAuthFailure(err error) {
+	if !kargo.IsUnauthenticated(err) {
+		return
+	}
+	m.authExpired = true
+	m.authExpiredMsg = err.Error()
+}
+
+// noteAuthSuccess clears the auth-expired banner after a successful RPC.
+// When the banner was up *and* the watch is currently dead, it also
+// restarts the watch — covering the common case where a 401 tore the
+// stream down and a subsequent successful tick (post-refresh or
+// post-relogin) means the new token is good. Watches that died for
+// non-auth reasons (network blip, proxy) are left alone here so we don't
+// retry-storm; the existing tick-only fallback keeps the UI working.
+func (m *Model) noteAuthSuccess() {
+	if !m.authExpired {
+		return
+	}
+	m.authExpired = false
+	m.authExpiredMsg = ""
+	if m.stageWatchCancel == nil {
+		m.restartStageWatch()
+	}
+}
+
 // restartStageWatch stops any in-flight WatchStages goroutine and
 // starts a fresh one for the current project. No-op when ctxSend isn't
 // wired yet (the watch needs a way to post events back, so we skip
@@ -247,19 +289,36 @@ func (m *Model) restartStageWatch() {
 	m.stageWatchCancel = startStageWatchGoroutine(m.client, m.project, m.ctxSend)
 }
 
+// WithAuthExpired starts the model with the session-expired banner up.
+// Used by main when the saved id_token's `exp` claim has already passed
+// at startup, so the user sees the prompt before any RPC has had a
+// chance to fire and confirm it via 401. A successful tick clears it
+// the moment a (proactively-refreshed) bearer starts working.
+func (m Model) WithAuthExpired(msg string) Model {
+	m.authExpired = true
+	if msg != "" {
+		m.authExpiredMsg = msg
+	}
+	return m
+}
+
 // WithContexts wires in the list of configured Kargo contexts, a builder
-// that returns a fresh client for a chosen context, and a login callback
-// that authenticates a new Kargo URL via SSO. When set, pressing `C` inside
-// the TUI opens the context picker; `+` inside the picker triggers the
-// login flow for a new URL.
+// that returns a fresh client for a chosen context, a login callback that
+// authenticates a *new* Kargo URL via SSO, and a relogin callback that
+// re-authenticates an *existing* context (preserving its saved flags).
+// When set, pressing `C` inside the TUI opens the context picker; `+`
+// inside the picker triggers the login flow for a new URL; `R` from the
+// auth-expired banner triggers the relogin flow for the current context.
 func (m Model) WithContexts(
 	names []string,
 	build func(name string) (*kargo.Client, string, error),
 	login func(ctx context.Context, url string, status func(string)) (string, error),
+	relogin func(ctx context.Context, contextName string, status func(string)) (string, error),
 ) Model {
 	m.ctxNames = names
 	m.ctxBuilder = build
 	m.ctxLogin = login
+	m.ctxRelogin = relogin
 	ti := newInput("› ", "type to filter contexts…", 64)
 	m.ctxFilter = ti
 	urlIn := newInput("URL › ", "https://kargo.example.com", 256)

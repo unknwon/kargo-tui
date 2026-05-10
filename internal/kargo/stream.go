@@ -58,26 +58,49 @@ func (c *connectJSON) callServerStream(
 	envelope := makeEnvelope(0, body)
 
 	url := c.baseURL + kargoServicePath + method
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(envelope))
-	if err != nil {
-		return fmt.Errorf("build stream request for %s: %w", method, err)
-	}
-	httpReq.Header.Set("Content-Type", "application/connect+proto")
-	httpReq.Header.Set("Accept", "application/connect+proto")
-	httpReq.Header.Set("Connect-Protocol-Version", "1")
-	if c.token != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.token)
+
+	dial := func() (*http.Response, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(envelope))
+		if err != nil {
+			return nil, fmt.Errorf("build stream request for %s: %w", method, err)
+		}
+		httpReq.Header.Set("Content-Type", "application/connect+proto")
+		httpReq.Header.Set("Accept", "application/connect+proto")
+		httpReq.Header.Set("Connect-Protocol-Version", "1")
+		if tok := c.bearer(); tok != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+tok)
+		}
+		return c.streamClient().Do(httpReq)
 	}
 
-	resp, err := c.streamClient().Do(httpReq)
+	resp, err := dial()
 	if err != nil {
 		return fmt.Errorf("call stream %s: %w", method, err)
 	}
-	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		raw, _ := io.ReadAll(resp.Body)
-		return parseConnectError(method, resp.StatusCode, raw)
+		_ = resp.Body.Close()
+		dialErr := parseConnectError(method, resp.StatusCode, raw)
+		if !isUnauthenticated(dialErr) || c.tryRefresh(ctx) != nil {
+			return dialErr
+		}
+		// Refresh succeeded — retry the dial once. If the retry fails for
+		// any reason, surface the original dialErr (the auth failure that
+		// triggered the refresh) wrapped around the retry error so the
+		// user sees both: "your token was bad, and the refreshed one
+		// also got: <whatever>".
+		resp, err = dial()
+		if err != nil {
+			return fmt.Errorf("call stream %s after refresh (original: %w): %w", method, dialErr, err)
+		}
+		if resp.StatusCode/100 != 2 {
+			raw2, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			return fmt.Errorf("after refresh (original: %w): %w",
+				dialErr, parseConnectError(method, resp.StatusCode, raw2))
+		}
 	}
+	defer resp.Body.Close()
 
 	header := make([]byte, 5)
 	for {

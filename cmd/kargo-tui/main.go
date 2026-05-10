@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/urfave/cli/v3"
@@ -58,38 +59,52 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
+	attachRefresher(client, active)
+	authExpired := primeToken(client, active)
 	project := cmd.String("project")
 	if project == "" {
 		project = active.Project
 	}
 
 	// If no project was selected, try to auto-select when there's exactly one;
-	// otherwise fall through to the picker.
+	// otherwise fall through to the picker. Auth failures here are non-fatal:
+	// the TUI launches with the banner up so the user can press R to recover.
 	if project == "" {
 		ps, err := client.ListProjects(ctx)
-		if err == nil && len(ps) == 1 {
+		switch {
+		case err == nil && len(ps) == 1:
 			project = ps[0]
+		case kargo.IsUnauthenticated(err):
+			authExpired = true
 		}
 	}
 
-	ctxNames, ctxBuilder, ctxLogin := contextSwitcher(cfg)
+	ctxNames, ctxBuilder, ctxLogin, ctxRelogin := contextSwitcher(cfg)
 
 	var p *tea.Program
 	if project == "" {
-		p = tea.NewProgram(tui.NewWithPicker(client, active.Name).
-			WithContexts(ctxNames, ctxBuilder, ctxLogin))
+		m := tui.NewWithPicker(client, active.Name).
+			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin)
+		if authExpired {
+			m = m.WithAuthExpired("saved session expired")
+		}
+		p = tea.NewProgram(m)
 	} else {
 		client.SetProject(project)
-		deploys, err := client.ListStages(ctx, project)
-		if err != nil {
-			return fmt.Errorf("load deploys: %w", err)
+		// ListStages / ListFreight failures are non-fatal here too — if the
+		// cause is auth, the TUI takes over with the banner; if it's a real
+		// server problem, the per-view error line surfaces it once inside.
+		deploys, dErr := client.ListStages(ctx, project)
+		freights, fErr := client.ListFreight(ctx, project)
+		if kargo.IsUnauthenticated(dErr) || kargo.IsUnauthenticated(fErr) {
+			authExpired = true
 		}
-		freights, err := client.ListFreight(ctx, project)
-		if err != nil {
-			return fmt.Errorf("load freights: %w", err)
+		m := tui.New(client, active.Name, project, deploys, freights).
+			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin)
+		if authExpired {
+			m = m.WithAuthExpired("saved session expired")
 		}
-		p = tea.NewProgram(tui.New(client, active.Name, project, deploys, freights).
-			WithContexts(ctxNames, ctxBuilder, ctxLogin))
+		p = tea.NewProgram(m)
 	}
 
 	// Inject the program's thread-safe Send so the SSO login goroutine can
@@ -102,16 +117,65 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
+// attachRefresher wires an OIDC refresh-token exchange into the client's
+// transport. When a Kargo RPC fails with CodeUnauthenticated the transport
+// invokes the refresher, which swaps the saved refresh_token for a fresh
+// id_token, persists both back to the config, and the call is retried
+// once. No-op when the context has no refresh_token (admin-token logins).
+func attachRefresher(client *kargo.Client, c *config.Context) {
+	if c == nil || c.RefreshToken == "" {
+		return
+	}
+	r := auth.NewRefresher(c.Name, c.InsecureSkipTLSVerify)
+	client.SetTokenRefresher(r.Refresh)
+}
+
+// primeToken inspects the saved id_token's `exp` claim and decides how
+// to handle stale credentials *without ever blocking startup or printing
+// to stderr* — the user's eventual home is the TUI's alt-screen, so any
+// stderr write is invisible (or worse, corrupts the rendered view) and
+// we'd rather they always reach the TUI where the auth-expired banner
+// and `R` re-login affordance live.
+//
+//   - Token healthy: kick the refresher off in the background. The next
+//     401 (or natural mid-session expiry) finds the Refresher's
+//     coalescing cache pre-warmed and skips the IdP round trip.
+//   - Token already expired (or expires within 60s): same background
+//     refresh, plus return foregroundExpired=true so the caller can
+//     start the TUI with the auth-expired banner already up. If the
+//     background refresh succeeds in time, the first successful tick
+//     clears the banner via noteAuthSuccess; if not, the banner stays
+//     and the user presses R.
+//
+// Returns false (don't show banner) when no refresher is attached or the
+// token isn't a JWT we can decode — in those cases the lazy 401 path is
+// the only signal we have.
+func primeToken(client *kargo.Client, active *config.Context) (foregroundExpired bool) {
+	if active == nil || active.RefreshToken == "" {
+		return false
+	}
+	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = client.ForceRefresh(bgCtx)
+	}()
+	exp, ok := auth.IDTokenExpiry(active.BearerToken)
+	return ok && time.Until(exp) < 60*time.Second
+}
+
 // contextSwitcher returns the list of configured context names, a builder
 // that constructs a fresh client + that context's default project for a
-// chosen name, and a login callback that runs the SSO flow against a new
-// Kargo URL and saves it as a new context. The builder also persists the
+// chosen name, a login callback that runs the SSO flow against a new
+// Kargo URL and saves it as a new context, and a relogin callback that
+// re-runs SSO against an *existing* context, preserving its
+// insecureSkipTLSVerify and project flags. The builder also persists the
 // chosen context as CurrentContext so the next launch is non-interactive;
 // failures from Save are non-fatal — the in-memory switch still completes.
 func contextSwitcher(cfg *config.Config) (
 	[]string,
 	func(string) (*kargo.Client, string, error),
 	func(ctx context.Context, url string, status func(string)) (string, error),
+	func(ctx context.Context, contextName string, status func(string)) (string, error),
 ) {
 	names := make([]string, 0, len(cfg.Contexts))
 	for _, c := range cfg.Contexts {
@@ -126,6 +190,7 @@ func contextSwitcher(cfg *config.Config) (
 		if err != nil {
 			return nil, "", err
 		}
+		attachRefresher(client, c)
 		cfg.CurrentContext = name
 		_ = config.Save(cfg)
 		return client, c.Project, nil
@@ -147,7 +212,35 @@ func contextSwitcher(cfg *config.Config) (
 		}
 		return saved.Name, nil
 	}
-	return names, build, login
+	relogin := func(ctx context.Context, name string, status func(string)) (string, error) {
+		// Read the saved context fresh from disk so flags set by a
+		// concurrent `kargo-tui auth login --name ...` are honoured.
+		fresh, err := config.Load()
+		if err == nil {
+			*cfg = *fresh
+		}
+		c := cfg.Find(name)
+		if c == nil {
+			return "", fmt.Errorf("context %q not found", name)
+		}
+		saved, err := auth.SSOLogin(ctx, auth.LoginOptions{
+			APIAddress:            c.APIAddress,
+			ContextName:           c.Name,
+			Project:               c.Project,
+			InsecureSkipTLSVerify: c.InsecureSkipTLSVerify,
+			MakeCurrent:           true,
+			Quiet:                 true,
+		}, status)
+		if err != nil {
+			return "", err
+		}
+		// Reload again so the in-memory cfg reflects the rotated tokens.
+		if fresh, err := config.Load(); err == nil {
+			*cfg = *fresh
+		}
+		return saved.Name, nil
+	}
+	return names, build, login, relogin
 }
 
 // authCommand builds the `kargo-tui auth ...` subcommand tree.
