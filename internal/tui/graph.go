@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"sort"
 	"strings"
 
@@ -61,8 +62,8 @@ type graphCfg struct {
 
 func defaultGraphCfg() graphCfg {
 	return graphCfg{
-		NodeW:   12,
-		NodeH:   3,
+		NodeW:   16, // fits ~14 chars of name + a 4-glyph status row
+		NodeH:   6,  // top border + name + glyphs + freight + age/shard + bottom border
 		ColGap:  6,
 		RowGap:  1,
 		HMargin: 1,
@@ -526,13 +527,22 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int, m Model) string {
 	return cv.renderRect(x0, y0, viewW, viewH)
 }
 
-// drawNode paints a single node box with name + health + freight short.
-// border carries the colour for the box edges; bgStyle clears the
-// interior so node text doesn't pick up edge colours.
+// drawNode paints a single node box. Layout (NodeH-2 inner rows):
+//
+//	row 0 : name (truncated, coloured by stage health)
+//	row 1 : status glyphs — health · last-promo · argo health · argo sync
+//	row 2 : freight short SHA + alias hint
+//	row 3 : age + shard (only when shard is non-default)
+//
+// The status row uses single-cell glyphs so a 16-wide node fits the
+// whole picture without wrapping. Borders use border style; everything
+// inside paints over an explicit bg-cleared cell so edge glyphs from
+// the routing pass don't bleed into node text.
 func drawNode(cv *canvas, n graphNode, cfg graphCfg, border, bgStyle lipgloss.Style, m Model) {
 	x, y := n.X, n.Y
 	w, h := cfg.NodeW, cfg.NodeH
-	// Border corners + sides.
+
+	// Border.
 	cv.set(x, y, '┌', border)
 	cv.set(x+w-1, y, '┐', border)
 	cv.set(x, y+h-1, '└', border)
@@ -551,8 +561,11 @@ func drawNode(cv *canvas, n graphNode, cfg graphCfg, border, bgStyle lipgloss.St
 			cv.set(ix, iy, ' ', bgStyle)
 		}
 	}
-	// Line 1: name (truncated).
+
 	innerW := w - 2
+	rowY := y + 1
+
+	// Row 0: name.
 	name := n.Stage.Name
 	if ansi.StringWidth(name) > innerW {
 		name = ansi.Truncate(name, innerW, "…")
@@ -566,26 +579,78 @@ func drawNode(cv *canvas, n graphNode, cfg graphCfg, border, bgStyle lipgloss.St
 	case "Progressing":
 		nameStyle = nameStyle.Foreground(progressing)
 	}
-	cv.writeAt(x+1, y+1, padOrTrim(name, innerW), nameStyle)
-	// Line 2: health glyph + age.
-	if h >= 3 {
-		glyph := healthGlyph(n.Stage.Health)
-		var age string
-		switch {
-		case !n.Stage.LastPromoAt.IsZero():
-			age = ageString(n.Stage.LastPromoAt)
-		case !n.Stage.Created.IsZero():
-			age = ageString(n.Stage.Created)
-		default:
-			age = "—"
-		}
-		summary := fmt.Sprintf("%s %s", glyph, age)
-		summary = padOrTrim(summary, innerW)
-		summaryStyle := bgStyle.Foreground(muted)
-		cv.writeAt(x+1, y+2, summary, summaryStyle)
+	cv.writeAt(x+1, rowY, padOrTrim(name, innerW), nameStyle)
+	rowY++
+	if rowY >= y+h-1 {
+		return
 	}
+
+	// Row 1: status glyphs. Health · last-promo · argo health · argo sync.
+	// Each painted in its own colour so semantics survive at-a-glance.
+	col := x + 1
+	mutedStyle := bgStyle.Foreground(muted)
+	cv.writeAt(col, rowY, healthGlyph(n.Stage.Health), bgStyle.Foreground(healthColor(n.Stage.Health)))
+	col += 2
+	cv.writeAt(col, rowY, promoGlyph(n.Stage.LastPromo), bgStyle.Foreground(promoColor(n.Stage.LastPromo)))
+	col += 2
+	if n.Stage.IsControlFlow {
+		// Control-flow stages have no Argo wiring; show a flow glyph in
+		// place of the Argo pair so users can spot them at a glance.
+		cv.writeAt(col, rowY, "⇶", bgStyle.Foreground(progressing).Italic(true))
+	} else {
+		ah, as := worstArgo(n.Stage.ArgoCDApps)
+		if ah != "" || as != "" || len(n.Stage.ArgoCDApps) > 0 {
+			cv.writeAt(col, rowY, argoHealthGlyph(ah), bgStyle.Foreground(argoHealthColor(ah)))
+			col += 1
+			cv.writeAt(col, rowY, argoSyncGlyph(as), bgStyle.Foreground(argoSyncColor(as)))
+			col += 1
+		} else {
+			cv.writeAt(col, rowY, "··", mutedStyle)
+			col += 2
+		}
+	}
+	rowY++
+	if rowY >= y+h-1 {
+		return
+	}
+
+	// Row 2: freight short SHA + alias.
+	freight := "—"
+	freightStyle := mutedStyle
+	if len(n.Stage.CurrentFreight) > 0 {
+		freight = shortFreight(n.Stage.CurrentFreight[0])
+		freightStyle = bgStyle.Foreground(normal)
+		if a := m.aliasOf(n.Stage.CurrentFreight[0]); a != "" {
+			freight = freight + " " + a
+		}
+	} else if isFreightName(n.Stage.FreightSummary) {
+		freight = shortFreight(n.Stage.FreightSummary)
+		freightStyle = bgStyle.Foreground(normal)
+	}
+	cv.writeAt(x+1, rowY, padOrTrim(freight, innerW), freightStyle)
+	rowY++
+	if rowY >= y+h-1 {
+		return
+	}
+
+	// Row 3: age + shard (when non-default).
+	var age string
+	switch {
+	case !n.Stage.LastPromoAt.IsZero():
+		age = ageString(n.Stage.LastPromoAt)
+	case !n.Stage.Created.IsZero():
+		age = ageString(n.Stage.Created)
+	default:
+		age = "—"
+	}
+	tail := age
+	if n.Stage.Shard != "" {
+		tail = age + " " + n.Stage.Shard
+	}
+	cv.writeAt(x+1, rowY, padOrTrim(tail, innerW), mutedStyle)
 }
 
+// healthGlyph picks a single-cell symbol for a Kargo stage health value.
 func healthGlyph(h string) string {
 	switch h {
 	case "Healthy":
@@ -594,8 +659,146 @@ func healthGlyph(h string) string {
 		return "✗"
 	case "Progressing":
 		return "⟳"
+	case "NotApplicable":
+		return "—"
 	default:
 		return "·"
+	}
+}
+
+// healthColor returns the foreground colour for a stage health glyph,
+// matching the table view's health column.
+func healthColor(h string) color.Color {
+	switch h {
+	case "Healthy":
+		return healthy
+	case "Unhealthy":
+		return degraded
+	case "Progressing":
+		return progressing
+	default:
+		return muted
+	}
+}
+
+// promoGlyph picks a glyph for a Promotion phase.
+func promoGlyph(p string) string {
+	switch p {
+	case "Succeeded":
+		return "▶"
+	case "Failed", "Errored", "Aborted":
+		return "✗"
+	case "Running", "Pending":
+		return "…"
+	case "":
+		return "·"
+	default:
+		return "?"
+	}
+}
+
+func promoColor(p string) color.Color {
+	switch p {
+	case "Succeeded":
+		return healthy
+	case "Failed", "Errored", "Aborted":
+		return degraded
+	case "Running", "Pending":
+		return progressing
+	default:
+		return muted
+	}
+}
+
+// worstArgo collapses a stage's per-app Argo CD state into a single
+// (health, sync) pair, mirroring stageArgoCell's severity ordering.
+func worstArgo(apps []kargo.ArgoCDAppRef) (health, sync string) {
+	if len(apps) == 0 {
+		return "", ""
+	}
+	health, sync = "Healthy", "Synced"
+	for _, a := range apps {
+		switch a.Health {
+		case "Degraded":
+			health = "Degraded"
+		case "Missing":
+			if health != "Degraded" {
+				health = "Missing"
+			}
+		case "Suspended":
+			if health == "Healthy" || health == "Progressing" || health == "Unknown" {
+				health = "Suspended"
+			}
+		case "Progressing":
+			if health == "Healthy" || health == "Unknown" {
+				health = "Progressing"
+			}
+		case "Unknown", "":
+			if health == "Healthy" {
+				health = "Unknown"
+			}
+		}
+		switch a.Sync {
+		case "OutOfSync":
+			sync = "OutOfSync"
+		case "Unknown", "":
+			if sync == "Synced" {
+				sync = "Unknown"
+			}
+		}
+	}
+	return health, sync
+}
+
+func argoHealthGlyph(h string) string {
+	switch h {
+	case "Healthy":
+		return "●"
+	case "Progressing":
+		return "◐"
+	case "Degraded", "Missing":
+		return "○"
+	case "Suspended":
+		return "◌"
+	default:
+		return "·"
+	}
+}
+
+func argoHealthColor(h string) color.Color {
+	switch h {
+	case "Healthy":
+		return healthy
+	case "Progressing":
+		return progressing
+	case "Degraded", "Missing":
+		return degraded
+	case "Suspended":
+		return progressing
+	default:
+		return muted
+	}
+}
+
+func argoSyncGlyph(s string) string {
+	switch s {
+	case "Synced":
+		return "◎"
+	case "OutOfSync":
+		return "◌"
+	default:
+		return "·"
+	}
+}
+
+func argoSyncColor(s string) color.Color {
+	switch s {
+	case "Synced":
+		return healthy
+	case "OutOfSync":
+		return degraded
+	default:
+		return muted
 	}
 }
 
