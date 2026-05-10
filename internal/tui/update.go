@@ -387,8 +387,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "left":
-			// Graph and tree views consume arrow keys themselves
-			// (spatial cursor / collapse). Tables get column scroll.
+			// In full-screen details mode, arrows scroll the panel
+			// regardless of the structural view behind it. Otherwise
+			// graph and tree views consume arrows themselves (spatial
+			// cursor / collapse) and tables get column scroll.
+			if m.detailsOnly {
+				m.panelVP.ScrollLeft(2)
+				return m, nil
+			}
 			if m.view == viewGraph {
 				m.moveGraphCursor("left")
 				return m, nil
@@ -400,6 +406,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollLeft()
 			return m, nil
 		case "right":
+			if m.detailsOnly {
+				m.panelVP.ScrollRight(2)
+				return m, nil
+			}
 			if m.view == viewGraph {
 				m.moveGraphCursor("right")
 				return m, nil
@@ -411,6 +421,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollRight()
 			return m, nil
 		case "up", "k":
+			if m.detailsOnly {
+				m.panelVP.ScrollUp(1)
+				return m, nil
+			}
 			if m.view == viewGraph {
 				m.moveGraphCursor("up")
 				return m, nil
@@ -420,6 +434,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "down", "j":
+			if m.detailsOnly {
+				m.panelVP.ScrollDown(1)
+				return m, nil
+			}
 			if m.view == viewGraph {
 				m.moveGraphCursor("down")
 				return m, nil
@@ -557,14 +575,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Graph view consumes any other unhandled key so it doesn't leak
 		// into the hidden table dispatch below. Arrow keys are handled
 		// in the top-level switch; logs / promote / diff use l / P / D
-		// like every other view.
-		if m.view == viewGraph {
+		// like every other view. Exception: in detailsOnly mode the
+		// panel viewport owns scroll keys (pgup/pgdn/home/end) so let
+		// them fall through to the panel scroll handler below.
+		if m.view == viewGraph && !m.detailsOnly {
 			return m, nil
 		}
 
 		// Tree view owns its own page/expand/toggle keys. Arrow + j/k
-		// nav was already handled in the top-level switch above.
-		if m.view == viewTree {
+		// nav was already handled in the top-level switch above. Same
+		// exception as graph: in detailsOnly mode let scroll keys fall
+		// through to the panel handler.
+		if m.view == viewTree && !m.detailsOnly {
 			switch key {
 			case "pgup":
 				m.moveTreeCursor(-10)
