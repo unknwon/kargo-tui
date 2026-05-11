@@ -186,12 +186,18 @@ type Model struct {
 	graphSearchActive  bool
 
 	// Promote overlay state.
-	promoteStage      string // target stage name
+	promoteStage      string // target stage name (also: source stage when promoteDownstream is true)
 	promoteCandidates []kargo.Freight
 	promoteCursor     int
 	promoteStep       promoteStep
 	promoteResult     string // promotion name on success
 	promoteError      error
+	// promoteDownstream switches the overlay's submit action from
+	// PromoteToStage (promote freight into promoteStage) to
+	// PromoteDownstream (promote chosen freight from promoteStage to every
+	// downstream subscriber). Set by `>` whenever the downstream overlay
+	// opens; cleared by `P` / openPromoteOverlay.
+	promoteDownstream bool
 
 	// stageWatchCancel cancels the active WatchStages goroutine when the
 	// user switches projects or the program exits. nil when no watch is

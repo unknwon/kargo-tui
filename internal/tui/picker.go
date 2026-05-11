@@ -145,6 +145,7 @@ func (m Model) pickerView() tea.View {
 	lines = append(lines, titleStyle.Render("Select a Kargo project"))
 	lines = append(lines, hintStyle.Render(wrap("type to filter · ↑/↓ select · enter open · r reload · esc quit", innerW)))
 	lines = append(lines, "")
+	filterRow := lipgloss.Height(strings.Join(lines, "\n"))
 	lines = append(lines, m.nsFilter.View())
 	lines = append(lines, "")
 
@@ -194,5 +195,13 @@ func (m Model) pickerView() tea.View {
 	v := tea.NewView(box)
 	v.AltScreen = true
 	v.BackgroundColor = bg
+	if c := m.nsFilter.Cursor(); c != nil {
+		// Box: border (1) + Padding(1,2). Offset the input's intrinsic
+		// (x, 0) cursor by the popup's top-left content origin plus the
+		// filter line's position inside the body.
+		c.X += 3
+		c.Y += 2 + filterRow
+		v.Cursor = c
+	}
 	return v
 }

@@ -257,13 +257,23 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case promoteDownstreamResultMsg:
 		if msg.err != nil {
 			m.noteAuthFailure(msg.err)
+			m.promoteError = msg.err
 			m.yankedMessage = "promote-downstream failed: " + msg.err.Error()
 		} else if msg.promotions == 0 {
+			m.promoteResult = fmt.Sprintf("no eligible downstream stages for %s", msg.source)
 			m.yankedMessage = "no eligible downstream stages for " + msg.source
 		} else {
+			m.promoteResult = fmt.Sprintf("%d downstream promotion(s) from %s", msg.promotions, msg.source)
 			m.yankedMessage = fmt.Sprintf("created %d downstream promotion(s) from %s", msg.promotions, msg.source)
 		}
 		m.yankedAt = time.Now()
+		// Same as promoteResultMsg: if the overlay is still up, advance
+		// it to the done step so the user sees the result and can
+		// dismiss. Without this transition the overlay would hang on
+		// "submitting promotion…".
+		if m.overlay == overlayPromote {
+			m.promoteStep = promoteDone
+		}
 		// Force an immediate data refresh so the new promotion appears
 		// without waiting for the next tick. We dispatch even when a
 		// tick fetch is already in flight: the in-flight one was issued
@@ -633,22 +643,47 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openPromoteOverlay(s)
 			return m, nil
 		case ">":
-			// Promote the selected stage's currently-deployed freight to
-			// every downstream stage that requested it. No picker — the
-			// stage's current freight is the natural input.
+			// Open the downstream-promote overlay. The overlay always
+			// confirms (y/n) before firing the RPC — `>` fans out to
+			// every downstream subscriber, so an accidental keystroke
+			// shouldn't be irreversible.
+			//
+			// Behavior by stage shape:
+			//   - control-flow: picker (verified at this stage)
+			//   - one CurrentFreight: jump straight to confirm
+			//   - multi CurrentFreight (multi-origin stage): picker
+			//     restricted to the current freight set, so the user
+			//     chooses which origin's freight to fan out
 			s := m.selectedStage()
 			if s == nil {
 				return m, nil
 			}
-			if len(s.CurrentFreight) == 0 {
-				m.yankedMessage = "no current freight on " + s.Name + " to promote downstream"
-				m.yankedAt = time.Now()
-				return m, nil
+			m.openPromoteDownstreamOverlay(s)
+			if !s.IsControlFlow {
+				if len(s.CurrentFreight) == 0 {
+					// No current freight on a non-control-flow stage:
+					// nothing to fan out. Close the overlay and tell
+					// the user.
+					m.overlay = overlayNone
+					m.yankedMessage = "no current freight on " + s.Name + " to promote downstream"
+					m.yankedAt = time.Now()
+					return m, nil
+				}
+				// Try to restrict to CurrentFreight. If the resulting
+				// list is empty (current freight isn't in our
+				// verified-at-this-stage snapshot — e.g. deployed but
+				// not yet verified, or stale data) fall back to the
+				// full picker so the user has something to choose.
+				m.restrictPromoteCandidates(s.CurrentFreight)
+				if len(m.promoteCandidates) == 1 {
+					m.promoteStep = promoteConfirming
+				} else if len(m.promoteCandidates) == 0 {
+					// Restore the unfiltered downstream candidate list.
+					m.promoteCandidates = downstreamCandidateFreight(m.freights, s.Name)
+					m.promoteCursor = 0
+				}
 			}
-			fr := s.CurrentFreight[0]
-			m.yankedMessage = "promoting " + shortFreight(fr) + " downstream from " + s.Name + "…"
-			m.yankedAt = time.Now()
-			return m, promoteDownstreamCmd(m.client, m.project, s.Name, fr)
+			return m, nil
 		case "n":
 			// Graph view only: step to the next saved search match.
 			// No-op when there are no matches (the search was either

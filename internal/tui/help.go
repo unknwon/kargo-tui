@@ -70,12 +70,22 @@ func (m *Model) prepareHelpViewport() {
 	if w <= 0 {
 		w = 80
 	}
-	h := m.height - 4
-	if h < 5 {
-		h = 5
+	h := m.height
+	if h < 9 {
+		h = 9
 	}
-	m.helpVP.SetWidth(w - 4)
-	m.helpVP.SetHeight(h - 4)
+	// Match the box chrome in helpView: border(2) + Padding(1, 2) → 6 cols,
+	// 4 rows; body chrome: header(1) + spacer(1) + spacer(1) + hint(1) → 4 rows.
+	innerW := w - 6
+	if innerW < 10 {
+		innerW = 10
+	}
+	innerH := h - 4 - 4
+	if innerH < 1 {
+		innerH = 1
+	}
+	m.helpVP.SetWidth(innerW)
+	m.helpVP.SetHeight(innerH)
 	m.helpVP.SetContent(strings.Join(lines, "\n"))
 }
 
