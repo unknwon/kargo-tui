@@ -20,11 +20,11 @@ import (
 func (m Model) View() (v tea.View) {
 	defer func() {
 		if r := recover(); r != nil {
-			msg := m.panicMessage
-			if msg == "" {
-				msg = formatPanic(r)
-			}
-			v = renderPanicFallback(msg, m.width, m.height)
+			// Prefer the freshly-recovered trace over m.panicMessage:
+			// a panic here means panicView (or the fallback path) just
+			// failed, so the most useful trace to surface is the new
+			// one, not whatever the previous Update panic recorded.
+			v = renderPanicFallback(formatPanic(r), m.width, m.height)
 		}
 	}()
 	if m.panicMessage != "" {

@@ -82,6 +82,17 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.panicVP, cmd = m.panicVP.Update(msg)
 			return m, cmd
+		case tea.MouseWheelMsg:
+			// Mirror the help/logs/diff overlays so the trace is
+			// wheel-scrollable too — a deep stack is hard to read
+			// without it.
+			switch msg.Button {
+			case tea.MouseWheelUp:
+				m.panicVP.ScrollUp(3)
+			case tea.MouseWheelDown:
+				m.panicVP.ScrollDown(3)
+			}
+			return m, nil
 		}
 		return m, nil
 	}
