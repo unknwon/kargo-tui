@@ -46,8 +46,8 @@ func (m *Model) scrollRight() {
 func applyCursorMarker(t *table.Model) {
 	rows := t.Rows()
 	cur := t.Cursor()
-	marked := lipgloss.NewStyle().Foreground(selected).Bold(true).Render(cursorMarkerGlyph)
-	blank := " "
+	marked := lipgloss.NewStyle().Foreground(selected).Background(bg).Bold(true).Render(cursorMarkerGlyph)
+	blank := lipgloss.NewStyle().Background(bg).Render(" ")
 	for i := range rows {
 		if len(rows[i]) == 0 {
 			continue

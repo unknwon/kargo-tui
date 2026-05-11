@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"sort"
 	"strings"
 	"time"
@@ -11,6 +12,16 @@ import (
 
 	"unknwon.dev/kargo-tui/internal/kargo"
 )
+
+// fgCell renders v with the given foreground over the table's bg. Used by
+// the styled cell builders. Baking the background into every pre-styled
+// cell is what keeps the column's padding cells from falling back to the
+// terminal default when bubbles' inner Width().Inline() padding wraps an
+// ANSI-styled value (the inner padding inherits no bg, and the outer Cell
+// style's bg doesn't propagate through the inner SGR resets).
+func fgCell(fg color.Color, v string) string {
+	return lipgloss.NewStyle().Foreground(fg).Background(bg).Render(v)
+}
 
 // stageNameCell renders a stage name styled by health (green/red/yellow/
 // default). Used in tables and detail panels to make the row's overall
@@ -25,7 +36,7 @@ func stageNameCell(name, health string) string {
 	case "Progressing":
 		c = progressing
 	}
-	return lipgloss.NewStyle().Foreground(c).Bold(true).Render(name)
+	return lipgloss.NewStyle().Foreground(c).Background(bg).Bold(true).Render(name)
 }
 
 // healthCell renders a Kargo Stage health state with a semantic color, or a
@@ -33,15 +44,15 @@ func stageNameCell(name, health string) string {
 func healthCell(s string) string {
 	switch s {
 	case "Healthy":
-		return lipgloss.NewStyle().Foreground(healthy).Render(s)
+		return fgCell(healthy, s)
 	case "Unhealthy":
-		return lipgloss.NewStyle().Foreground(degraded).Render(s)
+		return fgCell(degraded, s)
 	case "Progressing":
-		return lipgloss.NewStyle().Foreground(progressing).Render(s)
+		return fgCell(progressing, s)
 	case "":
-		return lipgloss.NewStyle().Foreground(muted).Render("—")
+		return fgCell(muted, "—")
 	default:
-		return lipgloss.NewStyle().Foreground(muted).Render(s)
+		return fgCell(muted, s)
 	}
 }
 
@@ -49,17 +60,17 @@ func healthCell(s string) string {
 func argoHealthCell(s string) string {
 	switch s {
 	case "Healthy":
-		return lipgloss.NewStyle().Foreground(healthy).Render(s)
+		return fgCell(healthy, s)
 	case "Progressing":
-		return lipgloss.NewStyle().Foreground(progressing).Render(s)
+		return fgCell(progressing, s)
 	case "Degraded", "Missing":
-		return lipgloss.NewStyle().Foreground(degraded).Render(s)
+		return fgCell(degraded, s)
 	case "Suspended":
-		return lipgloss.NewStyle().Foreground(progressing).Italic(true).Render(s)
+		return lipgloss.NewStyle().Foreground(progressing).Background(bg).Italic(true).Render(s)
 	case "":
-		return lipgloss.NewStyle().Foreground(muted).Render("—")
+		return fgCell(muted, "—")
 	default:
-		return lipgloss.NewStyle().Foreground(muted).Render(s)
+		return fgCell(muted, s)
 	}
 }
 
@@ -67,13 +78,13 @@ func argoHealthCell(s string) string {
 func argoSyncCell(s string) string {
 	switch s {
 	case "Synced":
-		return lipgloss.NewStyle().Foreground(healthy).Render(s)
+		return fgCell(healthy, s)
 	case "OutOfSync":
-		return lipgloss.NewStyle().Foreground(degraded).Render(s)
+		return fgCell(degraded, s)
 	case "":
-		return lipgloss.NewStyle().Foreground(muted).Render("—")
+		return fgCell(muted, "—")
 	default:
-		return lipgloss.NewStyle().Foreground(muted).Render(s)
+		return fgCell(muted, s)
 	}
 }
 
@@ -84,7 +95,7 @@ func argoSyncCell(s string) string {
 // "Argo says everything is fine".
 func stageArgoCell(apps []kargo.ArgoCDAppRef) string {
 	if len(apps) == 0 {
-		return lipgloss.NewStyle().Foreground(muted).Render("—")
+		return fgCell(muted, "—")
 	}
 	worstHealth, worstSync := "Healthy", "Synced"
 	for _, a := range apps {
@@ -119,7 +130,7 @@ func stageArgoCell(apps []kargo.ArgoCDAppRef) string {
 			}
 		}
 	}
-	sep := lipgloss.NewStyle().Foreground(muted).Render("/")
+	sep := fgCell(muted, "/")
 	return argoHealthCell(worstHealth) + sep + argoSyncCell(worstSync)
 }
 
@@ -127,15 +138,15 @@ func stageArgoCell(apps []kargo.ArgoCDAppRef) string {
 func promoCell(s string) string {
 	switch s {
 	case "Succeeded":
-		return lipgloss.NewStyle().Foreground(healthy).Render(s)
+		return fgCell(healthy, s)
 	case "Failed", "Errored", "Aborted":
-		return lipgloss.NewStyle().Foreground(degraded).Render(s)
+		return fgCell(degraded, s)
 	case "Running", "Pending":
-		return lipgloss.NewStyle().Foreground(progressing).Render(s)
+		return fgCell(progressing, s)
 	case "":
-		return lipgloss.NewStyle().Foreground(muted).Render("—")
+		return fgCell(muted, "—")
 	default:
-		return lipgloss.NewStyle().Foreground(muted).Render(s)
+		return fgCell(muted, s)
 	}
 }
 
@@ -145,25 +156,25 @@ func promoCell(s string) string {
 func stageFreightSummary(s string, controlFlow bool, alias string) string {
 	if s == "" {
 		if controlFlow {
-			return lipgloss.NewStyle().Foreground(muted).Italic(true).Render("(passes through)")
+			return lipgloss.NewStyle().Foreground(muted).Background(bg).Italic(true).Render("(passes through)")
 		}
-		return lipgloss.NewStyle().Foreground(muted).Render("—")
+		return fgCell(muted, "—")
 	}
 	if isFreightName(s) {
 		short := s
 		if len(short) > 8 {
 			short = short[:8]
 		}
-		out := lipgloss.NewStyle().Foreground(normal).Render(short)
+		out := fgCell(normal, short)
 		if alias != "" {
-			out += lipgloss.NewStyle().Foreground(muted).Render(" " + alias)
+			out += fgCell(muted, " "+alias)
 		}
 		return out
 	}
 	if len(s) > 30 {
 		s = s[:29] + "…"
 	}
-	return s
+	return fgCell(normal, s)
 }
 
 // isFreightName returns true when s looks like a Kargo freight resource name
@@ -199,30 +210,29 @@ func freightNameCell(name, alias string) string {
 	if len(short) > 8 {
 		short = short[:8]
 	}
-	short = lipgloss.NewStyle().Foreground(normal).Render(short)
+	out := fgCell(normal, short)
 	if alias == "" {
-		return short
+		return out
 	}
-	a := lipgloss.NewStyle().Foreground(muted).Render(" " + alias)
-	return short + a
+	return out + fgCell(muted, " "+alias)
 }
 
 // stringOrDash renders a string, or a muted em-dash when the input is empty.
 func stringOrDash(s string) string {
 	if s == "" {
-		return lipgloss.NewStyle().Foreground(muted).Render("—")
+		return fgCell(muted, "—")
 	}
-	return s
+	return fgCell(normal, s)
 }
 
 // countCell renders a non-negative count, colored green when positive and
 // red when zero (used for verified/approved counts on freight).
 func countCell(n int) string {
-	style := lipgloss.NewStyle().Foreground(degraded)
+	fg := degraded
 	if n > 0 {
-		style = lipgloss.NewStyle().Foreground(healthy)
+		fg = healthy
 	}
-	return style.Render(fmt.Sprintf("%d", n))
+	return fgCell(fg, fmt.Sprintf("%d", n))
 }
 
 // emptyDash returns "—" for empty input, otherwise the input unchanged.
