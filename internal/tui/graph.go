@@ -958,9 +958,6 @@ func (m Model) graphView() tea.View {
 		case strings.TrimSpace(m.filter.Value()) != "":
 			meta = lipgloss.NewStyle().Foreground(degraded).Background(bg).
 				Render("  no matches · esc cancel")
-		default:
-			meta = lipgloss.NewStyle().Foreground(muted).Background(bg).
-				Render("  type to search by name")
 		}
 		searchLine = lipgloss.NewStyle().Background(bg).Padding(0, 1).
 			Render(lipgloss.JoinHorizontal(lipgloss.Top, input, meta))
@@ -1010,7 +1007,9 @@ func (m Model) graphView() tea.View {
 		yankLine := lipgloss.NewStyle().Foreground(healthy).Background(bg).Padding(0, 1).Render(m.yankedMessage)
 		parts = append(parts, yankLine)
 	}
+	searchLineRow := -1
 	if searchLine != "" {
+		searchLineRow = lipgloss.Height(lipgloss.JoinVertical(lipgloss.Left, parts...))
 		parts = append(parts, searchLine)
 	}
 	parts = append(parts, statusLine, hint)
@@ -1020,6 +1019,16 @@ func (m Model) graphView() tea.View {
 	v.AltScreen = true
 	v.BackgroundColor = bg
 	v.MouseMode = tea.MouseModeCellMotion
+	if m.filtering && m.view == viewGraph && searchLineRow >= 0 {
+		if c := m.filter.Cursor(); c != nil {
+			// searchLine is wrapped in Padding(0, 1) — shift the input's
+			// intrinsic (x, 0) cursor right by one cell to land on the
+			// rendered text inside the padded line.
+			c.Position.X += 1
+			c.Position.Y += searchLineRow
+			v.Cursor = c
+		}
+	}
 	return v
 }
 

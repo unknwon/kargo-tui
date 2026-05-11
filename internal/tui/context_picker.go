@@ -224,6 +224,11 @@ func (m Model) contextPickerView() tea.View {
 
 	var lines []string
 
+	// filterRow tracks the body-row index of the active text input (URL
+	// input when adding, ctxFilter otherwise) so we can offset the real
+	// terminal cursor onto it.
+	filterRow := -1
+
 	if m.ctxLoggingIn {
 		lines = append(lines, titleStyle.Render("Signing in…"))
 		if m.ctxLoginStatus != "" {
@@ -235,6 +240,7 @@ func (m Model) contextPickerView() tea.View {
 		lines = append(lines, titleStyle.Render("Add Kargo context"))
 		lines = append(lines, hintStyle.Render(wrap("type the API URL · enter to start SSO · esc cancel", innerW)))
 		lines = append(lines, "")
+		filterRow = lipgloss.Height(strings.Join(lines, "\n"))
 		lines = append(lines, m.ctxURLInput.View())
 		if m.ctxError != nil {
 			lines = append(lines, "", errStyle.Render(wrap("error: "+m.ctxError.Error(), innerW)))
@@ -243,6 +249,7 @@ func (m Model) contextPickerView() tea.View {
 		lines = append(lines, titleStyle.Render("Switch Kargo context"))
 		lines = append(lines, hintStyle.Render(wrap("type to filter · ↑/↓ select · enter switch · press + to paste a Kargo URL · esc cancel", innerW)))
 		lines = append(lines, "")
+		filterRow = lipgloss.Height(strings.Join(lines, "\n"))
 		lines = append(lines, m.ctxFilter.View())
 		lines = append(lines, "")
 		if m.ctxError != nil {
@@ -286,5 +293,19 @@ func (m Model) contextPickerView() tea.View {
 	v.AltScreen = true
 	v.BackgroundColor = bg
 	v.MouseMode = tea.MouseModeCellMotion
+	if filterRow >= 0 {
+		var c *tea.Cursor
+		if m.ctxAdding {
+			c = m.ctxURLInput.Cursor()
+		} else {
+			c = m.ctxFilter.Cursor()
+		}
+		if c != nil {
+			// Box: border (1) + Padding(1,2).
+			c.Position.X += 3
+			c.Position.Y += 2 + filterRow
+			v.Cursor = c
+		}
+	}
 	return v
 }

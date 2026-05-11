@@ -125,6 +125,8 @@ func (m Model) View() (v tea.View) {
 	case viewDeploys:
 		helpText = "↑/↓ select · ←/→ scroll cols · v details · l logs · D diff · P promote · > downstream · o argo · y yank · s sort · / filter · t tree · g graph · c controls · f freights · p projects · C contexts · ? help · q quit"
 	case viewControlFlow:
+		// Control-flow stages have no Argo CD app behind them, so `o
+		// argo` is omitted. `P promote` and `> downstream` apply.
 		helpText = "↑/↓ select · ←/→ scroll cols · v details · l logs · D diff · P promote · > downstream · y yank · s sort · / filter · t tree · g graph · d deploys · f freights · p projects · C contexts · ? help · q quit"
 	case viewFreights:
 		helpText = "↑/↓ select · ←/→ scroll cols · v details · y yank · s sort · / filter · t tree · g graph · d deploys · c controls · p projects · C contexts · ? help · q quit"
@@ -137,6 +139,12 @@ func (m Model) View() (v tea.View) {
 	view.AltScreen = true
 	view.BackgroundColor = bg
 	view.MouseMode = tea.MouseModeCellMotion
+	if m.filtering {
+		if c := m.filter.Cursor(); c != nil {
+			c.Position.Y += lipgloss.Height(header) + lipgloss.Height(body)
+			view.Cursor = c
+		}
+	}
 	return view
 }
 
