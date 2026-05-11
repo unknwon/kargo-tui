@@ -67,21 +67,21 @@ func (m Model) View() (v tea.View) {
 	case viewDeploys:
 		title = "deploys"
 		count = len(m.deploysTable.Rows())
-		body = lipgloss.NewStyle().Background(bg).Render(m.deploysTable.View())
+		body = m.deploysTable.View()
 		if m.deploysError != nil {
 			errLine = m.deploysError.Error()
 		}
 	case viewControlFlow:
 		title = "controls"
 		count = len(m.deploysTable.Rows())
-		body = lipgloss.NewStyle().Background(bg).Render(m.deploysTable.View())
+		body = m.deploysTable.View()
 		if m.deploysError != nil {
 			errLine = m.deploysError.Error()
 		}
 	case viewFreights:
 		title = "freights"
 		count = len(m.freightsTable.Rows())
-		body = lipgloss.NewStyle().Background(bg).Render(m.freightsTable.View())
+		body = m.freightsTable.View()
 		if m.freightsError != nil {
 			errLine = m.freightsError.Error()
 		}
@@ -114,31 +114,28 @@ func (m Model) View() (v tea.View) {
 		filterLine = lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).Render(hint)
 	}
 
-	// Each list view gets a tailored hint line — controls don't have
-	// per-stage promotions in the same sense as deploys, freights have
-	// no logs / diff / argo actions at all, so reusing one generic
-	// line either lies about what works here or buries the action
-	// keys the user actually has. Common keys (s sort, / filter, p
-	// projects, C contexts, ? help, q quit) appear in all three.
+	// Bottom hint is intentionally short: up to 5 most-used keys per
+	// view plus ? for the full keybindings panel. Everything else lives
+	// in the help overlay.
 	var helpText string
 	switch m.view {
 	case viewDeploys:
-		helpText = "↑/↓ select · ←/→ scroll cols · v details · l logs · D diff · P promote · > downstream · o argo · y yank · s sort · / filter · t tree · g graph · c controls · f freights · p projects · C contexts · ? help · q quit"
+		helpText = "v details · P promote · l logs · D diff · / filter · ? help"
 	case viewControlFlow:
-		// Control-flow stages have no Argo CD app behind them, so `o
-		// argo` is omitted. `P promote` and `> downstream` apply.
-		helpText = "↑/↓ select · ←/→ scroll cols · v details · l logs · D diff · P promote · > downstream · y yank · s sort · / filter · t tree · g graph · d deploys · f freights · p projects · C contexts · ? help · q quit"
+		helpText = "v details · P promote · > downstream · l logs · / filter · ? help"
 	case viewFreights:
-		helpText = "↑/↓ select · ←/→ scroll cols · v details · y yank · s sort · / filter · t tree · g graph · d deploys · c controls · p projects · C contexts · ? help · q quit"
+		helpText = "v details · y yank · s sort · / filter · g graph · ? help"
 	}
 	help := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).Render(helpText)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, header, body, filterLine, help)
+	content = m.composeWithMenu(content)
+	content = paintFrame(content, m.width, m.height)
 
 	view := tea.NewView(content)
 	view.AltScreen = true
 	view.BackgroundColor = bg
-	view.MouseMode = tea.MouseModeCellMotion
+	view.MouseMode = m.activeMouseMode()
 	if m.filtering {
 		if c := m.filter.Cursor(); c != nil {
 			c.Y += lipgloss.Height(header) + lipgloss.Height(body)
@@ -197,21 +194,20 @@ func (m Model) detailsOnlyView() tea.View {
 	}
 	body := m.renderPanel(w, panelHeight)
 
-	// detailsOnly is contextual to whichever structural view is behind it.
-	// Trim each hint to the action set the backing view actually exposes —
-	// otherwise we'd advertise keys (e.g. `o argo` for controls, or
-	// logs/diff/promote for freights) that do nothing in this context.
+	// Bottom hint is intentionally short: up to 5 most-used keys for
+	// this context plus ? for the full keybindings panel.
 	var hintText string
 	switch m.view {
 	case viewFreights:
-		hintText = "v back · j/k pgup/pgdn home/end scroll · y yank · esc back · q quit"
+		hintText = "v/esc back · y yank · ? help"
 	case viewControlFlow:
-		hintText = "v back · j/k pgup/pgdn home/end scroll · l logs · D diff · P promote · > downstream · y yank · esc back · q quit"
+		hintText = "v/esc back · P promote · > downstream · l logs · D diff · ? help"
 	default:
-		hintText = "v back · j/k pgup/pgdn home/end scroll · l logs · D diff · P promote · > downstream · o argo · y yank · esc back · q quit"
+		hintText = "v/esc back · P promote · l logs · D diff · o argo · ? help"
 	}
 	hint := hintStyle.Render(hintText)
 	content := lipgloss.JoinVertical(lipgloss.Left, header, body, hint)
+	content = paintFrame(content, m.width, m.height)
 
 	v := tea.NewView(content)
 	v.AltScreen = true

@@ -233,7 +233,7 @@ func (m *Model) rebuildTree() {
 func (m Model) renderTreeBody(width, height int) string {
 	mutedStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
 	dimStyle := mutedStyle.Italic(true)
-	cursorStyle := lipgloss.NewStyle().Background(selected).Foreground(bg).Bold(true)
+	cursorStyle := lipgloss.NewStyle().Background(selected).Foreground(darkFg).Bold(true)
 	rowStyle := lipgloss.NewStyle().Background(bg)
 
 	if len(m.treeNodes) == 0 {
@@ -411,7 +411,7 @@ func (m Model) treeView() tea.View {
 		m.renderTreeBody(m.width-2, bodyH))
 
 	hint := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).
-		Render("↑/↓ select · ←/→ collapse/expand · +/- expand · enter toggle · v details · l logs · D diff · P promote · > downstream · o argo · y yank · / filter · g graph · d deploys · c controls · f freights · ? help · q quit")
+		Render("+/- expand/collapse · v details · P promote · l logs · / filter · ? help")
 
 	var statusLine string
 	switch {
@@ -430,6 +430,7 @@ func (m Model) treeView() tea.View {
 	} else {
 		content = lipgloss.JoinVertical(lipgloss.Left, header, body, hint)
 	}
+	content = paintFrame(content, m.width, m.height)
 
 	v := tea.NewView(content)
 	v.AltScreen = true

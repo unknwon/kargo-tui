@@ -4,25 +4,6 @@ Kargo is nice, Kargo is cute, Kargo's UI works like crap,  Kargo's CLI won't eve
 
 Here it is, the missing Kargo console for operating with hundreds of stages. Entirely vibe-coded, use at your own risk.
 
-## Local development
-
-This project uses [moon](https://moonrepo.dev/) as its task runner. Install it with Homebrew:
-
-```zsh
-brew install moon
-```
-
-Common tasks:
-
-```zsh
-moon run :install   # Build and install the kargo-tui binary to $GOBIN.
-moon run :lint      # Tidy Go modules and run golangci-lint.
-moon run :test      # Run the test suite.
-moon run :build     # Compile all packages.
-```
-
-After `moon run :install`, launch the TUI directly with `kargo-tui`.
-
 ## Authentication
 
 `kargo-tui` authenticates against a Kargo API server using the same OIDC SSO (PKCE auth-code) flow as `kargo login --sso`. Credentials are saved as named "contexts" in the kargo-tui config file.
@@ -63,6 +44,25 @@ kargo-tui contexts use <name>     # switch active context
 kargo-tui auth logout <name>      # remove a stored context
 kargo-tui --context <name>        # one-off override for a single launch
 ```
+
+## Local development
+
+This project uses [moon](https://moonrepo.dev/) as its task runner. Install it with Homebrew:
+
+```zsh
+brew install moon
+```
+
+Common tasks:
+
+```zsh
+moon run :install   # Build and install the kargo-tui binary to $GOBIN.
+moon run :lint      # Tidy Go modules and run golangci-lint.
+moon run :test      # Run the test suite.
+moon run :build     # Compile all packages.
+```
+
+After `moon run :install`, launch the TUI directly with `kargo-tui`.
 
 ## License
 

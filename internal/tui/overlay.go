@@ -30,7 +30,13 @@ func (m *Model) openLogsOverlay(stageName string) {
 // freight (deployed) vs. the most recent freight matching the same warehouse
 // (the candidate the next promotion would pick up).
 func (m *Model) openDiffOverlay() {
-	s := m.selectedStage()
+	m.openDiffOverlayForStage(m.selectedStage())
+}
+
+// openDiffOverlayForStage is the stage-scoped variant used by the right-click
+// context menu so the diff always targets the clicked stage even if the
+// underlying selection shifts before the action fires.
+func (m *Model) openDiffOverlayForStage(s *kargo.Stage) {
 	if s == nil {
 		return
 	}
@@ -371,6 +377,7 @@ func (m Model) overlayView() tea.View {
 		Background(bg).
 		Padding(1, 2).
 		Render(body)
+	box = paintFrame(box, m.width, m.height)
 
 	v := tea.NewView(box)
 	v.AltScreen = true

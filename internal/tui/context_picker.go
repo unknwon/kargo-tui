@@ -217,7 +217,7 @@ func (m Model) contextPickerView() tea.View {
 	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
 	hintStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
 	itemStyle := lipgloss.NewStyle().Foreground(normal).Background(bg)
-	selStyle := lipgloss.NewStyle().Foreground(bg).Background(selected).Bold(true)
+	selStyle := lipgloss.NewStyle().Foreground(darkFg).Background(selected).Bold(true)
 	errStyle := lipgloss.NewStyle().Foreground(degraded).Background(bg)
 
 	innerW := popupInnerWidth(m.width)
@@ -288,6 +288,7 @@ func (m Model) contextPickerView() tea.View {
 		Padding(1, 2).
 		Width(innerW).
 		Render(body)
+	box = paintFrame(box, m.width, m.height)
 
 	v := tea.NewView(box)
 	v.AltScreen = true

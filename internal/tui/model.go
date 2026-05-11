@@ -15,6 +15,7 @@ import (
 
 var (
 	bg          = lipgloss.Color("#070707")
+	darkFg      = lipgloss.Color("#070707") // for reverse-video fg-on-bright cases
 	selected    = lipgloss.Color("#009fff")
 	healthy     = lipgloss.Color("#00cab1")
 	degraded    = lipgloss.Color("#ff2e3f")
@@ -187,7 +188,7 @@ type Model struct {
 
 	// Promote overlay state.
 	promoteStage      string // target stage name (also: source stage when promoteDownstream is true)
-	promoteCandidates []kargo.Freight
+	promoteCandidates []promoteCandidate
 	promoteCursor     int
 	promoteStep       promoteStep
 	promoteResult     string // promotion name on success
@@ -215,6 +216,25 @@ type Model struct {
 	// the popup. panicVP is a scrollable viewport over the trace.
 	panicMessage string
 	panicVP      viewport.Model
+
+	// Right-click context menu state. menuOpen toggles the floating
+	// menu; menuX/Y anchor it in screen cells; menuItems lists the
+	// actions for the right-clicked target; menuCursor is the keyboard
+	// cursor inside the menu. Each menu item's action closure captures
+	// the target it was built for, so the chosen action runs against
+	// that specific stage/freight regardless of cursor movement.
+	menuOpen   bool
+	menuX      int
+	menuY      int
+	menuItems  []menuItem
+	menuCursor int
+}
+
+// menuItem is one row in the right-click context menu. Label is shown;
+// action is invoked when the user picks the row.
+type menuItem struct {
+	label  string
+	action func(*Model) tea.Cmd
 }
 
 // allStageColumns / allFreightColumns are the full set of columns. Horizontal
@@ -422,7 +442,7 @@ func newTable(cols []table.Column) table.Model {
 	// per-cell ANSI codes have set their own foreground.
 	st.Selected = lipgloss.NewStyle().
 		Background(selected).
-		Foreground(bg).
+		Foreground(darkFg).
 		Bold(true).
 		Reverse(false)
 	t.SetStyles(st)

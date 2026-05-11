@@ -12,13 +12,13 @@ import (
 // it from Update.
 func helpBindings() []struct{ section, key, desc string } {
 	return []struct{ section, key, desc string }{
-		{"Views", "d", "deploys"},
+		{"Views", "v", "details"},
+		{"", "d", "deploys"},
 		{"", "c", "controls"},
 		{"", "f", "freights"},
 		{"", "t", "tree (DAG of stages, expand/collapse with +/-)"},
 		{"", "g", "graph (layered DAG with spatial cursor)"},
 		{"", "p", "switch project"},
-		{"", "v", "toggle full-screen details"},
 		{"", "?", "show this help overlay"},
 		{"Actions", "l", "logs (promotions + events) for selected stage"},
 		{"", "D", "diff current vs. candidate freight for selected stage"},
@@ -30,6 +30,7 @@ func helpBindings() []struct{ section, key, desc string } {
 		{"Navigation", "↑/k", "move cursor up"},
 		{"", "↓/j", "move cursor down"},
 		{"", "wheel", "mouse wheel scrolls cursor / overlay / details"},
+		{"", "shift+wheel", "scroll columns (table) / move cursor left/right (graph)"},
 		{"", "←", "scroll columns left (table) / collapse node (tree)"},
 		{"", "→", "scroll columns right (table) / expand node (tree)"},
 		{"", "+/-", "expand / collapse tree node"},
@@ -106,6 +107,7 @@ func (m Model) helpView() tea.View {
 		Background(bg).
 		Padding(1, 2).
 		Render(body)
+	box = paintFrame(box, m.width, m.height)
 
 	v := tea.NewView(box)
 	v.AltScreen = true

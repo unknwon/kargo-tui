@@ -410,14 +410,51 @@ func layoutGraph(stages []kargo.Stage, cfg graphCfg, m Model) graphLayout {
 		cum += slotH[i] + cfg.RowGap
 	}
 
+	// Per-slot centerline = midpoint of the slot's row band. Boxes get
+	// placed so their own vertical centre (Y + H/2, integer division)
+	// lands exactly on this line. That keeps every box's centre aligned
+	// across columns even when box heights differ by an odd number of
+	// rows, which is what allows the connector arrows to enter and exit
+	// at a consistent row.
+	slotCenter := make([]int, maxSlot)
+	for i := 0; i < maxSlot; i++ {
+		slotCenter[i] = slotY[i] + slotH[i]/2
+	}
+
+	// Per-layer pixel height = sum of slot heights this layer actually
+	// occupies + gaps between them. Used to center shorter columns
+	// against the tallest column so the graph reads as middle-aligned
+	// instead of top-aligned.
+	layerPixelH := make([]int, maxLayer+1)
+	maxLayerH := 0
+	for l := 0; l <= maxLayer; l++ {
+		n := len(byLayer[l])
+		if n == 0 {
+			continue
+		}
+		h := 0
+		for s := 0; s < n; s++ {
+			h += slotH[s]
+		}
+		h += (n - 1) * cfg.RowGap
+		layerPixelH[l] = h
+		if h > maxLayerH {
+			maxLayerH = h
+		}
+	}
+
 	// Materialise nodes. Box width is uniform (cfg.NodeW); box height is
-	// per-node so each box hugs its content. Y is the slot's top edge.
+	// per-node so each box hugs its content. Y is chosen so the box's
+	// own midline aligns with the slot's centerline, then offset by the
+	// layer's centering shift.
 	nodes := make([]graphNode, 0, len(stages)+len(dummyNames))
 	idxByName := make(map[string]int, len(stages)+len(dummyNames))
 	for l := 0; l <= maxLayer; l++ {
+		yOffset := (maxLayerH - layerPixelH[l]) / 2
 		for s, name := range byLayer[l] {
+			h := heightFor(name)
 			x := cfg.HMargin + l*(cfg.NodeW+cfg.ColGap)
-			y := slotY[s]
+			y := slotCenter[s] - h/2 + yOffset
 			idxByName[name] = len(nodes)
 			node := graphNode{
 				Layer: l,
@@ -425,7 +462,7 @@ func layoutGraph(stages []kargo.Stage, cfg graphCfg, m Model) graphLayout {
 				X:     x,
 				Y:     y,
 				W:     cfg.NodeW,
-				H:     heightFor(name),
+				H:     h,
 			}
 			if dummyNames[name] {
 				node.Dummy = true
@@ -643,9 +680,21 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int) string {
 		drawNode(cv, n, border, bgStyle, i == cursorIdx, borderColor)
 	}
 
-	// Viewport pan: shift the visible window so the cursor node stays
-	// fully on screen with a small margin. When the cursor is unset or
-	// the layout fits, render from the origin.
+	x0, y0 := graphPanOffsetFor(g, cursorIdx, viewW, viewH)
+	if viewW <= 0 {
+		viewW = g.width
+	}
+	if viewH <= 0 {
+		viewH = g.height
+	}
+	return cv.renderRect(x0, y0, viewW, viewH)
+}
+
+// graphPanOffsetFor computes the top-left canvas coordinate that the
+// renderer pans to so the cursor node stays fully on screen with a
+// small margin. Shared by the renderer and the mouse hit-tester so a
+// click on a visible node resolves back to its node index.
+func graphPanOffsetFor(g graphLayout, cursorIdx, viewW, viewH int) (int, int) {
 	x0, y0 := 0, 0
 	if viewW <= 0 {
 		viewW = g.width
@@ -653,53 +702,51 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int) string {
 	if viewH <= 0 {
 		viewH = g.height
 	}
-	if cursorIdx >= 0 && cursorIdx < len(g.nodes) {
-		n := g.nodes[cursorIdx]
-		const margin = 2
-		nodeRight := n.X + n.W
-		if n.X-margin < x0 {
-			x0 = n.X - margin
-		}
-		if nodeRight+margin > x0+viewW {
-			x0 = nodeRight + margin - viewW
-		}
-		// When the cursor isn't in the right-most layer, try to also keep
-		// the next layer's column on screen so the user can see where
-		// "→" will land. Only applies when the viewport is wide enough to
-		// fit both columns — otherwise the cursor-visible pan above wins.
-		maxLayer := 0
-		for _, gn := range g.nodes {
-			if gn.Layer > maxLayer {
-				maxLayer = gn.Layer
-			}
-		}
-		if n.Layer < maxLayer {
-			nextRight := n.X + n.W + g.cfg.ColGap + g.cfg.NodeW
-			if nextRight+margin > x0+viewW {
-				shifted := nextRight + margin - viewW
-				// Only apply when the cursor's own left edge still has
-				// margin on screen after the shift — otherwise the
-				// cursor-visible pan above wins.
-				if shifted <= n.X-margin {
-					x0 = shifted
-				}
-			}
-		}
-		if x0 < 0 {
-			x0 = 0
-		}
-		nodeBottom := n.Y + n.H
-		if n.Y-margin < y0 {
-			y0 = n.Y - margin
-		}
-		if nodeBottom+margin > y0+viewH {
-			y0 = nodeBottom + margin - viewH
-		}
-		if y0 < 0 {
-			y0 = 0
+	if cursorIdx < 0 || cursorIdx >= len(g.nodes) {
+		return x0, y0
+	}
+	n := g.nodes[cursorIdx]
+	const margin = 2
+	nodeRight := n.X + n.W
+	if n.X-margin < x0 {
+		x0 = n.X - margin
+	}
+	if nodeRight+margin > x0+viewW {
+		x0 = nodeRight + margin - viewW
+	}
+	maxLayer := 0
+	for _, gn := range g.nodes {
+		if gn.Layer > maxLayer {
+			maxLayer = gn.Layer
 		}
 	}
-	return cv.renderRect(x0, y0, viewW, viewH)
+	// When the cursor isn't in the right-most layer, try to also keep
+	// the next layer's column on screen so the user can see where "→"
+	// will land. Only applies when the viewport is wide enough to fit
+	// both columns, otherwise the cursor-visible pan above wins.
+	if n.Layer < maxLayer {
+		nextRight := n.X + n.W + g.cfg.ColGap + g.cfg.NodeW
+		if nextRight+margin > x0+viewW {
+			shifted := nextRight + margin - viewW
+			if shifted <= n.X-margin {
+				x0 = shifted
+			}
+		}
+	}
+	if x0 < 0 {
+		x0 = 0
+	}
+	nodeBottom := n.Y + n.H
+	if n.Y-margin < y0 {
+		y0 = n.Y - margin
+	}
+	if nodeBottom+margin > y0+viewH {
+		y0 = nodeBottom + margin - viewH
+	}
+	if y0 < 0 {
+		y0 = 0
+	}
+	return x0, y0
 }
 
 // drawNode paints a single node box. The first inner row is the stage
@@ -969,7 +1016,7 @@ func (m Model) graphView() tea.View {
 	}
 
 	hint := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).
-		Render("←/→/↑/↓ move along edges · / search · n/N next/prev · l logs · D diff · P promote · > downstream · o argo · y yank · v details · t tree · d deploys · g graph · ? help · q quit")
+		Render("v details · P promote · l logs · / search · n/N next/prev · ? help")
 
 	// Body sizing: header + statusLine + hint = 3 lines guaranteed.
 	// Banner / error / yank message and the search line each cost one
@@ -1014,11 +1061,13 @@ func (m Model) graphView() tea.View {
 	}
 	parts = append(parts, statusLine, hint)
 	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	content = m.composeWithMenu(content)
+	content = paintFrame(content, m.width, m.height)
 
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.BackgroundColor = bg
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = m.activeMouseMode()
 	if m.filtering && m.view == viewGraph && searchLineRow >= 0 {
 		if c := m.filter.Cursor(); c != nil {
 			// searchLine is wrapped in Padding(0, 1) — shift the input's
@@ -1053,14 +1102,14 @@ func graphStatusLine(g graphLayout, cursorIdx int) string {
 		parts = append(parts, n.Stage.Health)
 	}
 	parts = append(parts, fmt.Sprintf("%d in / %d out", len(in), len(out)))
-	if right, ok := pickNeighbor(out, "right"); ok {
-		if rn := g.nodes[right]; !rn.Dummy && rn.Stage != nil {
-			parts = append(parts, "→ "+rn.Stage.Name)
-		}
-	}
 	if left, ok := pickNeighbor(in, "left"); ok {
 		if ln := g.nodes[left]; !ln.Dummy && ln.Stage != nil {
 			parts = append(parts, "← "+ln.Stage.Name)
+		}
+	}
+	if right, ok := pickNeighbor(out, "right"); ok {
+		if rn := g.nodes[right]; !rn.Dummy && rn.Stage != nil {
+			parts = append(parts, "→ "+rn.Stage.Name)
 		}
 	}
 	return muted.Render(strings.Join(parts, " · "))

@@ -36,6 +36,29 @@ func (c *Client) PromoteToStage(ctx context.Context, project, stage, freight str
 	return &entry, nil
 }
 
+// ApproveFreight marks the given freight as approved for the given stage,
+// bypassing the usual "must be verified upstream" / "must come from a
+// direct warehouse" requirements. Used by the promote overlay to opt a
+// not-yet-eligible freight into promotion after the user confirms.
+func (c *Client) ApproveFreight(ctx context.Context, project, freight, stage string) error {
+	if project == "" {
+		project = c.project
+	}
+	if stage == "" {
+		return errors.New("stage is required")
+	}
+	if freight == "" {
+		return errors.New("freight is required")
+	}
+	req := &svcv1alpha1.ApproveFreightRequest{
+		Project: project,
+		Name:    freight,
+		Stage:   stage,
+	}
+	resp := &svcv1alpha1.ApproveFreightResponse{}
+	return c.rpc.callProto(ctx, "ApproveFreight", req, resp)
+}
+
 // PromoteDownstream promotes the given source stage's freight to every
 // stage that lists it as an upstream. Returns one PromotionEntry per
 // downstream stage that the server kicked off — the slice is empty when

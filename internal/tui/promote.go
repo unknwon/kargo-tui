@@ -18,10 +18,22 @@ type promoteStep int
 const (
 	promotePicking promoteStep = iota
 	promoteViewing
+	promoteApproving
 	promoteConfirming
 	promoteSubmitting
 	promoteDone
 )
+
+// promoteCandidate is one row in the promote-overlay picker. Eligible is
+// true when the freight already satisfies the target stage's promotion
+// rules (verified upstream, direct-warehouse origin, or already approved
+// for promote-to-stage; verified at the source for promote-downstream).
+// Ineligible candidates are rendered with a marker and require an extra
+// "approve first?" confirmation before the promotion is dispatched.
+type promoteCandidate struct {
+	Freight  kargo.Freight
+	Eligible bool
+}
 
 // promotePickerPage returns the number of rows pgup/pgdown moves the
 // picker cursor — the visible body height minus one row of overlap so
@@ -39,10 +51,12 @@ func promotePickerPage(termHeight int) int {
 }
 
 // openPromoteOverlay seeds promote-to-stage state for the given stage.
-// Candidates come from candidateFreight: freight verified at an upstream
-// stage, freight from a warehouse the stage pulls directly from, or
-// freight explicitly approved for this stage. Works for control-flow
-// stages too — the same candidate rules apply.
+// Candidates come from candidateFreight: every freight in the project,
+// with the entries that already satisfy the stage's promotion rules
+// (verified upstream, direct-warehouse origin, or already approved)
+// marked eligible. Ineligible entries render with a "needs approval"
+// marker and require an extra confirm before the promotion fires.
+// Works for control-flow stages too.
 func (m *Model) openPromoteOverlay(stage *kargo.Stage) {
 	if stage == nil {
 		return
@@ -57,15 +71,17 @@ func (m *Model) openPromoteOverlay(stage *kargo.Stage) {
 	m.promoteDownstream = false
 	m.promoteCandidates = candidateFreight(m.freights, stage)
 	// Empty candidates → the picker renders "no candidate freight found
-	// for this stage" with esc-to-dismiss. We deliberately don't fall
-	// back to the full freight list because Kargo will reject any
-	// promotion of freight that isn't verified upstream of the target.
+	// for this stage" with esc-to-dismiss. Only happens when the project
+	// has no freight at all, since candidateFreight returns every
+	// freight (eligible or not).
 }
 
 // openPromoteDownstreamOverlay seeds the overlay for a "promote from this
-// stage to every downstream subscriber" flow. Candidates are the freight
-// verified at the source stage itself — i.e. anything Kargo will accept
-// for a PromoteDownstream call from this stage.
+// stage to every downstream subscriber" flow. The picker lists every
+// freight in the project, with entries verified at the source stage
+// marked eligible. Non-eligible entries render with a "needs approval"
+// marker; picking one approves the freight for every downstream stage
+// of source before the PromoteDownstream call.
 func (m *Model) openPromoteDownstreamOverlay(stage *kargo.Stage) {
 	if stage == nil {
 		return
@@ -95,44 +111,47 @@ func (m *Model) restrictPromoteCandidates(keep []string) {
 		want[n] = struct{}{}
 	}
 	out := m.promoteCandidates[:0]
-	for _, f := range m.promoteCandidates {
-		if _, ok := want[f.Name]; ok {
-			out = append(out, f)
+	for _, c := range m.promoteCandidates {
+		if _, ok := want[c.Freight.Name]; ok {
+			out = append(out, c)
 		}
 	}
 	m.promoteCandidates = out
 	m.promoteCursor = 0
 }
 
-// downstreamCandidateFreight returns the freight that the given stage has
-// verified — these are the items eligible to flow to downstream
-// subscribers via PromoteDownstream. Sorted newest-first.
-func downstreamCandidateFreight(all []kargo.Freight, sourceStage string) []kargo.Freight {
-	var out []kargo.Freight
+// downstreamCandidateFreight returns every freight in the project sorted
+// newest-first, with Eligible set on the entries verified at the source
+// stage (the natural PromoteDownstream candidates). Non-eligible entries
+// are surfaced too so the user can opt them in by approving the freight
+// for each downstream stage before the promote fires.
+func downstreamCandidateFreight(all []kargo.Freight, sourceStage string) []promoteCandidate {
+	out := make([]promoteCandidate, 0, len(all))
 	for _, f := range all {
+		eligible := false
 		for _, vs := range f.VerifiedStages {
 			if vs == sourceStage {
-				out = append(out, f)
+				eligible = true
 				break
 			}
 		}
+		out = append(out, promoteCandidate{Freight: f, Eligible: eligible})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if !out[i].Created.Equal(out[j].Created) {
-			return out[i].Created.After(out[j].Created)
-		}
-		return out[i].Name < out[j].Name
-	})
+	sortPromoteCandidates(out)
 	return out
 }
 
-// candidateFreight returns the freight a user might reasonably promote to
-// stage, sorted newest-first. A freight is a candidate if any of:
+// candidateFreight returns every freight in the project sorted
+// newest-first, with Eligible set on the entries the target stage will
+// already accept. A freight is eligible if any of:
 //   - It's verified in one of the stage's upstream stages.
 //   - It originated from a Warehouse the stage pulls directly from
 //     (Spec.RequestedFreight[].Sources.Direct).
 //   - It's explicitly approved for this stage via ApprovedStages.
-func candidateFreight(all []kargo.Freight, target *kargo.Stage) []kargo.Freight {
+//
+// Non-eligible freight is still returned (marked Eligible=false) so the
+// user can approve-and-promote in one flow from the picker.
+func candidateFreight(all []kargo.Freight, target *kargo.Stage) []promoteCandidate {
 	if target == nil {
 		return nil
 	}
@@ -144,39 +163,48 @@ func candidateFreight(all []kargo.Freight, target *kargo.Stage) []kargo.Freight 
 	for _, w := range target.DirectWarehouses {
 		directWH[w] = struct{}{}
 	}
-	var out []kargo.Freight
+	out := make([]promoteCandidate, 0, len(all))
 	for _, f := range all {
-		match := false
+		eligible := false
 		for _, vs := range f.VerifiedStages {
 			if _, ok := upstream[vs]; ok {
-				match = true
+				eligible = true
 				break
 			}
 		}
-		if !match {
+		if !eligible {
 			if _, ok := directWH[f.Warehouse]; ok {
-				match = true
+				eligible = true
 			}
 		}
-		if !match {
+		if !eligible {
 			for _, as := range f.ApprovedStages {
 				if as == target.Name {
-					match = true
+					eligible = true
 					break
 				}
 			}
 		}
-		if match {
-			out = append(out, f)
-		}
+		out = append(out, promoteCandidate{Freight: f, Eligible: eligible})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if !out[i].Created.Equal(out[j].Created) {
-			return out[i].Created.After(out[j].Created)
-		}
-		return out[i].Name < out[j].Name
-	})
+	sortPromoteCandidates(out)
 	return out
+}
+
+// sortPromoteCandidates orders the picker rows so eligible freight comes
+// first (the common path), then ineligible freight, each group ordered
+// newest-first with name as tiebreaker.
+func sortPromoteCandidates(cs []promoteCandidate) {
+	sort.Slice(cs, func(i, j int) bool {
+		if cs[i].Eligible != cs[j].Eligible {
+			return cs[i].Eligible
+		}
+		ai, aj := cs[i].Freight, cs[j].Freight
+		if !ai.Created.Equal(aj.Created) {
+			return ai.Created.After(aj.Created)
+		}
+		return ai.Name < aj.Name
+	})
 }
 
 // promoteOverlayView renders the freight-picker / confirm / result frames.
@@ -184,7 +212,7 @@ func (m Model) promoteOverlayView() tea.View {
 	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
 	hintStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
 	itemStyle := lipgloss.NewStyle().Foreground(normal).Background(bg)
-	selStyle := lipgloss.NewStyle().Foreground(bg).Background(selected).Bold(true)
+	selStyle := lipgloss.NewStyle().Foreground(darkFg).Background(selected).Bold(true)
 	errStyle := lipgloss.NewStyle().Foreground(degraded).Background(bg)
 	okStyle := lipgloss.NewStyle().Foreground(healthy).Background(bg)
 
@@ -206,6 +234,47 @@ func (m Model) promoteOverlayView() tea.View {
 	lines = append(lines, "")
 
 	switch m.promoteStep {
+	case promoteApproving:
+		// Guard the cursor the same way the confirming step does: a
+		// restricted list could have ended up empty before reaching us.
+		if m.promoteCursor < 0 || m.promoteCursor >= len(m.promoteCandidates) {
+			lines = append(lines,
+				errStyle.Render("no candidate freight to approve"),
+				"",
+				hintStyle.Render("esc dismiss"),
+			)
+			break
+		}
+		c := m.promoteCandidates[m.promoteCursor]
+		f := c.Freight
+		var prompt, sub string
+		if m.promoteDownstream {
+			prompt = fmt.Sprintf("Freight %s%s is not verified at %s.",
+				shortFreight(f.Name), aliasSuffix(f.Alias), m.promoteStage)
+			sub = fmt.Sprintf("Approve it for every downstream subscriber of %s, then promote?", m.promoteStage)
+		} else {
+			prompt = fmt.Sprintf("Freight %s%s is not eligible for %s.",
+				shortFreight(f.Name), aliasSuffix(f.Alias), m.promoteStage)
+			sub = fmt.Sprintf("Approve it for %s, then promote?", m.promoteStage)
+		}
+		verifiedLine := fmt.Sprintf("Verified in %d stage(s)", f.VerifiedIn)
+		if len(f.VerifiedStages) > 0 {
+			verifiedLine += ": " + strings.Join(f.VerifiedStages, ", ")
+		}
+		approvedLine := fmt.Sprintf("Approved for %d stage(s)", f.ApprovedFor)
+		if len(f.ApprovedStages) > 0 {
+			approvedLine += ": " + strings.Join(f.ApprovedStages, ", ")
+		}
+		lines = append(lines,
+			itemStyle.Render(prompt),
+			itemStyle.Render(sub),
+			"",
+			hintStyle.Render(verifiedLine),
+			hintStyle.Render(approvedLine),
+			"",
+			hintStyle.Render("y approve and promote · n/esc cancel"),
+		)
+
 	case promoteConfirming:
 		// Guard the index: the picker can land here from `>` with a
 		// restricted candidate list that came up empty (e.g. the deploy
@@ -220,7 +289,7 @@ func (m Model) promoteOverlayView() tea.View {
 			)
 			break
 		}
-		f := m.promoteCandidates[m.promoteCursor]
+		f := m.promoteCandidates[m.promoteCursor].Freight
 		var prompt string
 		if m.promoteDownstream {
 			prompt = fmt.Sprintf("Promote freight %s%s from %s to every downstream subscriber?",
@@ -259,6 +328,7 @@ func (m Model) promoteOverlayView() tea.View {
 		Padding(1, 2).
 		Width(innerW).
 		Render(body)
+	box = paintFrame(box, m.width, m.height)
 
 	v := tea.NewView(box)
 	v.AltScreen = true
@@ -295,7 +365,7 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 	}
 
 	header := titleStyle.Padding(0, 1).Render(clipToWidth(m.overlayTitle, headHintBudget))
-	hint := hintStyle.Padding(0, 1).Render(clipToWidth("↑/↓ select · pgup/pgdn/space/home/end jump · enter pick · v details · esc cancel", headHintBudget))
+	hint := hintStyle.Padding(0, 1).Render(clipToWidth("↑/↓ select · pgup/pgdn/space/home/end jump · enter pick · v details · ? needs approval · esc cancel", headHintBudget))
 
 	bodyH := m.height - 2
 	if bodyH < 1 {
@@ -316,11 +386,17 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 		if end > len(m.promoteCandidates) {
 			end = len(m.promoteCandidates)
 		}
+		mutedStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
 		rows := make([]string, 0, end-start)
 		for i := start; i < end; i++ {
-			f := m.promoteCandidates[i]
+			c := m.promoteCandidates[i]
+			f := c.Freight
 			label := shortFreight(f.Name) + aliasSuffix(f.Alias)
 			meta := []string{}
+			if !c.Eligible {
+				meta = append(meta, "needs approval")
+			}
+			meta = append(meta, fmt.Sprintf("v=%d a=%d", f.VerifiedIn, f.ApprovedFor))
 			if f.Warehouse != "" {
 				meta = append(meta, "wh="+f.Warehouse)
 			}
@@ -332,13 +408,22 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 			}
 			label = clipToWidth(label, rowBudget)
 			marker := "  "
+			if !c.Eligible {
+				marker = "? "
+			}
 			if i == m.promoteCursor {
 				marker = "▌ "
+				if !c.Eligible {
+					marker = "▌?"
+				}
 			}
 			row := marker + label
-			if i == m.promoteCursor {
+			switch {
+			case i == m.promoteCursor:
 				rows = append(rows, selStyle.Padding(0, 1).Render(row))
-			} else {
+			case !c.Eligible:
+				rows = append(rows, mutedStyle.Padding(0, 1).Render(row))
+			default:
 				rows = append(rows, itemStyle.Padding(0, 1).Render(row))
 			}
 		}
@@ -346,6 +431,7 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, header, body, hint)
+	content = paintFrame(content, m.width, m.height)
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.BackgroundColor = bg
@@ -420,6 +506,7 @@ func (m Model) promoteViewingView(titleStyle, hintStyle lipgloss.Style) tea.View
 		Background(bg).
 		Padding(1, 2).
 		Render(body)
+	box = paintFrame(box, m.width, m.height)
 	v := tea.NewView(box)
 	v.AltScreen = true
 	v.BackgroundColor = bg
@@ -434,10 +521,12 @@ func (m Model) promoteViewingContent(innerW int) string {
 	if m.promoteCursor < 0 || m.promoteCursor >= len(m.promoteCandidates) {
 		return ""
 	}
-	f := m.promoteCandidates[m.promoteCursor]
+	c := m.promoteCandidates[m.promoteCursor]
+	f := c.Freight
 	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
 	keyStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
 	valStyle := lipgloss.NewStyle().Foreground(normal).Background(bg)
+	warnStyle := lipgloss.NewStyle().Foreground(progressing).Background(bg)
 	row := func(k, v string) string {
 		return keyStyle.Render(padRight(k+":", 12)) + " " + valStyle.Render(wrap(v, innerW-13))
 	}
@@ -446,15 +535,25 @@ func (m Model) promoteViewingContent(innerW int) string {
 	if f.Alias != "" {
 		lines = append(lines, keyStyle.Render(f.Alias))
 	}
+	if !c.Eligible {
+		if m.promoteDownstream {
+			lines = append(lines, warnStyle.Render("Not verified at "+m.promoteStage+". Picking will require approval first."))
+		} else {
+			lines = append(lines, warnStyle.Render("Not eligible for "+m.promoteStage+". Picking will require approval first."))
+		}
+	}
 	lines = append(lines, freightDetailLines(f, innerW, row, keyStyle, valStyle)...)
 	return strings.Join(lines, "\n")
 }
 
 // updatePromoteOverlay routes a key press while the promote overlay is open.
 // Each promoteStep accepts a different key set: pick (arrows + enter +
-// v to view), view (scroll keys + enter to advance to confirm + v/esc
-// to return), confirm (y/n), submitting (esc to dismiss without
-// cancelling the in-flight RPC), done (enter/esc to match the hint).
+// v to view), view (scroll keys + enter to advance + v/esc to return),
+// approve (y/n) for ineligible freight, confirm (y/n) for the regular
+// path, submitting (esc to dismiss without cancelling the in-flight
+// RPC), done (enter/esc to match the hint). Enter from pick/view routes
+// to approve when the highlighted candidate is ineligible, otherwise to
+// confirm.
 func (m Model) updatePromoteOverlay(key string) (tea.Model, tea.Cmd) {
 	switch m.promoteStep {
 	case promotePicking:
@@ -500,7 +599,11 @@ func (m Model) updatePromoteOverlay(key string) (tea.Model, tea.Cmd) {
 			if len(m.promoteCandidates) == 0 {
 				return m, nil
 			}
-			m.promoteStep = promoteConfirming
+			if !m.promoteCandidates[m.promoteCursor].Eligible {
+				m.promoteStep = promoteApproving
+			} else {
+				m.promoteStep = promoteConfirming
+			}
 			return m, nil
 		case "v":
 			if len(m.promoteCandidates) == 0 {
@@ -518,7 +621,14 @@ func (m Model) updatePromoteOverlay(key string) (tea.Model, tea.Cmd) {
 			m.promoteStep = promotePicking
 			return m, nil
 		case "enter":
-			m.promoteStep = promoteConfirming
+			if len(m.promoteCandidates) == 0 {
+				return m, nil
+			}
+			if !m.promoteCandidates[m.promoteCursor].Eligible {
+				m.promoteStep = promoteApproving
+			} else {
+				m.promoteStep = promoteConfirming
+			}
 			return m, nil
 		case "up", "k":
 			m.overlayVP.ScrollUp(1)
@@ -539,6 +649,24 @@ func (m Model) updatePromoteOverlay(key string) (tea.Model, tea.Cmd) {
 			m.overlayVP.GotoBottom()
 			return m, nil
 		}
+	case promoteApproving:
+		switch key {
+		case "y", "Y":
+			if m.promoteCursor < 0 || m.promoteCursor >= len(m.promoteCandidates) {
+				m.overlay = overlayNone
+				return m, nil
+			}
+			f := m.promoteCandidates[m.promoteCursor].Freight
+			m.promoteStep = promoteSubmitting
+			if m.promoteDownstream {
+				stages := downstreamStagesOf(m.deploys, m.promoteStage)
+				return m, approveAndPromoteDownstreamCmd(m.client, m.project, m.promoteStage, f.Name, stages)
+			}
+			return m, approveAndPromoteCmd(m.client, m.project, m.promoteStage, f.Name)
+		case "n", "N", "esc":
+			m.promoteStep = promotePicking
+			return m, nil
+		}
 	case promoteConfirming:
 		switch key {
 		case "y", "Y":
@@ -548,7 +676,7 @@ func (m Model) updatePromoteOverlay(key string) (tea.Model, tea.Cmd) {
 				m.overlay = overlayNone
 				return m, nil
 			}
-			f := m.promoteCandidates[m.promoteCursor]
+			f := m.promoteCandidates[m.promoteCursor].Freight
 			m.promoteStep = promoteSubmitting
 			if m.promoteDownstream {
 				return m, promoteDownstreamCmd(m.client, m.project, m.promoteStage, f.Name)
@@ -600,4 +728,62 @@ func promoteDownstreamCmd(c *kargo.Client, project, source, freight string) tea.
 			err:        err,
 		}
 	}
+}
+
+// approveAndPromoteCmd approves the freight for the target stage and then
+// dispatches the normal PromoteToStage call. Surfaces the approve error
+// (if any) through promoteResultMsg so the overlay's submitting-step
+// transition stays consistent.
+func approveAndPromoteCmd(c *kargo.Client, project, stage, freight string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		if err := c.ApproveFreight(ctx, project, freight, stage); err != nil {
+			return promoteResultMsg{stage: stage, freight: freight, err: err}
+		}
+		entry, err := c.PromoteToStage(ctx, project, stage, freight)
+		msg := promoteResultMsg{stage: stage, freight: freight, err: err}
+		if entry != nil {
+			msg.promotionName = entry.Name
+			msg.phase = entry.Phase
+		}
+		return msg
+	}
+}
+
+// approveAndPromoteDownstreamCmd approves the freight for every downstream
+// stage of source (so each subscriber will accept it) and then dispatches
+// the normal PromoteDownstream call. Any approve error short-circuits and
+// surfaces through promoteDownstreamResultMsg.
+func approveAndPromoteDownstreamCmd(c *kargo.Client, project, source, freight string, downstreams []string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		for _, ds := range downstreams {
+			if err := c.ApproveFreight(ctx, project, freight, ds); err != nil {
+				return promoteDownstreamResultMsg{source: source, freight: freight, err: err}
+			}
+		}
+		entries, err := c.PromoteDownstream(ctx, project, source, freight)
+		return promoteDownstreamResultMsg{
+			source:     source,
+			freight:    freight,
+			promotions: len(entries),
+			err:        err,
+		}
+	}
+}
+
+// downstreamStagesOf returns the names of every stage in stages that
+// lists source as one of its upstream stages, i.e. the natural targets a
+// PromoteDownstream from source will fan out to.
+func downstreamStagesOf(stages []kargo.Stage, source string) []string {
+	var out []string
+	for _, s := range stages {
+		for _, up := range s.Upstreams {
+			if up == source {
+				out = append(out, s.Name)
+				break
+			}
+		}
+	}
+	return out
 }

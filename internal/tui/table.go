@@ -46,7 +46,7 @@ func (m *Model) scrollRight() {
 func applyCursorMarker(t *table.Model) {
 	rows := t.Rows()
 	cur := t.Cursor()
-	marked := lipgloss.NewStyle().Foreground(selected).Bold(true).Render("▌")
+	marked := lipgloss.NewStyle().Foreground(selected).Bold(true).Render(cursorMarkerGlyph)
 	blank := " "
 	for i := range rows {
 		if len(rows[i]) == 0 {
@@ -160,6 +160,7 @@ func (m *Model) refreshRows() {
 			visible = append(visible, s)
 		}
 		idx := horizontalSlice(len(allStageColumns), m.deploysColOffset)
+		slicedCols := sliceColumns(allStageColumns, idx)
 		slicedRows := make([]table.Row, len(rows))
 		for i, r := range rows {
 			slicedRows[i] = sliceRow(r, idx)
@@ -169,12 +170,12 @@ func (m *Model) refreshRows() {
 		// (no public accessor for YOffset) which causes the visible window
 		// to "jump" on every auto-refresh even though nothing the user can
 		// see has actually changed.
-		if !sameStageRows(m.visibleDeploys, visible) || !sameColumnSlice(m.deploysTable.Columns(), sliceColumns(allStageColumns, idx)) {
+		if !sameStageRows(m.visibleDeploys, visible) || !sameColumnSlice(m.deploysTable.Columns(), slicedCols) {
 			// Order matters: clear rows BEFORE changing columns. The bubbles
 			// table re-renders on SetColumns, and panics if any row has more
 			// cells than the new column count.
 			m.deploysTable.SetRows(nil)
-			m.deploysTable.SetColumns(sliceColumns(allStageColumns, idx))
+			m.deploysTable.SetColumns(slicedCols)
 			m.deploysTable.SetRows(slicedRows)
 			m.visibleDeploys = visible
 			want := -1
@@ -219,15 +220,16 @@ func (m *Model) refreshRows() {
 			visible = append(visible, f)
 		}
 		idx := horizontalSlice(len(allFreightColumns), m.freightsColOffset)
+		slicedCols := sliceColumns(allFreightColumns, idx)
 		slicedRows := make([]table.Row, len(rows))
 		for i, r := range rows {
 			slicedRows[i] = sliceRow(r, idx)
 		}
 		// See the deploys branch above for why we skip the rebuild on
 		// equal-row refreshes — preserves the table's internal scroll.
-		if !sameFreightRows(m.visibleFreights, visible) || !sameColumnSlice(m.freightsTable.Columns(), sliceColumns(allFreightColumns, idx)) {
+		if !sameFreightRows(m.visibleFreights, visible) || !sameColumnSlice(m.freightsTable.Columns(), slicedCols) {
 			m.freightsTable.SetRows(nil)
-			m.freightsTable.SetColumns(sliceColumns(allFreightColumns, idx))
+			m.freightsTable.SetColumns(slicedCols)
 			m.freightsTable.SetRows(slicedRows)
 			m.visibleFreights = visible
 			want := -1
