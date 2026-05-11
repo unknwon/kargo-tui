@@ -430,17 +430,15 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 				label += "  " + strings.Join(meta, " · ")
 			}
 			label = clipToWidth(label, rowBudget)
-			// Off-cursor: current • (small bullet — narrower than ● so the
-			// gap to the name matches the ? marker), needs-approval ?,
-			// else blank. On the cursor row the bar already signals focus
-			// and the meta strip ("current" / "needs approval") carries
-			// the state in words, so don't try to squeeze a state glyph
-			// next to the bar — that produces a glued-on look without a
-			// space separator.
+			// Off-cursor: current ●, needs-approval ?, else blank. On the
+			// cursor row the bar already signals focus and the meta strip
+			// ("current" / "needs approval") carries the state in words,
+			// so don't try to squeeze a state glyph next to the bar — it
+			// produces a glued-on look without a space separator.
 			marker := "  "
 			switch {
 			case c.Current:
-				marker = "• "
+				marker = "● "
 			case !c.Eligible:
 				marker = "? "
 			}
@@ -569,7 +567,7 @@ func (m Model) promoteViewingContent(innerW int) string {
 		lines = append(lines, keyStyle.Render(f.Alias))
 	}
 	if c.Current {
-		lines = append(lines, currentStyle.Render("• Currently deployed at "+m.promoteStage+"."))
+		lines = append(lines, currentStyle.Render("● Currently deployed at "+m.promoteStage+"."))
 	}
 	if !c.Eligible {
 		if m.promoteDownstream {
