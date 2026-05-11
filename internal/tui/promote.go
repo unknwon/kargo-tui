@@ -365,7 +365,7 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 	}
 
 	header := titleStyle.Padding(0, 1).Render(clipToWidth(m.overlayTitle, headHintBudget))
-	hint := hintStyle.Padding(0, 1).Render(clipToWidth("↑/↓ select · pgup/pgdn/space/home/end jump · enter pick · v details · ? needs approval · esc cancel", headHintBudget))
+	hint := hintStyle.Padding(0, 1).Render(clipToWidth("↑/↓ select · pgup/pgdn/space/home/end jump · enter pick · v details · esc cancel", headHintBudget))
 
 	bodyH := m.height - 2
 	if bodyH < 1 {
