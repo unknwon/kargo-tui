@@ -290,9 +290,11 @@ func (m *Model) openMenuForFreight(x, y int, f *kargo.Freight) {
 }
 
 // activeMouseMode returns the mouse capture mode to install on the
-// current view. Defaults to cell-motion (click + drag only); upgrades
-// to all-motion while the right-click context menu is open so hover
-// events fire and the menu highlight can track the cursor.
+// current view. Returns none when the user has toggled capture off
+// (M key) so the terminal regains native text selection and scrollback.
+// Upgrades to all-motion while the right-click context menu is open so
+// hover events fire and the menu highlight can track the cursor.
+// Otherwise cell-motion: click, release, and wheel events.
 func (m Model) activeMouseMode() tea.MouseMode {
 	if m.mouseDisabled {
 		return tea.MouseModeNone
