@@ -118,7 +118,15 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.filtering {
 			var cmd tea.Cmd
 			m.filter, cmd = m.filter.Update(pm)
-			m.refreshRows()
+			// Mirror the per-keystroke filter dispatch below: graph
+			// view drives a search instead of filtering rows, so a
+			// paste during graph filtering needs recomputeGraphMatches
+			// to keep matches/cursor consistent with the new query.
+			if m.view == viewGraph {
+				m.recomputeGraphMatches(m.filter.Value())
+			} else {
+				m.refreshRows()
+			}
 			return m, cmd
 		}
 		return m, nil

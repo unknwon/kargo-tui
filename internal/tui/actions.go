@@ -65,7 +65,10 @@ func (m *Model) moveCursor(delta int) {
 func (m *Model) yankSelection() {
 	var label, value string
 	switch m.view {
-	case viewDeploys, viewControlFlow:
+	case viewDeploys, viewControlFlow, viewTree, viewGraph:
+		// selectedStage routes to the per-view picker (table / tree /
+		// graph), so this branch covers every stage-centric view —
+		// matching what the per-view hint lines advertise.
 		s := m.selectedStage()
 		if s == nil {
 			return
@@ -125,7 +128,7 @@ func (m *Model) openArgoCDForSelection() {
 		return
 	}
 	switch m.view {
-	case viewDeploys, viewControlFlow:
+	case viewDeploys, viewControlFlow, viewTree, viewGraph:
 		s := m.selectedStage()
 		if s == nil || len(s.ArgoCDApps) == 0 {
 			m.yankedMessage = "no Argo CD app linked to this stage"

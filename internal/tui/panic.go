@@ -91,7 +91,13 @@ func renderPanicFallback(message string, width, height int) tea.View {
 	bodyStyle := lipgloss.NewStyle().Foreground(normal).Background(bg)
 
 	header := titleStyle.Render("panic recovered (render-time) — select to copy")
-	hint := hintStyle.Render("esc dismiss")
+	// `esc dismiss` would be a lie when View itself panics: View has a
+	// value receiver, so nothing this function can mutate persists back
+	// to the next Update — there is no panic-message state for esc to
+	// clear. q / ctrl+c, on the other hand, is bound globally across
+	// every list/tree/graph/help/overlay path that's likely to be the
+	// underlying view, so advertise the exit that actually works.
+	hint := hintStyle.Render("q / ctrl+c quit")
 
 	// Truncate to the available height so the popup doesn't push the
 	// hint off-screen. We keep the head of the stack — that's where the

@@ -1119,6 +1119,20 @@ func pickNeighbor(candidates []int, _ string) (int, bool) {
 // re-resolves any active name search since stage indices in the new
 // layout do not necessarily match the old ones.
 func (m *Model) rebuildGraph() {
+	// Snapshot the name of the currently-selected search match against
+	// the OLD layout before we overwrite it. Indices don't survive a
+	// rebuild — capturing prevName after the layout swap would look up
+	// an unrelated stage and restore the cursor to the wrong match.
+	prevMatchName := ""
+	if m.filter.Value() != "" && m.view == viewGraph &&
+		m.graphSearchPos >= 0 && m.graphSearchPos < len(m.graphSearchMatches) {
+		idx := m.graphSearchMatches[m.graphSearchPos]
+		if idx >= 0 && idx < len(m.graphLayout.nodes) {
+			if n := m.graphLayout.nodes[idx]; !n.Dummy && n.Stage != nil {
+				prevMatchName = n.Stage.Name
+			}
+		}
+	}
 	m.graphLayout = layoutGraph(m.deploys, defaultGraphCfg(), *m)
 	defer func() {
 		// Rehydrate the saved search against the fresh layout. The
@@ -1127,15 +1141,6 @@ func (m *Model) rebuildGraph() {
 		// across the rebuild — otherwise the "match X of Y" counter
 		// would lie about where the cursor actually is.
 		if q := m.filter.Value(); q != "" && m.view == viewGraph {
-			prevName := ""
-			if m.graphSearchPos >= 0 && m.graphSearchPos < len(m.graphSearchMatches) {
-				idx := m.graphSearchMatches[m.graphSearchPos]
-				if idx >= 0 && idx < len(m.graphLayout.nodes) {
-					if n := m.graphLayout.nodes[idx]; !n.Dummy && n.Stage != nil {
-						prevName = n.Stage.Name
-					}
-				}
-			}
 			qLower := strings.ToLower(strings.TrimSpace(q))
 			var matches []int
 			restored := -1
@@ -1144,7 +1149,7 @@ func (m *Model) rebuildGraph() {
 					continue
 				}
 				if strings.Contains(strings.ToLower(n.Stage.Name), qLower) {
-					if prevName != "" && n.Stage.Name == prevName {
+					if prevMatchName != "" && n.Stage.Name == prevMatchName {
 						restored = len(matches)
 					}
 					matches = append(matches, i)
