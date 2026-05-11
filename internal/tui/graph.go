@@ -1024,8 +1024,8 @@ func (m Model) graphView() tea.View {
 			// searchLine is wrapped in Padding(0, 1) — shift the input's
 			// intrinsic (x, 0) cursor right by one cell to land on the
 			// rendered text inside the padded line.
-			c.Position.X += 1
-			c.Position.Y += searchLineRow
+			c.X += 1
+			c.Y += searchLineRow
 			v.Cursor = c
 		}
 	}

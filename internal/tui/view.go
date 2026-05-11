@@ -141,7 +141,7 @@ func (m Model) View() (v tea.View) {
 	view.MouseMode = tea.MouseModeCellMotion
 	if m.filtering {
 		if c := m.filter.Cursor(); c != nil {
-			c.Position.Y += lipgloss.Height(header) + lipgloss.Height(body)
+			c.Y += lipgloss.Height(header) + lipgloss.Height(body)
 			view.Cursor = c
 		}
 	}

@@ -199,8 +199,8 @@ func (m Model) pickerView() tea.View {
 		// Box: border (1) + Padding(1,2). Offset the input's intrinsic
 		// (x, 0) cursor by the popup's top-left content origin plus the
 		// filter line's position inside the body.
-		c.Position.X += 3
-		c.Position.Y += 2 + filterRow
+		c.X += 3
+		c.Y += 2 + filterRow
 		v.Cursor = c
 	}
 	return v

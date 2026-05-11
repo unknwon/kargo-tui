@@ -302,8 +302,8 @@ func (m Model) contextPickerView() tea.View {
 		}
 		if c != nil {
 			// Box: border (1) + Padding(1,2).
-			c.Position.X += 3
-			c.Position.Y += 2 + filterRow
+			c.X += 3
+			c.Y += 2 + filterRow
 			v.Cursor = c
 		}
 	}
