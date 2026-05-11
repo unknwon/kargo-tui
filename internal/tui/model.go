@@ -192,11 +192,6 @@ type Model struct {
 	// moves between already-visible nodes.
 	graphPanX int
 	graphPanY int
-	// graphPanUserDriven is set by panGraph when the user explicitly pans
-	// (wheel scroll); Update's tail recomputeGraphPan reads + clears it
-	// so the recompute doesn't immediately yank the viewport back to the
-	// cursor and undo the pan.
-	graphPanUserDriven bool
 
 	// Graph-view name search. `/` opens m.filter as usual; in graph view
 	// the filter doesn't hide nodes (that would break the DAG layout)
@@ -319,6 +314,16 @@ func NewWithPicker(client *kargo.Client, contextName string) Model {
 // can stream status updates into the TUI. Sent by main after constructing
 // the tea.Program.
 type SetSendMsg struct{ Send func(tea.Msg) }
+
+// mouseBurstActive reports whether the most recent mouse event landed
+// within mouseQuietWindow. Auto-refresh paths (tick, stream events,
+// data-load callbacks) check this and skip the heavy refreshRows/
+// refreshPanel work so a wheel-scroll burst isn't stalled by a network
+// fetch landing mid-gesture. State stays merged into m.deploys etc; the
+// next post-burst tick brings the rendered tables back in sync.
+func (m Model) mouseBurstActive() bool {
+	return !m.lastMouseAt.IsZero() && time.Since(m.lastMouseAt) < mouseQuietWindow
+}
 
 // noteAuthFailure sets the sticky auth-expired banner from an RPC error,
 // but only when the error is actually an auth failure. Non-auth errors

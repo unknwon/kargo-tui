@@ -56,15 +56,9 @@ func (m Model) Update(msg tea.Msg) (out tea.Model, cmd tea.Cmd) {
 	// Refresh the graph pan offset after every update so the cursor stays
 	// visible without snapping the viewport when the cursor is already in
 	// view. Cheap and uniform: avoids sprinkling recomputeGraphPan calls
-	// across every cursor / resize / data-load handler. Skipped when the
-	// handler just performed an explicit user pan (wheel scroll), so the
-	// recompute can't yank the viewport back and undo it.
+	// across every cursor / resize / data-load handler.
 	if mm, ok := out.(Model); ok {
-		if mm.graphPanUserDriven {
-			mm.graphPanUserDriven = false
-		} else {
-			mm.recomputeGraphPan()
-		}
+		mm.recomputeGraphPan()
 		out = mm
 	}
 	return out, cmd
@@ -189,7 +183,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// landing during a scroll or drag feels laggy because the redraw
 		// briefly stalls cursor updates. mouseQuietWindow is short enough
 		// that idle data still refreshes promptly.
-		if !m.lastMouseAt.IsZero() && time.Since(m.lastMouseAt) < mouseQuietWindow {
+		if m.mouseBurstActive() {
 			return m, tickCmd()
 		}
 		m.loading = true
@@ -215,8 +209,10 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.deploysError = nil
 			m.deploys = msg.deploys
 			m.noteAuthSuccess()
-			m.refreshRows()
-			m.refreshPanel()
+			if !m.mouseBurstActive() {
+				m.refreshRows()
+				m.refreshPanel()
+			}
 		}
 		return m, nil
 
@@ -229,8 +225,10 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.freightsError = nil
 			m.freights = msg.freights
 			m.noteAuthSuccess()
-			m.refreshRows()
-			m.refreshPanel()
+			if !m.mouseBurstActive() {
+				m.refreshRows()
+				m.refreshPanel()
+			}
 		}
 		return m, nil
 
@@ -257,6 +255,13 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case stageEventMsg:
 		m.deploys = kargo.MergeStageEvent(m.deploys, kargo.StageEvent(msg))
+		// Skip the heavy refresh during a mouse burst so a stream event
+		// landing mid-wheel-scroll can't stall the redraw. m.deploys is
+		// still up to date; the next post-quiet-window tick will rerun
+		// refreshRows and pull the UI in sync.
+		if m.mouseBurstActive() {
+			return m, nil
+		}
 		m.refreshRows()
 		m.refreshPanel()
 		return m, nil
@@ -360,9 +365,11 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case shift && m.activeTable() != nil:
 				m.scrollLeft()
 			case shift && m.view == viewGraph:
-				m.panGraph(-graphWheelStep, 0)
+				m.moveGraphCursor("left")
+				m.resetPanelScroll()
 			case m.view == viewGraph:
-				m.panGraph(0, -graphWheelStep)
+				m.moveGraphCursor("up")
+				m.resetPanelScroll()
 			case m.view == viewTree:
 				m.moveTreeCursor(-1)
 				m.resetPanelScroll()
@@ -381,9 +388,11 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case shift && m.activeTable() != nil:
 				m.scrollRight()
 			case shift && m.view == viewGraph:
-				m.panGraph(graphWheelStep, 0)
+				m.moveGraphCursor("right")
+				m.resetPanelScroll()
 			case m.view == viewGraph:
-				m.panGraph(0, graphWheelStep)
+				m.moveGraphCursor("down")
+				m.resetPanelScroll()
 			case m.view == viewTree:
 				m.moveTreeCursor(1)
 				m.resetPanelScroll()
@@ -396,14 +405,16 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case m.activeTable() != nil:
 				m.scrollLeft()
 			case m.view == viewGraph:
-				m.panGraph(-graphWheelStep, 0)
+				m.moveGraphCursor("left")
+				m.resetPanelScroll()
 			}
 		case tea.MouseWheelRight:
 			switch {
 			case m.activeTable() != nil:
 				m.scrollRight()
 			case m.view == viewGraph:
-				m.panGraph(graphWheelStep, 0)
+				m.moveGraphCursor("right")
+				m.resetPanelScroll()
 			}
 		}
 		return m, nil
