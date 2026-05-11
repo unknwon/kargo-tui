@@ -523,6 +523,30 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.overlay = overlayNone
 				m.overlayStageName = ""
 				return m, nil
+			case "tab", "]", "shift+tab", "[":
+				if m.overlay == overlayLogs {
+					if key == "shift+tab" || key == "[" {
+						if m.overlayLogsTab == logsTabPromotions {
+							m.overlayLogsTab = logsTabEvents
+						} else {
+							m.overlayLogsTab = logsTabPromotions
+						}
+					} else {
+						if m.overlayLogsTab == logsTabEvents {
+							m.overlayLogsTab = logsTabPromotions
+						} else {
+							m.overlayLogsTab = logsTabEvents
+						}
+					}
+					// Skip render while the fetch is in flight: overlayPromos
+					// and overlayEvents are still nil, so renderLogs would
+					// replace the "loading…" placeholder with "(none)".
+					if !m.overlayLoading {
+						m.overlayVP.GotoTop()
+						m.renderLogs()
+					}
+				}
+				return m, nil
 			case "up", "k":
 				m.overlayVP.ScrollUp(1)
 				return m, nil
@@ -798,6 +822,15 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "?":
 			m.showHelp = true
 			m.prepareHelpViewport()
+			return m, nil
+		case "M":
+			m.mouseDisabled = !m.mouseDisabled
+			if m.mouseDisabled {
+				m.yankedMessage = "mouse capture off (terminal selection enabled)"
+			} else {
+				m.yankedMessage = "mouse capture on"
+			}
+			m.yankedAt = time.Now()
 			return m, nil
 		case "s":
 			m.cycleSort()
