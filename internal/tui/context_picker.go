@@ -288,4 +288,3 @@ func (m Model) contextPickerView() tea.View {
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
-

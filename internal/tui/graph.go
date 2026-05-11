@@ -21,20 +21,20 @@ type graphLayout struct {
 	nodes []graphNode
 	edges []graphEdge
 	// byName indexes into nodes for cursor navigation.
-	byName  map[string]int
-	width   int // total cell width
-	height  int // total cell height
-	cfg     graphCfg
+	byName map[string]int
+	width  int // total cell width
+	height int // total cell height
+	cfg    graphCfg
 }
 
 type graphNode struct {
-	Stage  *kargo.Stage
-	Layer  int // 0-based column
-	Slot   int // 0-based row within layer
-	X, Y   int // top-left cell of the node box
-	W, H   int // box dimensions (varies per node so each fits its rows)
-	Rows   []nodeRow
-	Dummy  bool
+	Stage *kargo.Stage
+	Layer int // 0-based column
+	Slot  int // 0-based row within layer
+	X, Y  int // top-left cell of the node box
+	W, H  int // box dimensions (varies per node so each fits its rows)
+	Rows  []nodeRow
+	Dummy bool
 	// LongEdge identifies which original edge a dummy node belongs to,
 	// so the segment renderer can colour them consistently when the
 	// cursor highlights an edge.
@@ -62,12 +62,12 @@ type graphEdge struct {
 }
 
 type graphCfg struct {
-	NodeW    int
-	NodeH    int
-	ColGap   int
-	RowGap   int
-	HMargin  int
-	VMargin  int
+	NodeW   int
+	NodeH   int
+	ColGap  int
+	RowGap  int
+	HMargin int
+	VMargin int
 }
 
 func defaultGraphCfg() graphCfg {
@@ -526,14 +526,6 @@ func (c *canvas) vLine(x, y1, y2 int, style lipgloss.Style) {
 	}
 }
 
-// render flattens the canvas into a single string, rendering each cell
-// with its own style. Lipgloss styles aren't comparable, so we can't
-// coalesce same-style runs cheaply; the canvas is small enough that
-// per-cell rendering is fine.
-func (c *canvas) render() string {
-	return c.renderRect(0, 0, c.w, c.h)
-}
-
 // renderRect renders only a sub-rectangle of the canvas. Used to pan a
 // large graph layout into a smaller terminal viewport.
 func (c *canvas) renderRect(x0, y0, w, h int) string {
@@ -566,7 +558,7 @@ func (c *canvas) renderRect(x0, y0, w, h int) string {
 
 // renderGraph paints g onto a fresh canvas, then crops a viewport
 // (viewW × viewH) that keeps the cursor node visible.
-func renderGraph(g graphLayout, cursorIdx, viewW, viewH int, m Model) string {
+func renderGraph(g graphLayout, cursorIdx, viewW, viewH int) string {
 	cv := newCanvas(g.width, g.height)
 
 	edgeStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
@@ -648,7 +640,7 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int, m Model) string {
 		if i == cursorIdx {
 			border = cursorBorderStyle
 		}
-		drawNode(cv, n, border, bgStyle, m, i == cursorIdx, borderColor)
+		drawNode(cv, n, border, bgStyle, i == cursorIdx, borderColor)
 	}
 
 	// Viewport pan: shift the visible window so the cursor node stays
@@ -692,7 +684,7 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int, m Model) string {
 // name (bold, in the border colour); each subsequent row is one
 // "key: value" pair from buildNodeRows. Box height is set per-node
 // during layout so each box hugs its content.
-func drawNode(cv *canvas, n graphNode, border, bgStyle lipgloss.Style, m Model, cursor bool, borderColor color.Color) {
+func drawNode(cv *canvas, n graphNode, border, bgStyle lipgloss.Style, cursor bool, borderColor color.Color) {
 	x, y := n.X, n.Y
 	w, h := n.W, n.H
 
@@ -937,7 +929,7 @@ func (m Model) graphView() tea.View {
 		bodyH = 5
 	}
 	body := lipgloss.NewStyle().Background(bg).Padding(0, 1).
-		Render(renderGraph(g, cursorIdx, bodyW, bodyH, m))
+		Render(renderGraph(g, cursorIdx, bodyW, bodyH))
 
 	statusLine := graphStatusLine(g, cursorIdx)
 	hint := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).
@@ -977,10 +969,10 @@ func graphStatusLine(g graphLayout, cursorIdx int) string {
 		parts = append(parts, n.Stage.Health)
 	}
 	parts = append(parts, fmt.Sprintf("%d in / %d out", len(in), len(out)))
-	if right, ok := pickNeighbor(g, out, "right"); ok {
+	if right, ok := pickNeighbor(out, "right"); ok {
 		parts = append(parts, "→ "+g.nodes[right].Stage.Name)
 	}
-	if left, ok := pickNeighbor(g, in, "left"); ok {
+	if left, ok := pickNeighbor(in, "left"); ok {
 		parts = append(parts, "← "+g.nodes[left].Stage.Name)
 	}
 	return muted.Render(strings.Join(parts, " · "))
@@ -1035,7 +1027,7 @@ func graphNeighbors(g graphLayout, idx int) (in, out []int) {
 // pickNeighbor picks a representative neighbour for the given direction
 // hint. "left" / "right" pick the one closest in slot to the current
 // cursor; falls back to the first.
-func pickNeighbor(g graphLayout, candidates []int, _ string) (int, bool) {
+func pickNeighbor(candidates []int, _ string) (int, bool) {
 	if len(candidates) == 0 {
 		return 0, false
 	}

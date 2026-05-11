@@ -233,17 +233,6 @@ func emptyDash(s string) string {
 	return s
 }
 
-// tsString formats a time.Time as an absolute UTC timestamp
-// (YYYY-MM-DD HH:MM:SS UTC). Returns a muted em-dash when the time is zero.
-// Most callers should prefer whenString — this is exposed for the rare cases
-// where only the absolute portion is wanted.
-func tsString(t time.Time) string {
-	if t.IsZero() {
-		return lipgloss.NewStyle().Foreground(muted).Render("—")
-	}
-	return t.UTC().Format("2006-01-02 15:04:05 UTC")
-}
-
 // whenString is the canonical "<relative> ago (<absolute UTC>)" format used
 // in every detail view. Returns a muted em-dash when t is zero.
 //
