@@ -41,6 +41,7 @@ func helpBindings() []struct{ section, key, desc string } {
 		{"", "n / N", "next / previous match (graph search)"},
 		{"", "esc", "dismiss details/overlay, then clear filter"},
 		{"Other", "r", "refresh now"},
+		{"", "M", "toggle mouse capture (off enables terminal text selection)"},
 		{"", "q / ctrl+c", "quit"},
 		{"Contexts", "C", "switch Kargo context (then press + to log in to a new URL)"},
 		{"", "R", "re-login to current context (only when session expired)"},
@@ -112,6 +113,6 @@ func (m Model) helpView() tea.View {
 	v := tea.NewView(box)
 	v.AltScreen = true
 	v.BackgroundColor = bg
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = m.activeMouseMode()
 	return v
 }

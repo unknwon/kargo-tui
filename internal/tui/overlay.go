@@ -427,6 +427,6 @@ func (m Model) overlayView() tea.View {
 	v := tea.NewView(box)
 	v.AltScreen = true
 	v.BackgroundColor = bg
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = m.activeMouseMode()
 	return v
 }

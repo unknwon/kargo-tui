@@ -333,7 +333,7 @@ func (m Model) promoteOverlayView() tea.View {
 	v := tea.NewView(box)
 	v.AltScreen = true
 	v.BackgroundColor = bg
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = m.activeMouseMode()
 	return v
 }
 
@@ -435,7 +435,7 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.BackgroundColor = bg
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = m.activeMouseMode()
 	return v
 }
 
@@ -510,7 +510,7 @@ func (m Model) promoteViewingView(titleStyle, hintStyle lipgloss.Style) tea.View
 	v := tea.NewView(box)
 	v.AltScreen = true
 	v.BackgroundColor = bg
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = m.activeMouseMode()
 	return v
 }
 

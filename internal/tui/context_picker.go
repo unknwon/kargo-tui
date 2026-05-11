@@ -293,7 +293,7 @@ func (m Model) contextPickerView() tea.View {
 	v := tea.NewView(box)
 	v.AltScreen = true
 	v.BackgroundColor = bg
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = m.activeMouseMode()
 	if filterRow >= 0 {
 		var c *tea.Cursor
 		if m.ctxAdding {

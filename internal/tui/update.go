@@ -818,6 +818,14 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showHelp = true
 			m.prepareHelpViewport()
 			return m, nil
+		case "M":
+			m.mouseDisabled = !m.mouseDisabled
+			if m.mouseDisabled {
+				m.yankedMessage = "mouse capture off (terminal selection enabled)"
+			} else {
+				m.yankedMessage = "mouse capture on"
+			}
+			return m, nil
 		case "s":
 			m.cycleSort()
 			m.refreshRows()

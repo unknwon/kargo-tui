@@ -294,6 +294,9 @@ func (m *Model) openMenuForFreight(x, y int, f *kargo.Freight) {
 // to all-motion while the right-click context menu is open so hover
 // events fire and the menu highlight can track the cursor.
 func (m Model) activeMouseMode() tea.MouseMode {
+	if m.mouseDisabled {
+		return tea.MouseModeNone
+	}
 	if m.menuOpen {
 		return tea.MouseModeAllMotion
 	}
