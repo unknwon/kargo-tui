@@ -593,6 +593,44 @@ func (c *canvas) renderRect(x0, y0, w, h int) string {
 	return b.String()
 }
 
+// graphRenderCache memoises the final rendered string for a given set
+// of inputs. The output of renderGraph is byte-identical for the same
+// (layoutVersion, cursorIdx, viewW, viewH, panX, panY) tuple, so a fast
+// wheel burst past the top or bottom of the layer (where the cursor
+// doesn't move) hits the cache and skips the full canvas paint.
+type graphRenderCache struct {
+	layoutVersion int
+	cursorIdx     int
+	viewW, viewH  int
+	panX, panY    int
+	out           string
+	valid         bool
+}
+
+// renderGraphCached is renderGraph with a single-slot cache keyed on
+// every input that affects the rendered output. The cache pointer comes
+// from the Model so it survives across value copies. Pass a nil cache to
+// bypass.
+func renderGraphCached(cache *graphRenderCache, layoutVersion int, g graphLayout, cursorIdx, viewW, viewH, panX, panY int) string {
+	if cache != nil && cache.valid &&
+		cache.layoutVersion == layoutVersion &&
+		cache.cursorIdx == cursorIdx &&
+		cache.viewW == viewW && cache.viewH == viewH &&
+		cache.panX == panX && cache.panY == panY {
+		return cache.out
+	}
+	out := renderGraph(g, cursorIdx, viewW, viewH, panX, panY)
+	if cache != nil {
+		cache.layoutVersion = layoutVersion
+		cache.cursorIdx = cursorIdx
+		cache.viewW, cache.viewH = viewW, viewH
+		cache.panX, cache.panY = panX, panY
+		cache.out = out
+		cache.valid = true
+	}
+	return out
+}
+
 // renderGraph paints g onto a fresh canvas, then crops a viewW × viewH
 // viewport anchored at (panX, panY). The caller (graphView via
 // recomputeGraphPan) is responsible for choosing a pan that keeps the
@@ -1061,7 +1099,7 @@ func (m Model) graphView() tea.View {
 		bodyH = 5
 	}
 	body := lipgloss.NewStyle().Background(bg).Padding(0, 1).
-		Render(renderGraph(g, cursorIdx, bodyW, bodyH, m.graphPanX, m.graphPanY))
+		Render(renderGraphCached(m.graphRender, m.graphLayoutVersion, g, cursorIdx, bodyW, bodyH, m.graphPanX, m.graphPanY))
 
 	// Compose the frame. Slot order: header, body, [banner|error|yank],
 	// [searchLine], statusLine, hint. searchLine is only emitted when it
@@ -1200,6 +1238,10 @@ func pickNeighbor(candidates []int, _ string) (int, bool) {
 // re-resolves any active name search since stage indices in the new
 // layout do not necessarily match the old ones.
 func (m *Model) rebuildGraph() {
+	// Bump the version up front so any cache check that runs against the
+	// new layout sees a fresh key (and so does the cache write after the
+	// next renderGraphCached call).
+	m.graphLayoutVersion++
 	// Snapshot the name of the currently-selected search match against
 	// the OLD layout before we overwrite it. Indices don't survive a
 	// rebuild — capturing prevName after the layout swap would look up

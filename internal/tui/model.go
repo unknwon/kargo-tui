@@ -187,6 +187,12 @@ type Model struct {
 	graphPanX int
 	graphPanY int
 
+	// graphLayoutVersion is bumped by rebuildGraph; the graphRender cache
+	// keys off it so a fresh layout invalidates the cached rendered
+	// string. Pointer-typed so the cache survives Model value copies.
+	graphLayoutVersion int
+	graphRender        *graphRenderCache
+
 	// Graph-view name search. `/` opens m.filter as usual; in graph view
 	// the filter doesn't hide nodes (that would break the DAG layout)
 	// but instead drives a search that jumps the cursor to the first
@@ -442,6 +448,7 @@ func newBase() Model {
 		panicVP:       panicVP,
 		filterValues:  make(map[view]string),
 		sort:          make(map[view]sortMode),
+		graphRender:   &graphRenderCache{},
 	}
 }
 
