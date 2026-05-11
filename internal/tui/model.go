@@ -110,6 +110,12 @@ type Model struct {
 	yankedMessage string
 	yankedAt      time.Time
 
+	// lastMouseAt is the wall-clock time of the most recent mouse event.
+	// Tick-driven auto-refresh defers when this is recent so a network
+	// fetch and the redraw it triggers can't land mid-gesture and stall
+	// the cursor.
+	lastMouseAt time.Time
+
 	// authExpired is set when a Kargo RPC fails with CodeUnauthenticated
 	// after the transport's refresh attempt also failed (or no refresh
 	// token was saved). It drives a sticky red banner above the help line
