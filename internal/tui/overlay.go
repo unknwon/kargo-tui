@@ -347,12 +347,22 @@ func (m Model) overlayView() tea.View {
 	if w <= 0 {
 		w = 80
 	}
-	h := m.height - 4
-	if h < 5 {
-		h = 5
+	h := m.height
+	if h < 9 {
+		h = 9
 	}
-	m.overlayVP.SetWidth(w - 4)
-	m.overlayVP.SetHeight(h - 2)
+	// Box chrome: rounded border (2) + Padding(1, 2) → 6 cols, 4 rows.
+	// Body chrome: header(1) + spacer(1) + spacer(1) + hint(1) → 4 rows.
+	innerW := w - 6
+	if innerW < 10 {
+		innerW = 10
+	}
+	innerH := h - 4 - 4
+	if innerH < 1 {
+		innerH = 1
+	}
+	m.overlayVP.SetWidth(innerW)
+	m.overlayVP.SetHeight(innerH)
 
 	body := lipgloss.JoinVertical(lipgloss.Left, header, "", m.overlayVP.View(), "", hint)
 	box := lipgloss.NewStyle().
