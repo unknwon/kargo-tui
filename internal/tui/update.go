@@ -145,13 +145,13 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.freightsTable.SetWidth(m.width)
 		// Resize the full-screen viewports too so SoftWrap recalculates and
 		// scroll bounds stay correct.
-		ow := m.width - 6
+		ow := m.width - 4
 		oh := m.height - 8
 		if ow < 20 {
 			ow = 20
 		}
-		if oh < 1 {
-			oh = 1
+		if oh < 5 {
+			oh = 5
 		}
 		m.overlayVP.SetWidth(ow)
 		m.overlayVP.SetHeight(oh)
@@ -257,13 +257,23 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case promoteDownstreamResultMsg:
 		if msg.err != nil {
 			m.noteAuthFailure(msg.err)
+			m.promoteError = msg.err
 			m.yankedMessage = "promote-downstream failed: " + msg.err.Error()
 		} else if msg.promotions == 0 {
+			m.promoteResult = fmt.Sprintf("no eligible downstream stages for %s", msg.source)
 			m.yankedMessage = "no eligible downstream stages for " + msg.source
 		} else {
+			m.promoteResult = fmt.Sprintf("%d downstream promotion(s) from %s", msg.promotions, msg.source)
 			m.yankedMessage = fmt.Sprintf("created %d downstream promotion(s) from %s", msg.promotions, msg.source)
 		}
 		m.yankedAt = time.Now()
+		// Same as promoteResultMsg: if the overlay is still up, advance
+		// it to the done step so the user sees the result and can
+		// dismiss. Without this transition the overlay would hang on
+		// "submitting promotion…".
+		if m.overlay == overlayPromote {
+			m.promoteStep = promoteDone
+		}
 		// Force an immediate data refresh so the new promotion appears
 		// without waiting for the next tick. We dispatch even when a
 		// tick fetch is already in flight: the in-flight one was issued
@@ -650,8 +660,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.openPromoteDownstreamOverlay(s)
 			if !s.IsControlFlow {
-				switch len(s.CurrentFreight) {
-				case 0:
+				if len(s.CurrentFreight) == 0 {
 					// No current freight on a non-control-flow stage:
 					// nothing to fan out. Close the overlay and tell
 					// the user.
@@ -659,11 +668,19 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.yankedMessage = "no current freight on " + s.Name + " to promote downstream"
 					m.yankedAt = time.Now()
 					return m, nil
-				case 1:
-					m.restrictPromoteCandidates(s.CurrentFreight)
+				}
+				// Try to restrict to CurrentFreight. If the resulting
+				// list is empty (current freight isn't in our
+				// verified-at-this-stage snapshot — e.g. deployed but
+				// not yet verified, or stale data) fall back to the
+				// full picker so the user has something to choose.
+				m.restrictPromoteCandidates(s.CurrentFreight)
+				if len(m.promoteCandidates) == 1 {
 					m.promoteStep = promoteConfirming
-				default:
-					m.restrictPromoteCandidates(s.CurrentFreight)
+				} else if len(m.promoteCandidates) == 0 {
+					// Restore the unfiltered downstream candidate list.
+					m.promoteCandidates = downstreamCandidateFreight(m.freights, s.Name)
+					m.promoteCursor = 0
 				}
 			}
 			return m, nil

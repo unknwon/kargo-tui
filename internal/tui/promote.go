@@ -204,10 +204,30 @@ func (m Model) promoteOverlayView() tea.View {
 
 	switch m.promoteStep {
 	case promoteConfirming:
+		// Guard the index: the picker can land here from `>` with a
+		// restricted candidate list that came up empty (e.g. the deploy
+		// stage's CurrentFreight isn't yet verified-at-this-stage in
+		// our local freight snapshot). Treat that as a cancel rather
+		// than a render panic.
+		if m.promoteCursor < 0 || m.promoteCursor >= len(m.promoteCandidates) {
+			lines = append(lines,
+				errStyle.Render("no candidate freight to promote"),
+				"",
+				hintStyle.Render("esc dismiss"),
+			)
+			break
+		}
 		f := m.promoteCandidates[m.promoteCursor]
+		var prompt string
+		if m.promoteDownstream {
+			prompt = fmt.Sprintf("Promote freight %s%s from %s to every downstream subscriber?",
+				shortFreight(f.Name), aliasSuffix(f.Alias), m.promoteStage)
+		} else {
+			prompt = fmt.Sprintf("Promote freight %s%s to stage %s?",
+				shortFreight(f.Name), aliasSuffix(f.Alias), m.promoteStage)
+		}
 		lines = append(lines,
-			itemStyle.Render(fmt.Sprintf("Promote freight %s%s to stage %s?",
-				shortFreight(f.Name), aliasSuffix(f.Alias), m.promoteStage)),
+			itemStyle.Render(prompt),
 			"",
 			hintStyle.Render("y confirm · n/esc cancel"),
 		)
@@ -219,7 +239,11 @@ func (m Model) promoteOverlayView() tea.View {
 		if m.promoteError != nil {
 			lines = append(lines, errStyle.Render("error: "+m.promoteError.Error()))
 		} else {
-			lines = append(lines, okStyle.Render("promoted: "+m.promoteResult))
+			label := "promoted: "
+			if m.promoteDownstream {
+				label = "created: "
+			}
+			lines = append(lines, okStyle.Render(label+m.promoteResult))
 		}
 		lines = append(lines, "", hintStyle.Render("enter/esc dismiss"))
 	}
@@ -515,6 +539,12 @@ func (m Model) updatePromoteOverlay(key string) (tea.Model, tea.Cmd) {
 	case promoteConfirming:
 		switch key {
 		case "y", "Y":
+			if m.promoteCursor < 0 || m.promoteCursor >= len(m.promoteCandidates) {
+				// No candidate to submit (empty restricted list);
+				// behave like cancel.
+				m.overlay = overlayNone
+				return m, nil
+			}
 			f := m.promoteCandidates[m.promoteCursor]
 			m.promoteStep = promoteSubmitting
 			if m.promoteDownstream {
