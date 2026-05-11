@@ -38,8 +38,11 @@ func promotePickerPage(termHeight int) int {
 	return n
 }
 
-// openPromoteOverlay seeds promote state for the given stage and computes
-// the freight pickable for that stage's warehouse.
+// openPromoteOverlay seeds promote-to-stage state for the given stage.
+// Candidates come from candidateFreight: freight verified at an upstream
+// stage, freight from a warehouse the stage pulls directly from, or
+// freight explicitly approved for this stage. Works for control-flow
+// stages too — the same candidate rules apply.
 func (m *Model) openPromoteOverlay(stage *kargo.Stage) {
 	if stage == nil {
 		return

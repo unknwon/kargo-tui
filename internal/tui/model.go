@@ -195,8 +195,8 @@ type Model struct {
 	// promoteDownstream switches the overlay's submit action from
 	// PromoteToStage (promote freight into promoteStage) to
 	// PromoteDownstream (promote chosen freight from promoteStage to every
-	// downstream subscriber). Set by `>` when the source stage has no
-	// known current freight to push.
+	// downstream subscriber). Set by `>` whenever the downstream overlay
+	// opens; cleared by `P` / openPromoteOverlay.
 	promoteDownstream bool
 
 	// stageWatchCancel cancels the active WatchStages goroutine when the
