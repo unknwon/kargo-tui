@@ -720,6 +720,10 @@ func graphPanOffsetFor(g graphLayout, cursorIdx, viewW, viewH int) (int, int) {
 			maxLayer = gn.Layer
 		}
 	}
+	// When the cursor isn't in the right-most layer, try to also keep
+	// the next layer's column on screen so the user can see where "→"
+	// will land. Only applies when the viewport is wide enough to fit
+	// both columns, otherwise the cursor-visible pan above wins.
 	if n.Layer < maxLayer {
 		nextRight := n.X + n.W + g.cfg.ColGap + g.cfg.NodeW
 		if nextRight+margin > x0+viewW {
