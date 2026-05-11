@@ -1121,12 +1121,11 @@ func pickNeighbor(candidates []int, _ string) (int, bool) {
 func (m *Model) rebuildGraph() {
 	m.graphLayout = layoutGraph(m.deploys, defaultGraphCfg(), *m)
 	defer func() {
-		// Rehydrate the saved search against the fresh layout. We
-		// preserve the *position* in the list when the previously-
-		// selected match still exists in the new matches; otherwise
-		// fall back to position 0. The cursor itself is left alone —
-		// the rebuild's cursor-fixup above already chose a sensible
-		// landing spot.
+		// Rehydrate the saved search against the fresh layout. The
+		// non-search cursor-fixup further down is search-agnostic, so
+		// we move the cursor here to track the same match by name
+		// across the rebuild — otherwise the "match X of Y" counter
+		// would lie about where the cursor actually is.
 		if q := m.filter.Value(); q != "" && m.view == viewGraph {
 			prevName := ""
 			if m.graphSearchPos >= 0 && m.graphSearchPos < len(m.graphSearchMatches) {
@@ -1157,8 +1156,10 @@ func (m *Model) rebuildGraph() {
 				m.graphSearchPos = 0
 			case restored >= 0:
 				m.graphSearchPos = restored
+				m.graphCursor = matches[restored]
 			default:
 				m.graphSearchPos = 0
+				m.graphCursor = matches[0]
 			}
 		}
 	}()

@@ -40,8 +40,10 @@ func (m Model) layoutDims() (int, int) {
 //
 // Update wraps the real reducer in a panic recovery shim so a bug in any
 // handler surfaces as a copyable popup instead of tearing the program
-// down. On recover we return the receiver — the in-flight mutated copy is
-// unreachable after the unwind, but the caller's original is intact.
+// down. The deferred closure captures `m` by reference, so any mutations
+// the inner reducer made before the panic are still visible here and get
+// returned — the model can be partially-updated but the popup always
+// shows, which is the property we care about.
 func (m Model) Update(msg tea.Msg) (out tea.Model, cmd tea.Cmd) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -425,14 +427,29 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		case "esc":
 			// Dismiss details overlay on the first press; clear filter on a
-			// subsequent press.
+			// subsequent press. In graph view a committed search also
+			// leaves a match list behind that n/N steps through; clear
+			// that too so esc fully exits the search state instead of
+			// leaving stale matches that the persistent line hides but
+			// n/N still cycles through.
 			if m.detailsOnly {
 				m.detailsOnly = false
 				return m, nil
 			}
 			if m.filter.Value() != "" {
 				m.filter.SetValue("")
-				m.refreshRows()
+				if m.view == viewGraph {
+					m.graphSearchMatches = nil
+					m.graphSearchPos = 0
+					m.graphSearchActive = false
+				} else {
+					m.refreshRows()
+				}
+			} else if m.view == viewGraph && len(m.graphSearchMatches) > 0 {
+				// Defensive: filter was cleared by some other path but
+				// the match list lingered. esc should still tidy it up.
+				m.graphSearchMatches = nil
+				m.graphSearchPos = 0
 			}
 			return m, nil
 		case "d":
