@@ -1305,19 +1305,23 @@ func (m Model) selectedGraphStage() *kargo.Stage {
 
 // moveGraphCursor advances the graph cursor in a spatial direction. left
 // / right step to the closest neighbour by edge; up / down step within
-// the same layer to the previous / next slot.
-func (m *Model) moveGraphCursor(dir string) {
+// the same layer to the previous / next slot. Returns true when the
+// cursor actually moved so callers can skip selection-driven work (panel
+// reset, panel refresh) on a no-op step, which is the common case when
+// the wheel keeps firing past the top or bottom of the layer.
+func (m *Model) moveGraphCursor(dir string) bool {
 	g := m.graphLayout
 	if m.graphCursor < 0 || m.graphCursor >= len(g.nodes) {
-		return
+		return false
 	}
+	prev := m.graphCursor
 	cur := g.nodes[m.graphCursor]
 	switch dir {
 	case "right":
 		// Pick outgoing edge whose target is closest in slot.
 		_, out := graphNeighbors(g, m.graphCursor)
 		if len(out) == 0 {
-			return
+			return false
 		}
 		best := out[0]
 		bestDist := abs(g.nodes[best].Slot - cur.Slot)
@@ -1332,7 +1336,7 @@ func (m *Model) moveGraphCursor(dir string) {
 	case "left":
 		in, _ := graphNeighbors(g, m.graphCursor)
 		if len(in) == 0 {
-			return
+			return false
 		}
 		best := in[0]
 		bestDist := abs(g.nodes[best].Slot - cur.Slot)
@@ -1364,7 +1368,7 @@ func (m *Model) moveGraphCursor(dir string) {
 			}
 		}
 		if curPos < 0 {
-			return
+			return false
 		}
 		next := curPos
 		if dir == "up" && curPos > 0 {
@@ -1375,6 +1379,7 @@ func (m *Model) moveGraphCursor(dir string) {
 		}
 		m.graphCursor = sibs[next]
 	}
+	return m.graphCursor != prev
 }
 
 func abs(i int) int {
