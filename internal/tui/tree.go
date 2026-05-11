@@ -411,7 +411,7 @@ func (m Model) treeView() tea.View {
 		m.renderTreeBody(m.width-2, bodyH))
 
 	hint := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).
-		Render("↑/↓ move · +/- expand · enter toggle · / filter · l logs · P promote · t/d/f switch · ? help · q quit")
+		Render("↑/↓ select · ←/→ collapse/expand · +/- expand · enter toggle · v details · l logs · D diff · P promote · > downstream · o argo · y yank · / filter · g graph · d deploys · c controls · f freights · ? help · q quit")
 
 	var statusLine string
 	switch {

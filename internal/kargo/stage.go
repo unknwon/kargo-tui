@@ -77,7 +77,11 @@ func flattenStage(s *kargoapi.Stage) Stage {
 	if s.Status.Health != nil {
 		health = string(s.Status.Health.Status)
 		healthIssues = s.Status.Health.Issues
-		if len(s.Status.Health.Output.Raw) > 0 {
+		// Output is a *apiextensionsv1.JSON — a nil pointer when the
+		// stage's health checks produced no opaque output (common for
+		// control-flow stages and any stage whose health probe hasn't
+		// run yet). Guard before reading Raw.
+		if s.Status.Health.Output != nil && len(s.Status.Health.Output.Raw) > 0 {
 			argoApps = parseArgoApps(s.Status.Health.Output.Raw)
 		}
 	}

@@ -37,10 +37,50 @@ func (m Model) layoutDims() (int, int) {
 // Update is the Bubble Tea reducer. It routes window resizes, refresh ticks,
 // loaded data, key presses, and overlay/picker events to the right handler
 // and returns a possibly-mutated model plus any follow-up commands.
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+//
+// Update wraps the real reducer in a panic recovery shim so a bug in any
+// handler surfaces as a copyable popup instead of tearing the program
+// down. On recover we return the receiver — the in-flight mutated copy is
+// unreachable after the unwind, but the caller's original is intact.
+func (m Model) Update(msg tea.Msg) (out tea.Model, cmd tea.Cmd) {
+	defer func() {
+		if r := recover(); r != nil {
+			m.panicMessage = formatPanic(r)
+			m.preparePanicViewport()
+			out, cmd = m, nil
+		}
+	}()
+	return m.updateInner(msg)
+}
+
+func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if sm, ok := msg.(SetSendMsg); ok {
 		m.ctxSend = sm.Send
 		m.restartStageWatch()
+		return m, nil
+	}
+
+	// Panic overlay takes precedence over every other key handler so a
+	// recovered-but-still-buggy state can always be dismissed. esc clears
+	// the popup; everything else routes to the trace viewport so the user
+	// can scroll a long stack. Non-key messages (ticks, watch updates)
+	// are dropped while the popup is up — the underlying state may be
+	// inconsistent and we don't want to re-trigger the same panic.
+	if m.panicMessage != "" {
+		switch msg := msg.(type) {
+		case tea.WindowSizeMsg:
+			m.width, m.height = msg.Width, msg.Height
+			m.preparePanicViewport()
+			return m, nil
+		case tea.KeyPressMsg:
+			if msg.String() == "esc" {
+				m.panicMessage = ""
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.panicVP, cmd = m.panicVP.Update(msg)
+			return m, cmd
+		}
 		return m, nil
 	}
 
@@ -273,16 +313,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filtering = false
 				m.filter.Blur()
 				m.filter.SetValue("")
-				m.refreshRows()
+				if m.view == viewGraph {
+					// Graph search: drop the matches *and* roll the
+					// cursor back to where the user started. esc on
+					// list views just clears the row filter; graph has
+					// to undo the spatial jump too.
+					m.cancelGraphSearch()
+				} else {
+					m.refreshRows()
+				}
 				return m, nil
 			case "enter":
 				m.filtering = false
 				m.filter.Blur()
+				if m.view == viewGraph {
+					// Commit the search: keep the matches around so n/N
+					// can step through them, but leave the active flag
+					// false — the cursor stays on the current match.
+					m.graphSearchActive = false
+				}
 				return m, nil
 			}
 			var cmd tea.Cmd
 			m.filter, cmd = m.filter.Update(msg)
-			m.refreshRows()
+			if m.view == viewGraph {
+				// Live-search: every keystroke recomputes matches and
+				// jumps the cursor to the first hit. The list/tree
+				// views filter rows instead via refreshRows.
+				m.recomputeGraphMatches(m.filter.Value())
+			} else {
+				m.refreshRows()
+			}
 			return m, cmd
 		}
 
@@ -357,6 +418,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "/":
 			m.filtering = true
+			if m.view == viewGraph {
+				m.beginGraphSearch()
+			}
 			cmd := m.filter.Focus()
 			return m, cmd
 		case "esc":
@@ -542,6 +606,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.yankedMessage = "promoting " + shortFreight(fr) + " downstream from " + s.Name + "…"
 			m.yankedAt = time.Now()
 			return m, promoteDownstreamCmd(m.client, m.project, s.Name, fr)
+		case "n":
+			// Graph view only: step to the next saved search match.
+			// No-op when there are no matches (the search was either
+			// never started or returned nothing).
+			if m.view == viewGraph && len(m.graphSearchMatches) > 0 {
+				m.stepGraphMatch(1)
+				return m, nil
+			}
+		case "N":
+			if m.view == viewGraph && len(m.graphSearchMatches) > 0 {
+				m.stepGraphMatch(-1)
+				return m, nil
+			}
 		case "?":
 			m.showHelp = true
 			m.prepareHelpViewport()
