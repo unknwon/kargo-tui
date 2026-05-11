@@ -56,9 +56,15 @@ func (m Model) Update(msg tea.Msg) (out tea.Model, cmd tea.Cmd) {
 	// Refresh the graph pan offset after every update so the cursor stays
 	// visible without snapping the viewport when the cursor is already in
 	// view. Cheap and uniform: avoids sprinkling recomputeGraphPan calls
-	// across every cursor / resize / data-load handler.
+	// across every cursor / resize / data-load handler. Skipped when the
+	// handler just performed an explicit user pan (wheel scroll), so the
+	// recompute can't yank the viewport back and undo it.
 	if mm, ok := out.(Model); ok {
-		mm.recomputeGraphPan()
+		if mm.graphPanUserDriven {
+			mm.graphPanUserDriven = false
+		} else {
+			mm.recomputeGraphPan()
+		}
 		out = mm
 	}
 	return out, cmd
