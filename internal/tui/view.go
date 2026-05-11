@@ -67,21 +67,21 @@ func (m Model) View() (v tea.View) {
 	case viewDeploys:
 		title = "deploys"
 		count = len(m.deploysTable.Rows())
-		body = lipgloss.NewStyle().Background(bg).Render(m.deploysTable.View())
+		body = m.deploysTable.View()
 		if m.deploysError != nil {
 			errLine = m.deploysError.Error()
 		}
 	case viewControlFlow:
 		title = "controls"
 		count = len(m.deploysTable.Rows())
-		body = lipgloss.NewStyle().Background(bg).Render(m.deploysTable.View())
+		body = m.deploysTable.View()
 		if m.deploysError != nil {
 			errLine = m.deploysError.Error()
 		}
 	case viewFreights:
 		title = "freights"
 		count = len(m.freightsTable.Rows())
-		body = lipgloss.NewStyle().Background(bg).Render(m.freightsTable.View())
+		body = m.freightsTable.View()
 		if m.freightsError != nil {
 			errLine = m.freightsError.Error()
 		}
@@ -130,6 +130,7 @@ func (m Model) View() (v tea.View) {
 
 	content := lipgloss.JoinVertical(lipgloss.Left, header, body, filterLine, help)
 	content = m.composeWithMenu(content)
+	content = paintFrame(content, m.width, m.height)
 
 	view := tea.NewView(content)
 	view.AltScreen = true
@@ -206,6 +207,7 @@ func (m Model) detailsOnlyView() tea.View {
 	}
 	hint := hintStyle.Render(hintText)
 	content := lipgloss.JoinVertical(lipgloss.Left, header, body, hint)
+	content = paintFrame(content, m.width, m.height)
 
 	v := tea.NewView(content)
 	v.AltScreen = true

@@ -23,6 +23,36 @@ func fgCell(fg color.Color, v string) string {
 	return lipgloss.NewStyle().Foreground(fg).Background(bg).Render(v)
 }
 
+// paintFrame paints a full-screen background by right-padding every line
+// of s to width with bg-colored spaces, then appending bg-filled lines
+// until the frame is height rows tall. Both dimensions are optional
+// (0 disables that axis). Used at the top of every View entry point so
+// the terminal's default colors never leak through trailing cells or
+// rows below the rendered content.
+func paintFrame(s string, width, height int) string {
+	pad := lipgloss.NewStyle().Background(bg)
+	lines := strings.Split(s, "\n")
+	if width > 0 {
+		for i, line := range lines {
+			gap := width - lipgloss.Width(line)
+			if gap <= 0 {
+				continue
+			}
+			lines[i] = line + pad.Render(strings.Repeat(" ", gap))
+		}
+	}
+	if height > 0 && len(lines) < height {
+		blank := ""
+		if width > 0 {
+			blank = pad.Render(strings.Repeat(" ", width))
+		}
+		for len(lines) < height {
+			lines = append(lines, blank)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 // stageNameCell renders a stage name styled by health (green/red/yellow/
 // default). Used in tables and detail panels to make the row's overall
 // status visible at a glance.

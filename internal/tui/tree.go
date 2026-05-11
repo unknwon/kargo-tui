@@ -430,6 +430,7 @@ func (m Model) treeView() tea.View {
 	} else {
 		content = lipgloss.JoinVertical(lipgloss.Left, header, body, hint)
 	}
+	content = paintFrame(content, m.width, m.height)
 
 	v := tea.NewView(content)
 	v.AltScreen = true

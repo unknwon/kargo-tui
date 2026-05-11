@@ -105,26 +105,32 @@ func (m *Model) activeTable() *table.Model {
 // yankSelection copies the selected resource's identifier to the clipboard
 // and posts a transient status message.
 func (m *Model) yankSelection() {
-	var label, value string
 	switch m.view {
 	case viewDeploys, viewControlFlow, viewTree, viewGraph:
 		// selectedStage routes to the per-view picker (table / tree /
-		// graph), so this branch covers every stage-centric view —
+		// graph), so this branch covers every stage-centric view,
 		// matching what the per-view hint lines advertise.
-		s := m.selectedStage()
-		if s == nil {
-			return
-		}
-		label = "stage"
-		value = s.Name
+		m.yankStage(m.selectedStage())
 	case viewFreights:
 		f := m.selectedFreight()
 		if f == nil {
 			return
 		}
-		label = "freight"
-		value = f.Name
+		m.yankValue("freight", f.Name)
 	}
+}
+
+// yankStage is the stage-scoped variant used by the right-click context menu
+// so the action always targets the clicked stage even if selection shifts
+// before the menu item fires.
+func (m *Model) yankStage(s *kargo.Stage) {
+	if s == nil {
+		return
+	}
+	m.yankValue("stage", s.Name)
+}
+
+func (m *Model) yankValue(label, value string) {
 	if value == "" {
 		return
 	}
@@ -164,28 +170,34 @@ func writeClipboard(s string) error {
 // for the first ArgoCD app referenced by the selected stage. No-op if there
 // is no selection or no discovered Argo CD base URL.
 func (m *Model) openArgoCDForSelection() {
+	switch m.view {
+	case viewDeploys, viewControlFlow, viewTree, viewGraph:
+		m.openArgoCDForStage(m.selectedStage())
+	}
+}
+
+// openArgoCDForStage is the stage-scoped variant used by the right-click
+// context menu so the action always targets the clicked stage even if
+// selection shifts before the menu item fires.
+func (m *Model) openArgoCDForStage(s *kargo.Stage) {
 	if m.argoBaseURL == "" {
 		m.yankedMessage = "no Argo CD URL discovered"
 		m.yankedAt = time.Now()
 		return
 	}
-	switch m.view {
-	case viewDeploys, viewControlFlow, viewTree, viewGraph:
-		s := m.selectedStage()
-		if s == nil || len(s.ArgoCDApps) == 0 {
-			m.yankedMessage = "no Argo CD app linked to this stage"
-			m.yankedAt = time.Now()
-			return
-		}
-		app := s.ArgoCDApps[0]
-		url := argoAppURL(m.argoBaseURL, app)
-		if err := openBrowser(url); err != nil {
-			m.yankedMessage = fmt.Sprintf("open failed: %v", err)
-		} else {
-			m.yankedMessage = "opened " + url
-		}
+	if s == nil || len(s.ArgoCDApps) == 0 {
+		m.yankedMessage = "no Argo CD app linked to this stage"
 		m.yankedAt = time.Now()
+		return
 	}
+	app := s.ArgoCDApps[0]
+	url := argoAppURL(m.argoBaseURL, app)
+	if err := openBrowser(url); err != nil {
+		m.yankedMessage = fmt.Sprintf("open failed: %v", err)
+	} else {
+		m.yankedMessage = "opened " + url
+	}
+	m.yankedAt = time.Now()
 }
 
 func argoAppURL(base string, app kargo.ArgoCDAppRef) string {

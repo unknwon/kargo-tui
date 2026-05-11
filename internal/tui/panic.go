@@ -67,6 +67,7 @@ func (m Model) panicView() tea.View {
 		Background(bg).
 		Padding(1, 2).
 		Render(body)
+	box = paintFrame(box, m.width, m.height)
 
 	v := tea.NewView(box)
 	v.AltScreen = true
@@ -125,6 +126,7 @@ func renderPanicFallback(message string, width, height int) tea.View {
 		Padding(1, 2).
 		Width(boxW).
 		Render(lipgloss.JoinVertical(lipgloss.Left, header, "", body, "", hint))
+	box = paintFrame(box, width, height)
 
 	v := tea.NewView(box)
 	v.AltScreen = true

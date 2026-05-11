@@ -44,7 +44,8 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 		m.showHelp ||
 		m.overlay != overlayNone ||
 		m.panicMessage != "" ||
-		m.filtering {
+		m.filtering ||
+		m.detailsOnly {
 		return *m, nil
 	}
 
@@ -243,7 +244,7 @@ func (m *Model) openMenuForStage(x, y int, s *kargo.Stage) {
 			return loadLogsCmd(m.client, m.project, stage.Name)
 		}},
 		{label: "Diff", action: func(m *Model) tea.Cmd {
-			m.openDiffOverlay()
+			m.openDiffOverlayForStage(&stage)
 			return nil
 		}},
 		{label: "Promote", action: func(m *Model) tea.Cmd {
@@ -257,12 +258,12 @@ func (m *Model) openMenuForStage(x, y int, s *kargo.Stage) {
 	}
 	if !stage.IsControlFlow {
 		items = append(items, menuItem{label: "Open in Argo CD", action: func(m *Model) tea.Cmd {
-			m.openArgoCDForSelection()
+			m.openArgoCDForStage(&stage)
 			return nil
 		}})
 	}
 	items = append(items, menuItem{label: "Yank name", action: func(m *Model) tea.Cmd {
-		m.yankSelection()
+		m.yankStage(&stage)
 		return nil
 	}})
 	m.openMenu(x, y, items)

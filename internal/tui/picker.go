@@ -191,6 +191,7 @@ func (m Model) pickerView() tea.View {
 		Padding(1, 2).
 		Width(innerW).
 		Render(body)
+	box = paintFrame(box, m.width, m.height)
 
 	v := tea.NewView(box)
 	v.AltScreen = true

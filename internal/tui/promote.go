@@ -328,6 +328,7 @@ func (m Model) promoteOverlayView() tea.View {
 		Padding(1, 2).
 		Width(innerW).
 		Render(body)
+	box = paintFrame(box, m.width, m.height)
 
 	v := tea.NewView(box)
 	v.AltScreen = true
@@ -430,6 +431,7 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, header, body, hint)
+	content = paintFrame(content, m.width, m.height)
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.BackgroundColor = bg
@@ -504,6 +506,7 @@ func (m Model) promoteViewingView(titleStyle, hintStyle lipgloss.Style) tea.View
 		Background(bg).
 		Padding(1, 2).
 		Render(body)
+	box = paintFrame(box, m.width, m.height)
 	v := tea.NewView(box)
 	v.AltScreen = true
 	v.BackgroundColor = bg

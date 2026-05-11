@@ -1062,6 +1062,7 @@ func (m Model) graphView() tea.View {
 	parts = append(parts, statusLine, hint)
 	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	content = m.composeWithMenu(content)
+	content = paintFrame(content, m.width, m.height)
 
 	v := tea.NewView(content)
 	v.AltScreen = true

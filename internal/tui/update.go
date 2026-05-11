@@ -321,6 +321,9 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// column scroll on the list views. Some terminals also emit
 		// dedicated MouseWheelLeft/Right events (e.g. tilted wheels and
 		// trackpads), so those are handled directly.
+		if m.menuOpen {
+			return m, nil
+		}
 		shift := msg.Mod&tea.ModShift != 0
 		switch msg.Button {
 		case tea.MouseWheelUp:
@@ -339,6 +342,10 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.refreshPanel()
 			case m.view == viewGraph:
 				m.moveGraphCursor("up")
+				m.resetPanelScroll()
+				m.refreshPanel()
+			case m.view == viewTree:
+				m.moveTreeCursor(-1)
 				m.resetPanelScroll()
 				m.refreshPanel()
 			default:
@@ -360,6 +367,10 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.refreshPanel()
 			case m.view == viewGraph:
 				m.moveGraphCursor("down")
+				m.resetPanelScroll()
+				m.refreshPanel()
+			case m.view == viewTree:
+				m.moveTreeCursor(1)
 				m.resetPanelScroll()
 				m.refreshPanel()
 			default:
