@@ -523,6 +523,25 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.overlay = overlayNone
 				m.overlayStageName = ""
 				return m, nil
+			case "tab", "]", "shift+tab", "[":
+				if m.overlay == overlayLogs {
+					if key == "shift+tab" || key == "[" {
+						if m.overlayLogsTab == logsTabPromotions {
+							m.overlayLogsTab = logsTabEvents
+						} else {
+							m.overlayLogsTab = logsTabPromotions
+						}
+					} else {
+						if m.overlayLogsTab == logsTabEvents {
+							m.overlayLogsTab = logsTabPromotions
+						} else {
+							m.overlayLogsTab = logsTabEvents
+						}
+					}
+					m.overlayVP.GotoTop()
+					m.renderLogs()
+				}
+				return m, nil
 			case "up", "k":
 				m.overlayVP.ScrollUp(1)
 				return m, nil

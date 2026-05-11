@@ -20,6 +20,7 @@ func (m *Model) openLogsOverlay(stageName string) {
 	m.overlayError = nil
 	m.overlayPromos = nil
 	m.overlayEvents = nil
+	m.overlayLogsTab = logsTabPromotions
 	m.overlayStageName = stageName
 	m.overlayTitle = "Logs · " + stageName
 	m.overlayVP.SetContent("loading…")
@@ -268,11 +269,11 @@ func aliasSuffix(alias string) string {
 	return " (" + alias + ")"
 }
 
-// renderLogs builds the overlay body for a Logs view from the loaded
-// Promotions and Events lists.
+// renderLogs builds the overlay body for the active Logs tab (Promotions or
+// Events). The tab strip itself is drawn by overlayView so it stays visible
+// when the viewport scrolls.
 func (m *Model) renderLogs() {
 	keyStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
-	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
 	valStyle := lipgloss.NewStyle().Foreground(normal).Background(bg)
 
 	bodyW := popupInnerWidth(m.width)
@@ -281,61 +282,93 @@ func (m *Model) renderLogs() {
 	if m.overlayError != nil {
 		lines = append(lines, lipgloss.NewStyle().Foreground(degraded).Background(bg).Render(wrap(m.overlayError.Error(), bodyW)))
 	}
-	lines = append(lines, titleStyle.Render("Promotions"))
-	if len(m.overlayPromos) == 0 {
-		lines = append(lines, keyStyle.Render("  (none)"))
-	}
-	for _, p := range m.overlayPromos {
-		lines = append(lines, valStyle.Render(wrapIndent(fmt.Sprintf("  %s  %s  %s",
-			promoCell(p.Phase), whenString(p.Created), p.Name), bodyW, "    ")))
-		if p.Freight != "" {
-			lines = append(lines, keyStyle.Render(wrapIndent("    freight: "+shortFreight(p.Freight), bodyW, "      ")))
+
+	switch m.overlayLogsTab {
+	case logsTabEvents:
+		if len(m.overlayEvents) == 0 {
+			lines = append(lines, keyStyle.Render("  (none)"))
 		}
-		if p.Message != "" {
-			lines = append(lines, keyStyle.Render(wrapIndent("    "+p.Message, bodyW, "      ")))
-		}
-		for i, s := range p.Steps {
-			marker := " "
-			if int32(i) == p.CurrentStep && (p.Phase == "Running" || p.Phase == "Pending") {
-				marker = "▶"
+		for _, e := range m.overlayEvents {
+			etype := e.Type
+			style := valStyle
+			if etype == "Warning" {
+				style = lipgloss.NewStyle().Foreground(degraded).Background(bg)
 			}
-			alias := s.Alias
-			if alias == "" {
-				alias = fmt.Sprintf("step-%d", i+1)
+			count := ""
+			if e.Count > 1 {
+				count = fmt.Sprintf(" ×%d", e.Count)
 			}
-			ts := stepWhen(s, p.Created)
-			lines = append(lines, valStyle.Render(wrapIndent(fmt.Sprintf("    %s %2d. %s  %s  %s",
-				marker, i+1, padRight(promoCell(s.Status), 9), alias, ts), bodyW, "         ")))
-			if s.Message != "" {
-				lines = append(lines, keyStyle.Render(wrapIndent("       "+s.Message, bodyW, "         ")))
-			}
-			if s.ErrorCount > 0 {
-				lines = append(lines, keyStyle.Render(fmt.Sprintf("       errors: %d", s.ErrorCount)))
+			lines = append(lines, style.Render(wrapIndent(fmt.Sprintf("  %s %s%s, %s  %s",
+				etype, e.Reason, count, e.Source, whenString(e.Last)), bodyW, "    ")))
+			if e.Message != "" {
+				lines = append(lines, keyStyle.Render(wrapIndent("    "+e.Message, bodyW, "      ")))
 			}
 		}
-	}
-	lines = append(lines, "")
-	lines = append(lines, titleStyle.Render("Events"))
-	if len(m.overlayEvents) == 0 {
-		lines = append(lines, keyStyle.Render("  (none)"))
-	}
-	for _, e := range m.overlayEvents {
-		etype := e.Type
-		style := valStyle
-		if etype == "Warning" {
-			style = lipgloss.NewStyle().Foreground(degraded).Background(bg)
+	default:
+		if len(m.overlayPromos) == 0 {
+			lines = append(lines, keyStyle.Render("  (none)"))
 		}
-		count := ""
-		if e.Count > 1 {
-			count = fmt.Sprintf(" ×%d", e.Count)
-		}
-		lines = append(lines, style.Render(wrapIndent(fmt.Sprintf("  %s %s%s — %s  %s",
-			etype, e.Reason, count, e.Source, whenString(e.Last)), bodyW, "    ")))
-		if e.Message != "" {
-			lines = append(lines, keyStyle.Render(wrapIndent("    "+e.Message, bodyW, "      ")))
+		for _, p := range m.overlayPromos {
+			lines = append(lines, valStyle.Render(wrapIndent(fmt.Sprintf("  %s  %s  %s",
+				promoCell(p.Phase), whenString(p.Created), p.Name), bodyW, "    ")))
+			if p.Freight != "" {
+				label := shortFreight(p.Freight)
+				if f := m.freightByName(p.Freight); f != nil {
+					label += aliasSuffix(f.Alias)
+				}
+				lines = append(lines, keyStyle.Render(wrapIndent("    freight: "+label, bodyW, "      ")))
+			}
+			if p.Message != "" {
+				lines = append(lines, keyStyle.Render(wrapIndent("    "+p.Message, bodyW, "      ")))
+			}
+			for i, s := range p.Steps {
+				marker := " "
+				if int32(i) == p.CurrentStep && (p.Phase == "Running" || p.Phase == "Pending") {
+					marker = "▶"
+				}
+				alias := s.Alias
+				if alias == "" {
+					alias = fmt.Sprintf("step-%d", i+1)
+				}
+				ts := stepWhen(s, p.Created)
+				lines = append(lines, valStyle.Render(wrapIndent(fmt.Sprintf("    %s %2d. %s  %s  %s",
+					marker, i+1, padRight(promoCell(s.Status), 9), alias, ts), bodyW, "         ")))
+				if s.Message != "" {
+					lines = append(lines, keyStyle.Render(wrapIndent("       "+s.Message, bodyW, "         ")))
+				}
+				if s.ErrorCount > 0 {
+					lines = append(lines, keyStyle.Render(fmt.Sprintf("       errors: %d", s.ErrorCount)))
+				}
+			}
 		}
 	}
 	m.overlayVP.SetContent(strings.Join(lines, "\n"))
+}
+
+// renderLogsTabs draws the flat rectangular tab strip shown above the logs
+// overlay body. Tabs sit flush against each other; the active tab uses a
+// bright background to mark the selection.
+func (m Model) renderLogsTabs() string {
+	active := lipgloss.NewStyle().
+		Foreground(darkFg).
+		Background(normal).
+		Bold(true).
+		Padding(0, 2)
+	inactive := lipgloss.NewStyle().
+		Foreground(muted).
+		Background(bg).
+		Padding(0, 2)
+
+	labels := []string{"Promotions", "Events"}
+	tabs := make([]string, len(labels))
+	for i, label := range labels {
+		if logsTab(i) == m.overlayLogsTab {
+			tabs[i] = active.Render(label)
+		} else {
+			tabs[i] = inactive.Render(label)
+		}
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
 }
 
 // overlayView renders the active full-screen overlay (Logs or Diff).
@@ -345,6 +378,9 @@ func (m Model) overlayView() tea.View {
 
 	header := titleStyle.Render(m.overlayTitle)
 	hint := hintStyle.Render("esc/enter dismiss · j/k scroll · home/end top/bottom")
+	if m.overlay == overlayLogs {
+		hint = hintStyle.Render("esc/enter dismiss · tab/[/] switch tab · j/k scroll · home/end top/bottom")
+	}
 	if m.overlayLoading {
 		hint = hintStyle.Render("loading…  esc to cancel")
 	}
@@ -359,18 +395,27 @@ func (m Model) overlayView() tea.View {
 	}
 	// Box chrome: rounded border (2) + Padding(1, 2) → 6 cols, 4 rows.
 	// Body chrome: header(1) + spacer(1) + spacer(1) + hint(1) → 4 rows.
+	// Logs view adds a tab strip (1) + spacer(1) → 2 more rows.
 	innerW := w - 6
 	if innerW < 10 {
 		innerW = 10
 	}
 	innerH := h - 4 - 4
+	if m.overlay == overlayLogs {
+		innerH -= 2
+	}
 	if innerH < 1 {
 		innerH = 1
 	}
 	m.overlayVP.SetWidth(innerW)
 	m.overlayVP.SetHeight(innerH)
 
-	body := lipgloss.JoinVertical(lipgloss.Left, header, "", m.overlayVP.View(), "", hint)
+	var body string
+	if m.overlay == overlayLogs {
+		body = lipgloss.JoinVertical(lipgloss.Left, header, "", m.renderLogsTabs(), "", m.overlayVP.View(), "", hint)
+	} else {
+		body = lipgloss.JoinVertical(lipgloss.Left, header, "", m.overlayVP.View(), "", hint)
+	}
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(muted).

@@ -51,6 +51,13 @@ const (
 	overlayPromote
 )
 
+type logsTab int
+
+const (
+	logsTabPromotions logsTab = iota
+	logsTabEvents
+)
+
 // Model is the Bubble Tea model that drives the kargo-tui interface. It
 // holds every piece of state the UI needs: loaded Kargo data, table widgets,
 // per-view filter/sort state, the project picker, and any active overlay.
@@ -124,6 +131,7 @@ type Model struct {
 	overlayError     error
 	overlayPromos    []kargo.PromotionEntry
 	overlayEvents    []kargo.EventEntry
+	overlayLogsTab   logsTab
 	overlayDiffFrom  *kargo.Freight
 	overlayDiffTo    *kargo.Freight
 
