@@ -1,0 +1,40 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+language: 'go'
+id: 'tui'
+
+fileGroups:
+  sources:
+    - 'cmd/**/*.go'
+    - 'internal/**/*.go'
+  tests:
+    - '**/*_test.go'
+  configs:
+    - 'go.mod'
+    - 'go.sum'
+
+tasks:
+  install:
+    command: 'go install ./cmd/kargo-tui'
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+
+  lint:
+    script: 'go mod tidy && golangci-lint run'
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+
+  test:
+    command: 'go test ./...'
+    inputs:
+      - '@group(sources)'
+      - '@group(tests)'
+      - '@group(configs)'
+
+  build:
+    command: 'go build -o /dev/null ./...'
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'

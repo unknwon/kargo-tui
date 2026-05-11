@@ -19,11 +19,6 @@ import (
 	"google.golang.org/protobuf/types/dynamicpb"
 )
 
-// stubFile holds the synthetic file descriptor backing all stub types.
-// Built once at init from a FileDescriptorProto so we never have to hand-
-// encode raw protobuf wire bytes.
-var stubFile protoreflect.FileDescriptor
-
 // Cached message descriptors so ProtoReflect can return them without
 // re-walking the file each call.
 var (
@@ -49,7 +44,6 @@ func init() {
 	if err != nil {
 		panic("corev1stub: build descriptor: " + err.Error())
 	}
-	stubFile = fd
 	configMapDesc = fd.Messages().ByName("ConfigMap")
 	secretDesc = fd.Messages().ByName("Secret")
 	eventDesc = fd.Messages().ByName("Event")
@@ -66,9 +60,9 @@ func init() {
 // ConfigMap is the v2-compliant stub for k8s.io.api.core.v1.ConfigMap.
 type ConfigMap struct{}
 
-func (x *ConfigMap) Reset()                        { *x = ConfigMap{} }
-func (x *ConfigMap) String() string                { return "" }
-func (*ConfigMap) ProtoMessage()                   {}
+func (x *ConfigMap) Reset()         { *x = ConfigMap{} }
+func (x *ConfigMap) String() string { return "" }
+func (*ConfigMap) ProtoMessage()    {}
 func (x *ConfigMap) ProtoReflect() protoreflect.Message {
 	return dynamicpb.NewMessage(configMapDesc)
 }
@@ -76,9 +70,9 @@ func (x *ConfigMap) ProtoReflect() protoreflect.Message {
 // Secret is the v2-compliant stub for k8s.io.api.core.v1.Secret.
 type Secret struct{}
 
-func (x *Secret) Reset()                        { *x = Secret{} }
-func (x *Secret) String() string                { return "" }
-func (*Secret) ProtoMessage()                   {}
+func (x *Secret) Reset()         { *x = Secret{} }
+func (x *Secret) String() string { return "" }
+func (*Secret) ProtoMessage()    {}
 func (x *Secret) ProtoReflect() protoreflect.Message {
 	return dynamicpb.NewMessage(secretDesc)
 }
@@ -86,9 +80,9 @@ func (x *Secret) ProtoReflect() protoreflect.Message {
 // Event is the v2-compliant stub for k8s.io.api.core.v1.Event.
 type Event struct{}
 
-func (x *Event) Reset()                        { *x = Event{} }
-func (x *Event) String() string                { return "" }
-func (*Event) ProtoMessage()                   {}
+func (x *Event) Reset()         { *x = Event{} }
+func (x *Event) String() string { return "" }
+func (*Event) ProtoMessage()    {}
 func (x *Event) ProtoReflect() protoreflect.Message {
 	return dynamicpb.NewMessage(eventDesc)
 }

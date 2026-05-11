@@ -284,7 +284,7 @@ func authCommand() *cli.Command {
 						APIAddress:            cmd.Args().First(),
 						ContextName:           cmd.String("name"),
 						Project:               cmd.String("project"),
-						CallbackPort:          int(cmd.Int("callback-port")),
+						CallbackPort:          cmd.Int("callback-port"),
 						InsecureSkipTLSVerify: cmd.Bool("insecure-skip-tls-verify"),
 						MakeCurrent:           !cmd.Bool("no-make-current"),
 					}, nil)

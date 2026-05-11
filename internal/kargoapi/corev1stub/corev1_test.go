@@ -32,4 +32,3 @@ func TestStubLoadsAsV2(t *testing.T) {
 		}
 	}
 }
-

@@ -142,18 +142,18 @@ type Model struct {
 	// context name. ctxNames lists the available context names for display.
 	// ctxAdding/ctxURLInput drive the inline "add new instance" subform that
 	// kicks off an SSO login when the user presses `+` in the picker.
-	ctxNames    []string
-	ctxCursor   int
-	ctxFilter   textinput.Model
-	ctxError    error
+	ctxNames   []string
+	ctxCursor  int
+	ctxFilter  textinput.Model
+	ctxError   error
 	ctxBuilder func(name string) (*kargo.Client, string, error)
 	ctxLogin   func(ctx context.Context, url string, status func(string)) (newName string, err error)
 	// ctxRelogin re-runs SSO against an already-configured context,
 	// preserving its saved insecureSkipTLSVerify / project flags so the
 	// re-auth flow doesn't silently strip them. Used by the inline `R`
 	// handler when the persistent auth banner is up.
-	ctxRelogin func(ctx context.Context, contextName string, status func(string)) (string, error)
-	ctxSend    func(tea.Msg) // injected from main so login goroutine can stream status updates
+	ctxRelogin     func(ctx context.Context, contextName string, status func(string)) (string, error)
+	ctxSend        func(tea.Msg) // injected from main so login goroutine can stream status updates
 	ctxAdding      bool
 	ctxLoggingIn   bool
 	ctxLoginStatus string

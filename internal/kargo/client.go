@@ -18,7 +18,6 @@ package kargo
 
 import (
 	"context"
-	"sort"
 	"strings"
 
 	"unknwon.dev/kargo-tui/internal/config"
@@ -126,16 +125,6 @@ func (c *Client) SetProject(p string) { c.project = p }
 
 // BaseURL returns the Kargo API server URL backing this client.
 func (c *Client) BaseURL() string { return c.baseURL }
-
-// mapKeys returns the sorted keys of any string-keyed map.
-func mapKeys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
 
 // pickString returns the first non-empty string field at the given keys, or
 // "" if none are present. Used to tolerate inconsistent casing in Kargo's
