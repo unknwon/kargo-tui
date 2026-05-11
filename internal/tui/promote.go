@@ -30,9 +30,11 @@ const (
 // for promote-to-stage; verified at the source for promote-downstream).
 // Ineligible candidates are rendered with a marker and require an extra
 // "approve first?" confirmation before the promotion is dispatched.
-// Current is true when the freight is one of the target stage's
-// currently-deployed freight (Stage.CurrentFreight), rendered with a
-// distinct marker so the user can tell which row they'd be re-promoting.
+// Current is true when the freight is one of the stage's
+// currently-deployed freight (Stage.CurrentFreight): the target stage
+// for promote-to-stage, the source stage for promote-downstream.
+// Rendered with a distinct marker so the user can tell which row
+// they'd be re-promoting.
 type promoteCandidate struct {
 	Freight  kargo.Freight
 	Eligible bool

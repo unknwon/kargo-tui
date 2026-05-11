@@ -733,8 +733,9 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH, panX, panY int) string 
 // pans to. It keeps the cursor node fully on screen with a small margin
 // but otherwise preserves the incoming prevX/prevY so the viewport
 // doesn't shift when the cursor moves between already-visible nodes.
-// Shared by the renderer and the mouse hit-tester so a click on a visible
-// node resolves back to its node index.
+// Called by recomputeGraphPan once per Update. The result is stored on
+// the Model and consumed by the renderer (graphView) and the click
+// hit-tester (hitTestGraphNode) so they agree on the visible region.
 func graphPanOffsetFor(g graphLayout, cursorIdx, viewW, viewH, prevX, prevY int) (int, int) {
 	if viewW <= 0 {
 		viewW = g.width

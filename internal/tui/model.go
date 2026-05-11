@@ -189,7 +189,8 @@ type Model struct {
 
 	// graphLayoutVersion is bumped by rebuildGraph; the graphRender cache
 	// keys off it so a fresh layout invalidates the cached rendered
-	// string. Pointer-typed so the cache survives Model value copies.
+	// string. graphRender is pointer-typed so the cache survives Model
+	// value copies.
 	graphLayoutVersion int
 	graphRender        *graphRenderCache
 
