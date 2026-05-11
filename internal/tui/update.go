@@ -538,8 +538,13 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.overlayLogsTab = logsTabEvents
 						}
 					}
-					m.overlayVP.GotoTop()
-					m.renderLogs()
+					// Skip render while the fetch is in flight: overlayPromos
+					// and overlayEvents are still nil, so renderLogs would
+					// replace the "loading…" placeholder with "(none)".
+					if !m.overlayLoading {
+						m.overlayVP.GotoTop()
+						m.renderLogs()
+					}
 				}
 				return m, nil
 			case "up", "k":
@@ -825,6 +830,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.yankedMessage = "mouse capture on"
 			}
+			m.yankedAt = time.Now()
 			return m, nil
 		case "s":
 			m.cycleSort()
