@@ -185,13 +185,6 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.loading {
 			return m, tickCmd()
 		}
-		// Defer the refresh if the user is mid-gesture: a fetch + rebuild
-		// landing during a scroll or drag feels laggy because the redraw
-		// briefly stalls cursor updates. mouseQuietWindow is short enough
-		// that idle data still refreshes promptly.
-		if !m.lastMouseAt.IsZero() && time.Since(m.lastMouseAt) < mouseQuietWindow {
-			return m, tickCmd()
-		}
 		m.loading = true
 		cmds := []tea.Cmd{
 			loadDeploysCmd(m.client, m.project),
@@ -343,7 +336,6 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// column scroll on the list views. Some terminals also emit
 		// dedicated MouseWheelLeft/Right events (e.g. tilted wheels and
 		// trackpads), so those are handled directly.
-		m.lastMouseAt = time.Now()
 		if m.menuOpen {
 			return m, nil
 		}
@@ -409,11 +401,9 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseClickMsg:
-		m.lastMouseAt = time.Now()
 		return m.handleMouseClick(msg)
 
 	case tea.MouseMotionMsg:
-		m.lastMouseAt = time.Now()
 		if m.menuOpen {
 			if idx := m.menuHitTest(msg.X, msg.Y); idx >= 0 {
 				m.menuCursor = idx

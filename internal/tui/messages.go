@@ -11,12 +11,6 @@ import (
 
 const refreshInterval = 5 * time.Second
 
-// mouseQuietWindow defers the auto-refresh tick when any mouse event
-// (click, motion, wheel) fired within this window. Picked to comfortably
-// cover a wheel-scroll or drag burst without delaying refreshes for idle
-// viewers.
-const mouseQuietWindow = 600 * time.Millisecond
-
 // projectsLoadedMsg carries the result of listing Kargo projects.
 type projectsLoadedMsg struct {
 	projects []string
