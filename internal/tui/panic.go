@@ -32,8 +32,19 @@ func (m *Model) preparePanicViewport() {
 	if h < 5 {
 		h = 5
 	}
-	m.panicVP.SetWidth(w - 4)
-	m.panicVP.SetHeight(h - 4)
+	// Clamp the inner dimensions so a tiny / transient-size terminal
+	// (e.g. between the initial render and the first WindowSizeMsg)
+	// can't push width or height negative and trip lipgloss.
+	vpW := w - 4
+	if vpW < 1 {
+		vpW = 1
+	}
+	vpH := h - 4
+	if vpH < 1 {
+		vpH = 1
+	}
+	m.panicVP.SetWidth(vpW)
+	m.panicVP.SetHeight(vpH)
 	m.panicVP.SetContent(m.panicMessage)
 	m.panicVP.GotoTop()
 }
@@ -95,12 +106,18 @@ func renderPanicFallback(message string, width, height int) tea.View {
 	}
 	body := bodyStyle.Render(strings.Join(lines, "\n"))
 
+	// Clamp the box width so a transient tiny terminal can't push
+	// lipgloss negative.
+	boxW := width - 4
+	if boxW < 1 {
+		boxW = 1
+	}
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(degraded).
 		Background(bg).
 		Padding(1, 2).
-		Width(width - 4).
+		Width(boxW).
 		Render(lipgloss.JoinVertical(lipgloss.Left, header, "", body, "", hint))
 
 	v := tea.NewView(box)

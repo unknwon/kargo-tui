@@ -189,14 +189,17 @@ func (m Model) detailsOnlyView() tea.View {
 	}
 	body := m.renderPanel(w, panelHeight)
 
-	// detailsOnly is contextual to whichever structural view is behind it
-	// (deploys / controls / freights / tree / graph). Freights don't
-	// expose logs / diff / promote, so we trim those from the hint when
-	// the user toggled v from the freights list.
+	// detailsOnly is contextual to whichever structural view is behind it.
+	// Trim each hint to the action set the backing view actually exposes —
+	// otherwise we'd advertise keys (e.g. `o argo` for controls, or
+	// logs/diff/promote for freights) that do nothing in this context.
 	var hintText string
-	if m.view == viewFreights {
+	switch m.view {
+	case viewFreights:
 		hintText = "v back · j/k pgup/pgdn home/end scroll · y yank · esc back · q quit"
-	} else {
+	case viewControlFlow:
+		hintText = "v back · j/k pgup/pgdn home/end scroll · l logs · D diff · P promote · > downstream · y yank · esc back · q quit"
+	default:
 		hintText = "v back · j/k pgup/pgdn home/end scroll · l logs · D diff · P promote · > downstream · o argo · y yank · esc back · q quit"
 	}
 	hint := hintStyle.Render(hintText)

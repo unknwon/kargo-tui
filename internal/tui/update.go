@@ -75,9 +75,16 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.preparePanicViewport()
 			return m, nil
 		case tea.KeyPressMsg:
-			if msg.String() == "esc" {
+			switch msg.String() {
+			case "esc":
 				m.panicMessage = ""
 				return m, nil
+			case "q", "ctrl+c":
+				// Always offer an exit path: if the underlying state
+				// keeps re-panicking after dismiss, esc alone won't
+				// help. Mirror the help/overlay/picker convention so
+				// the user is never stuck.
+				return m, tea.Quit
 			}
 			var cmd tea.Cmd
 			m.panicVP, cmd = m.panicVP.Update(msg)
