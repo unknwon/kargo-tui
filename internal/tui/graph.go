@@ -593,8 +593,10 @@ func (c *canvas) renderRect(x0, y0, w, h int) string {
 	return b.String()
 }
 
-// renderGraph paints g onto a fresh canvas, then crops a viewport
-// (viewW × viewH) that keeps the cursor node visible.
+// renderGraph paints g onto a fresh canvas, then crops a viewW × viewH
+// viewport anchored at (panX, panY). The caller (graphView via
+// recomputeGraphPan) is responsible for choosing a pan that keeps the
+// cursor node on screen; cursorIdx is used only for cursor highlighting.
 func renderGraph(g graphLayout, cursorIdx, viewW, viewH, panX, panY int) string {
 	cv := newCanvas(g.width, g.height)
 
@@ -702,15 +704,30 @@ func graphPanOffsetFor(g graphLayout, cursorIdx, viewW, viewH, prevX, prevY int)
 	if viewH <= 0 {
 		viewH = g.height
 	}
-	x0, y0 := prevX, prevY
-	if cursorIdx < 0 || cursorIdx >= len(g.nodes) {
+	maxX := g.width - viewW
+	if maxX < 0 {
+		maxX = 0
+	}
+	maxY := g.height - viewH
+	if maxY < 0 {
+		maxY = 0
+	}
+	clamp := func(x0, y0 int) (int, int) {
 		if x0 < 0 {
 			x0 = 0
+		} else if x0 > maxX {
+			x0 = maxX
 		}
 		if y0 < 0 {
 			y0 = 0
+		} else if y0 > maxY {
+			y0 = maxY
 		}
 		return x0, y0
+	}
+	x0, y0 := prevX, prevY
+	if cursorIdx < 0 || cursorIdx >= len(g.nodes) {
+		return clamp(x0, y0)
 	}
 	n := g.nodes[cursorIdx]
 	const margin = 2
@@ -740,9 +757,6 @@ func graphPanOffsetFor(g graphLayout, cursorIdx, viewW, viewH, prevX, prevY int)
 			}
 		}
 	}
-	if x0 < 0 {
-		x0 = 0
-	}
 	nodeBottom := n.Y + n.H
 	if n.Y-margin < y0 {
 		y0 = n.Y - margin
@@ -750,10 +764,12 @@ func graphPanOffsetFor(g graphLayout, cursorIdx, viewW, viewH, prevX, prevY int)
 	if nodeBottom+margin > y0+viewH {
 		y0 = nodeBottom + margin - viewH
 	}
-	if y0 < 0 {
-		y0 = 0
-	}
-	return x0, y0
+	// Clamp to the canvas so the viewport never extends past the edge.
+	// Without this, a cursor on the rightmost / bottommost node leaves
+	// x0+viewW > g.width (margin pushes past the edge); renderRect then
+	// crops, producing a body that's a few cells narrower / shorter than
+	// requested.
+	return clamp(x0, y0)
 }
 
 // drawNode paints a single node box. The first inner row is the stage
@@ -1257,9 +1273,9 @@ func (m *Model) rebuildGraph() {
 }
 
 // recomputeGraphPan updates m.graphPanX/Y so the cursor node stays
-// visible, otherwise preserving the existing offset. Call after any
-// change that could move the cursor or resize the viewport (key
-// navigation, mouse click, window resize, graph layout rebuild).
+// visible, otherwise preserving the existing offset. Called once at the
+// tail of Update so every key/mouse/resize/data-load message re-derives
+// the pan without per-handler instrumentation.
 func (m *Model) recomputeGraphPan() {
 	g := m.graphLayout
 	if len(g.nodes) == 0 {
