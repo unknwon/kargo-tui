@@ -8,10 +8,52 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
 	"unknwon.dev/kargo-tui/internal/kargo"
 )
+
+// paintFrame composites our content onto a buffer of width × height,
+// then forces every cell that lacks a background color to use bg. The
+// result is a single ANSI string where the bg is continuous across
+// styled tokens, the inter-token gaps that lipgloss leaves unstyled,
+// the trailing area to the right of each row, and the empty rows below
+// the content. Without this, the terminal paints all the un-bg cells
+// with its own theme, leaving visible rectangles around every styled
+// word and a different-colored band below the content.
+//
+// We rely on ultraviolet's cell buffer (the same one bubbletea v2's
+// renderer uses) so cell-level SGR state is correct: rendered output
+// emits minimal SGR transitions and a single bg run across the entire
+// frame.
+//
+// width and height are typically m.width / m.height. width <= 0
+// returns the content unchanged.
+func paintFrame(content string, width, height int) string {
+	if width <= 0 {
+		return content
+	}
+	if height < 1 {
+		height = strings.Count(content, "\n") + 1
+	}
+	scr := uv.NewScreenBuffer(width, height)
+	uv.NewStyledString(content).Draw(scr, scr.Bounds())
+	for y := range scr.Lines {
+		for x := range scr.Lines[y] {
+			c := &scr.Lines[y][x]
+			if c.Style.Bg == nil {
+				c.Style.Bg = bg
+				// EmptyCell has no Content; give it a space so it renders.
+				if c.Content == "" {
+					c.Content = " "
+					c.Width = 1
+				}
+			}
+		}
+	}
+	return scr.Render()
+}
 
 // fgCell renders v with the given foreground over the table's bg. Used by
 // the styled cell builders. Baking the background into every pre-styled
@@ -21,36 +63,6 @@ import (
 // style's bg doesn't propagate through the inner SGR resets).
 func fgCell(fg color.Color, v string) string {
 	return lipgloss.NewStyle().Foreground(fg).Background(bg).Render(v)
-}
-
-// paintFrame paints a full-screen background by right-padding every line
-// of s to width with bg-colored spaces, then appending bg-filled lines
-// until the frame is height rows tall. Both dimensions are optional
-// (0 disables that axis). Used at the top of every View entry point so
-// the terminal's default colors never leak through trailing cells or
-// rows below the rendered content.
-func paintFrame(s string, width, height int) string {
-	pad := lipgloss.NewStyle().Background(bg)
-	lines := strings.Split(s, "\n")
-	if width > 0 {
-		for i, line := range lines {
-			gap := width - lipgloss.Width(line)
-			if gap <= 0 {
-				continue
-			}
-			lines[i] = line + pad.Render(strings.Repeat(" ", gap))
-		}
-	}
-	if height > 0 && len(lines) < height {
-		blank := ""
-		if width > 0 {
-			blank = pad.Render(strings.Repeat(" ", width))
-		}
-		for len(lines) < height {
-			lines = append(lines, blank)
-		}
-	}
-	return strings.Join(lines, "\n")
 }
 
 // stageNameCell renders a stage name styled by health (green/red/yellow/

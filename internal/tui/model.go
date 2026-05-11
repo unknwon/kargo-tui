@@ -15,6 +15,7 @@ import (
 
 var (
 	bg          = lipgloss.Color("#070707")
+	darkFg      = lipgloss.Color("#070707") // for reverse-video fg-on-bright cases
 	selected    = lipgloss.Color("#009fff")
 	healthy     = lipgloss.Color("#00cab1")
 	degraded    = lipgloss.Color("#ff2e3f")
@@ -441,7 +442,7 @@ func newTable(cols []table.Column) table.Model {
 	// per-cell ANSI codes have set their own foreground.
 	st.Selected = lipgloss.NewStyle().
 		Background(selected).
-		Foreground(bg).
+		Foreground(darkFg).
 		Bold(true).
 		Reverse(false)
 	t.SetStyles(st)

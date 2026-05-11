@@ -233,7 +233,7 @@ func (m *Model) rebuildTree() {
 func (m Model) renderTreeBody(width, height int) string {
 	mutedStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
 	dimStyle := mutedStyle.Italic(true)
-	cursorStyle := lipgloss.NewStyle().Background(selected).Foreground(bg).Bold(true)
+	cursorStyle := lipgloss.NewStyle().Background(selected).Foreground(darkFg).Bold(true)
 	rowStyle := lipgloss.NewStyle().Background(bg)
 
 	if len(m.treeNodes) == 0 {

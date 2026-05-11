@@ -45,20 +45,9 @@ func (m *Model) scrollRight() {
 // in-cell glyph guarantees a visible cursor indicator.
 func applyCursorMarker(t *table.Model) {
 	rows := t.Rows()
-	cols := t.Columns()
 	cur := t.Cursor()
-	w := 0
-	if len(cols) > 0 {
-		w = cols[0].Width
-	}
-	bgPad := lipgloss.NewStyle().Background(bg)
-	marker := lipgloss.NewStyle().Foreground(selected).Background(bg).Bold(true).Render(cursorMarkerGlyph)
-	marked := marker
-	blank := bgPad.Render(" ")
-	if w > 1 {
-		marked = marker + bgPad.Render(strings.Repeat(" ", w-lipgloss.Width(marker)))
-		blank = bgPad.Render(strings.Repeat(" ", w))
-	}
+	marked := lipgloss.NewStyle().Foreground(selected).Bold(true).Render(cursorMarkerGlyph)
+	blank := " "
 	for i := range rows {
 		if len(rows[i]) == 0 {
 			continue
@@ -112,35 +101,6 @@ func sliceRow(row table.Row, idx []int) table.Row {
 		} else {
 			out = append(out, "")
 		}
-	}
-	return out
-}
-
-// padRowCellsBg right-pads every cell in row to its column width with
-// bg-colored spaces. The bubbles table wraps each cell in an inner
-// Width(col.Width).Inline().Render(value), and that inner padding uses
-// whatever whitespace style the inner style carries — which has no bg,
-// so the terminal default leaks through between columns. Pre-padding
-// the value to col.Width makes the inner Width() a no-op so the
-// trailing gap is painted with our bg.
-func padRowCellsBg(row table.Row, cols []table.Column) table.Row {
-	out := make(table.Row, len(row))
-	pad := lipgloss.NewStyle().Background(bg)
-	for i, c := range row {
-		w := 0
-		if i < len(cols) {
-			w = cols[i].Width
-		}
-		if w <= 0 {
-			out[i] = c
-			continue
-		}
-		gap := w - lipgloss.Width(c)
-		if gap <= 0 {
-			out[i] = c
-			continue
-		}
-		out[i] = c + pad.Render(strings.Repeat(" ", gap))
 	}
 	return out
 }
@@ -203,7 +163,7 @@ func (m *Model) refreshRows() {
 		slicedCols := sliceColumns(allStageColumns, idx)
 		slicedRows := make([]table.Row, len(rows))
 		for i, r := range rows {
-			slicedRows[i] = padRowCellsBg(sliceRow(r, idx), slicedCols)
+			slicedRows[i] = sliceRow(r, idx)
 		}
 		// Skip the rebuild entirely when the visible rows are unchanged.
 		// SetRows + SetColumns reset the table's internal viewport offset
@@ -263,7 +223,7 @@ func (m *Model) refreshRows() {
 		slicedCols := sliceColumns(allFreightColumns, idx)
 		slicedRows := make([]table.Row, len(rows))
 		for i, r := range rows {
-			slicedRows[i] = padRowCellsBg(sliceRow(r, idx), slicedCols)
+			slicedRows[i] = sliceRow(r, idx)
 		}
 		// See the deploys branch above for why we skip the rebuild on
 		// equal-row refreshes — preserves the table's internal scroll.

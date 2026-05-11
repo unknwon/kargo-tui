@@ -212,7 +212,7 @@ func (m Model) promoteOverlayView() tea.View {
 	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
 	hintStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
 	itemStyle := lipgloss.NewStyle().Foreground(normal).Background(bg)
-	selStyle := lipgloss.NewStyle().Foreground(bg).Background(selected).Bold(true)
+	selStyle := lipgloss.NewStyle().Foreground(darkFg).Background(selected).Bold(true)
 	errStyle := lipgloss.NewStyle().Foreground(degraded).Background(bg)
 	okStyle := lipgloss.NewStyle().Foreground(healthy).Background(bg)
 
