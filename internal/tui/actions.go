@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/table"
+
 	"unknwon.dev/kargo-tui/internal/kargo"
 )
 
@@ -42,11 +44,8 @@ func (m *Model) setView(v view) {
 // adjust the viewport's Y-offset — without them the cursor can scroll past
 // the bottom of the visible window when driven by the mouse wheel.
 func (m *Model) moveCursor(delta int) {
-	var t = &m.deploysTable
-	if m.view == viewFreights {
-		t = &m.freightsTable
-	}
-	if len(t.Rows()) == 0 {
+	t := m.activeTable()
+	if t == nil || len(t.Rows()) == 0 {
 		return
 	}
 	switch {
@@ -58,6 +57,49 @@ func (m *Model) moveCursor(delta int) {
 	applyCursorMarker(t)
 	m.resetPanelScroll()
 	m.refreshPanel()
+}
+
+// setTableCursor moves the active table's cursor by the delta needed to
+// land on row idx, clamped to the row range. Used by left-click row
+// selection; relies on MoveUp/MoveDown so the bubbles table's internal
+// viewport scroll stays consistent with the cursor.
+func (m *Model) setTableCursor(idx int) {
+	t := m.activeTable()
+	if t == nil {
+		return
+	}
+	rows := len(t.Rows())
+	if rows == 0 {
+		return
+	}
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= rows {
+		idx = rows - 1
+	}
+	delta := idx - t.Cursor()
+	switch {
+	case delta < 0:
+		t.MoveUp(-delta)
+	case delta > 0:
+		t.MoveDown(delta)
+	}
+	applyCursorMarker(t)
+	m.resetPanelScroll()
+	m.refreshPanel()
+}
+
+// activeTable returns a pointer to the table backing the current list
+// view, or nil for non-table views.
+func (m *Model) activeTable() *table.Model {
+	switch m.view {
+	case viewDeploys, viewControlFlow:
+		return &m.deploysTable
+	case viewFreights:
+		return &m.freightsTable
+	}
+	return nil
 }
 
 // yankSelection copies the selected resource's identifier to the clipboard

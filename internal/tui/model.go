@@ -215,6 +215,34 @@ type Model struct {
 	// the popup. panicVP is a scrollable viewport over the trace.
 	panicMessage string
 	panicVP      viewport.Model
+
+	// Right-click context menu state. menuOpen toggles the floating
+	// menu; menuX/Y anchor it in screen cells; menuItems lists actions
+	// for the right-clicked target; menuCursor is the keyboard cursor
+	// inside the menu; menuTarget records what the click hit so the
+	// chosen action operates on it even if the table cursor has since
+	// moved.
+	menuOpen   bool
+	menuX      int
+	menuY      int
+	menuItems  []menuItem
+	menuCursor int
+	menuTarget menuTarget
+}
+
+// menuItem is one row in the right-click context menu. Label is shown;
+// action is invoked when the user picks the row.
+type menuItem struct {
+	label  string
+	action func(*Model) tea.Cmd
+}
+
+// menuTarget remembers what a right-click landed on so the menu's chosen
+// action runs against that specific item even if the underlying table
+// cursor moved between open and pick. Only one of stage/freight is set.
+type menuTarget struct {
+	stage   *kargo.Stage
+	freight *kargo.Freight
 }
 
 // allStageColumns / allFreightColumns are the full set of columns. Horizontal

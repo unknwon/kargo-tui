@@ -316,6 +316,12 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// help and the logs/diff overlay both have their own viewport, the
 		// details panel has its viewport when it's full-screen, and
 		// otherwise we move the table cursor a row at a time.
+		//
+		// Shift+wheel translates a vertical wheel into a horizontal
+		// column scroll on the list views. Some terminals also emit
+		// dedicated MouseWheelLeft/Right events (e.g. tilted wheels and
+		// trackpads), so those are handled directly.
+		shift := msg.Mod&tea.ModShift != 0
 		switch msg.Button {
 		case tea.MouseWheelUp:
 			switch {
@@ -325,6 +331,16 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.overlayVP.ScrollUp(3)
 			case m.detailsOnly:
 				m.panelVP.ScrollUp(3)
+			case shift && m.activeTable() != nil:
+				m.scrollLeft()
+			case shift && m.view == viewGraph:
+				m.moveGraphCursor("left")
+				m.resetPanelScroll()
+				m.refreshPanel()
+			case m.view == viewGraph:
+				m.moveGraphCursor("up")
+				m.resetPanelScroll()
+				m.refreshPanel()
 			default:
 				m.moveCursor(-1)
 			}
@@ -336,14 +352,79 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.overlayVP.ScrollDown(3)
 			case m.detailsOnly:
 				m.panelVP.ScrollDown(3)
+			case shift && m.activeTable() != nil:
+				m.scrollRight()
+			case shift && m.view == viewGraph:
+				m.moveGraphCursor("right")
+				m.resetPanelScroll()
+				m.refreshPanel()
+			case m.view == viewGraph:
+				m.moveGraphCursor("down")
+				m.resetPanelScroll()
+				m.refreshPanel()
 			default:
 				m.moveCursor(1)
+			}
+		case tea.MouseWheelLeft:
+			switch {
+			case m.activeTable() != nil:
+				m.scrollLeft()
+			case m.view == viewGraph:
+				m.moveGraphCursor("left")
+				m.resetPanelScroll()
+				m.refreshPanel()
+			}
+		case tea.MouseWheelRight:
+			switch {
+			case m.activeTable() != nil:
+				m.scrollRight()
+			case m.view == viewGraph:
+				m.moveGraphCursor("right")
+				m.resetPanelScroll()
+				m.refreshPanel()
+			}
+		}
+		return m, nil
+
+	case tea.MouseClickMsg:
+		return m.handleMouseClick(msg)
+
+	case tea.MouseMotionMsg:
+		if m.menuOpen {
+			if idx := m.menuHitTest(msg.X, msg.Y); idx >= 0 {
+				m.menuCursor = idx
 			}
 		}
 		return m, nil
 
 	case tea.KeyPressMsg:
 		key := msg.String()
+
+		// Right-click context menu owns input while it's open: arrows
+		// move the highlight, enter picks, esc/q dismisses. Letting
+		// anything else through would race with the underlying view's
+		// shortcuts.
+		if m.menuOpen {
+			switch key {
+			case "esc", "q":
+				m.closeMenu()
+				return m, nil
+			case "up", "k":
+				if m.menuCursor > 0 {
+					m.menuCursor--
+				}
+				return m, nil
+			case "down", "j":
+				if m.menuCursor < len(m.menuItems)-1 {
+					m.menuCursor++
+				}
+				return m, nil
+			case "enter":
+				newM, cmd := m.invokeMenuItem(m.menuCursor)
+				return newM, cmd
+			}
+			return m, nil
+		}
 
 		if m.filtering {
 			switch key {
