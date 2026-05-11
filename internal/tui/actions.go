@@ -19,6 +19,20 @@ func (m *Model) setView(v view) {
 	m.detailsOnly = false
 	m.filter.SetValue(m.filterValues[v])
 	m.refreshRows()
+	if v == viewGraph {
+		// Graph view doesn't filter rows from m.filter; instead the
+		// saved query rehydrates the search match list so n/N still
+		// step through results after a view switch. An empty query
+		// clears any leftover matches from a prior session.
+		m.recomputeGraphMatches(m.filter.Value())
+	} else {
+		// Leaving graph view: drop the cached match list so future
+		// graph-view sessions start clean unless the user re-opens the
+		// search.
+		m.graphSearchMatches = nil
+		m.graphSearchPos = 0
+		m.graphSearchActive = false
+	}
 	m.resetPanelScroll()
 	m.refreshPanel()
 }
@@ -51,7 +65,10 @@ func (m *Model) moveCursor(delta int) {
 func (m *Model) yankSelection() {
 	var label, value string
 	switch m.view {
-	case viewDeploys, viewControlFlow:
+	case viewDeploys, viewControlFlow, viewTree, viewGraph:
+		// selectedStage routes to the per-view picker (table / tree /
+		// graph), so this branch covers every stage-centric view —
+		// matching what the per-view hint lines advertise.
 		s := m.selectedStage()
 		if s == nil {
 			return
@@ -111,7 +128,7 @@ func (m *Model) openArgoCDForSelection() {
 		return
 	}
 	switch m.view {
-	case viewDeploys, viewControlFlow:
+	case viewDeploys, viewControlFlow, viewTree, viewGraph:
 		s := m.selectedStage()
 		if s == nil || len(s.ArgoCDApps) == 0 {
 			m.yankedMessage = "no Argo CD app linked to this stage"

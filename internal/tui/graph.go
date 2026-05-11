@@ -663,6 +663,28 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int) string {
 		if nodeRight+margin > x0+viewW {
 			x0 = nodeRight + margin - viewW
 		}
+		// When the cursor isn't in the right-most layer, try to also keep
+		// the next layer's column on screen so the user can see where
+		// "→" will land. Only applies when the viewport is wide enough to
+		// fit both columns — otherwise the cursor-visible pan above wins.
+		maxLayer := 0
+		for _, gn := range g.nodes {
+			if gn.Layer > maxLayer {
+				maxLayer = gn.Layer
+			}
+		}
+		if n.Layer < maxLayer {
+			nextRight := n.X + n.W + g.cfg.ColGap + g.cfg.NodeW
+			if nextRight+margin > x0+viewW {
+				shifted := nextRight + margin - viewW
+				// Only apply when the cursor's own left edge still has
+				// margin on screen after the shift — otherwise the
+				// cursor-visible pan above wins.
+				if shifted <= n.X-margin {
+					x0 = shifted
+				}
+			}
+		}
 		if x0 < 0 {
 			x0 = 0
 		}
@@ -916,37 +938,83 @@ func (m Model) graphView() tea.View {
 		cursorIdx = m.graphCursor
 	}
 
-	// Carve out the body area from the available terminal size. Three
-	// trim lines: header, status, hint. One more if there's an error or
-	// yank message; reserve room for it conservatively so the layout
-	// doesn't jitter when the message appears.
-	bodyW := m.width - 2 // account for padding
+	statusLine := graphStatusLine(g, cursorIdx)
+
+	// Search line: while filtering, show the live textinput so the user
+	// can see what they're typing (list views get this for free via the
+	// global filter line; graph view has to render its own). After enter
+	// commits, keep a slim counter line up so n/N has a visible anchor.
+	// When no search is in progress this slot is empty.
+	var searchLine string
+	switch {
+	case m.filtering && m.view == viewGraph:
+		input := lipgloss.NewStyle().Background(bg).Render(m.filter.View())
+		var meta string
+		switch {
+		case len(m.graphSearchMatches) > 0:
+			meta = lipgloss.NewStyle().Foreground(selected).Background(bg).Bold(true).
+				Render(fmt.Sprintf("  match %d of %d · enter commit · esc cancel",
+					m.graphSearchPos+1, len(m.graphSearchMatches)))
+		case strings.TrimSpace(m.filter.Value()) != "":
+			meta = lipgloss.NewStyle().Foreground(degraded).Background(bg).
+				Render("  no matches · esc cancel")
+		default:
+			meta = lipgloss.NewStyle().Foreground(muted).Background(bg).
+				Render("  type to search by name")
+		}
+		searchLine = lipgloss.NewStyle().Background(bg).Padding(0, 1).
+			Render(lipgloss.JoinHorizontal(lipgloss.Top, input, meta))
+	case len(m.graphSearchMatches) > 0 && strings.TrimSpace(m.filter.Value()) != "":
+		searchLine = lipgloss.NewStyle().Foreground(selected).Background(bg).
+			Padding(0, 1).Bold(true).
+			Render(fmt.Sprintf("search: %q · match %d of %d · n/N step · esc clear",
+				m.filter.Value(), m.graphSearchPos+1, len(m.graphSearchMatches)))
+	}
+
+	hint := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).
+		Render("←/→/↑/↓ move along edges · / search · n/N next/prev · l logs · D diff · P promote · > downstream · o argo · y yank · v details · t tree · d deploys · g graph · ? help · q quit")
+
+	// Body sizing: header + statusLine + hint = 3 lines guaranteed.
+	// Banner / error / yank message and the search line each cost one
+	// more row when present. Compute the actual reservation so the body
+	// shrinks to fit instead of overflowing the terminal.
+	reserved := 3
+	if m.authExpired || m.deploysError != nil || m.yankedMessage != "" {
+		reserved++
+	}
+	if searchLine != "" {
+		reserved++
+	}
+	bodyW := m.width - 2
 	if bodyW < 20 {
 		bodyW = 20
 	}
-	bodyH := m.height - 5
+	bodyH := m.height - reserved
 	if bodyH < 5 {
 		bodyH = 5
 	}
 	body := lipgloss.NewStyle().Background(bg).Padding(0, 1).
 		Render(renderGraph(g, cursorIdx, bodyW, bodyH))
 
-	statusLine := graphStatusLine(g, cursorIdx)
-	hint := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).
-		Render("←/→/↑/↓ move along edges · l logs · P promote · > downstream · t tree · d deploys · ? help · q quit")
-
-	var content string
-	if m.authExpired {
-		content = lipgloss.JoinVertical(lipgloss.Left, header, body, m.renderAuthBanner(), statusLine, hint)
-	} else if m.deploysError != nil {
+	// Compose the frame. Slot order: header, body, [banner|error|yank],
+	// [searchLine], statusLine, hint. searchLine is only emitted when it
+	// has content so we don't reserve dead vertical space.
+	parts := []string{header, body}
+	switch {
+	case m.authExpired:
+		parts = append(parts, m.renderAuthBanner())
+	case m.deploysError != nil:
 		errLine := lipgloss.NewStyle().Foreground(degraded).Background(bg).Padding(0, 1).Render(m.deploysError.Error())
-		content = lipgloss.JoinVertical(lipgloss.Left, header, body, errLine, statusLine, hint)
-	} else if m.yankedMessage != "" {
+		parts = append(parts, errLine)
+	case m.yankedMessage != "":
 		yankLine := lipgloss.NewStyle().Foreground(healthy).Background(bg).Padding(0, 1).Render(m.yankedMessage)
-		content = lipgloss.JoinVertical(lipgloss.Left, header, body, yankLine, statusLine, hint)
-	} else {
-		content = lipgloss.JoinVertical(lipgloss.Left, header, body, statusLine, hint)
+		parts = append(parts, yankLine)
 	}
+	if searchLine != "" {
+		parts = append(parts, searchLine)
+	}
+	parts = append(parts, statusLine, hint)
+	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
 
 	v := tea.NewView(content)
 	v.AltScreen = true
@@ -963,6 +1031,13 @@ func graphStatusLine(g graphLayout, cursorIdx int) string {
 		return muted.Render("no selection")
 	}
 	n := g.nodes[cursorIdx]
+	// Dummies have no Stage pointer; rebuildGraph normally fixes a stale
+	// cursor before we render, but a refresh that races with View has
+	// been observed to land here mid-flight. Bail out cleanly instead of
+	// dereferencing nil.
+	if n.Dummy || n.Stage == nil {
+		return muted.Render("no selection")
+	}
 	in, out := graphNeighbors(g, cursorIdx)
 	parts := []string{"selected: " + n.Stage.Name}
 	if n.Stage.Health != "" {
@@ -970,10 +1045,14 @@ func graphStatusLine(g graphLayout, cursorIdx int) string {
 	}
 	parts = append(parts, fmt.Sprintf("%d in / %d out", len(in), len(out)))
 	if right, ok := pickNeighbor(out, "right"); ok {
-		parts = append(parts, "→ "+g.nodes[right].Stage.Name)
+		if rn := g.nodes[right]; !rn.Dummy && rn.Stage != nil {
+			parts = append(parts, "→ "+rn.Stage.Name)
+		}
 	}
 	if left, ok := pickNeighbor(in, "left"); ok {
-		parts = append(parts, "← "+g.nodes[left].Stage.Name)
+		if ln := g.nodes[left]; !ln.Dummy && ln.Stage != nil {
+			parts = append(parts, "← "+ln.Stage.Name)
+		}
 	}
 	return muted.Render(strings.Join(parts, " · "))
 }
@@ -1036,9 +1115,59 @@ func pickNeighbor(candidates []int, _ string) (int, bool) {
 
 // rebuildGraph recomputes the layout from the current m.deploys. Called
 // from refreshRows so the graph stays in sync with the rest of the UI.
-// Ensures the cursor lands on a real (non-dummy) node afterwards.
+// Ensures the cursor lands on a real (non-dummy) node afterwards, and
+// re-resolves any active name search since stage indices in the new
+// layout do not necessarily match the old ones.
 func (m *Model) rebuildGraph() {
+	// Snapshot the name of the currently-selected search match against
+	// the OLD layout before we overwrite it. Indices don't survive a
+	// rebuild — capturing prevName after the layout swap would look up
+	// an unrelated stage and restore the cursor to the wrong match.
+	prevMatchName := ""
+	if m.filter.Value() != "" && m.view == viewGraph &&
+		m.graphSearchPos >= 0 && m.graphSearchPos < len(m.graphSearchMatches) {
+		idx := m.graphSearchMatches[m.graphSearchPos]
+		if idx >= 0 && idx < len(m.graphLayout.nodes) {
+			if n := m.graphLayout.nodes[idx]; !n.Dummy && n.Stage != nil {
+				prevMatchName = n.Stage.Name
+			}
+		}
+	}
 	m.graphLayout = layoutGraph(m.deploys, defaultGraphCfg(), *m)
+	defer func() {
+		// Rehydrate the saved search against the fresh layout. The
+		// non-search cursor-fixup further down is search-agnostic, so
+		// we move the cursor here to track the same match by name
+		// across the rebuild — otherwise the "match X of Y" counter
+		// would lie about where the cursor actually is.
+		if q := m.filter.Value(); q != "" && m.view == viewGraph {
+			qLower := strings.ToLower(strings.TrimSpace(q))
+			var matches []int
+			restored := -1
+			for i, n := range m.graphLayout.nodes {
+				if n.Dummy || n.Stage == nil {
+					continue
+				}
+				if strings.Contains(strings.ToLower(n.Stage.Name), qLower) {
+					if prevMatchName != "" && n.Stage.Name == prevMatchName {
+						restored = len(matches)
+					}
+					matches = append(matches, i)
+				}
+			}
+			m.graphSearchMatches = matches
+			switch {
+			case len(matches) == 0:
+				m.graphSearchPos = 0
+			case restored >= 0:
+				m.graphSearchPos = restored
+				m.graphCursor = matches[restored]
+			default:
+				m.graphSearchPos = 0
+				m.graphCursor = matches[0]
+			}
+		}
+	}()
 	if len(m.graphLayout.nodes) == 0 {
 		m.graphCursor = 0
 		return
@@ -1154,4 +1283,78 @@ func abs(i int) int {
 		return -i
 	}
 	return i
+}
+
+// beginGraphSearch snapshots the current cursor so esc can restore it
+// and clears any leftover match state. Called on `/` press in graph view.
+func (m *Model) beginGraphSearch() {
+	m.graphSearchSaved = m.graphCursor
+	m.graphSearchMatches = nil
+	m.graphSearchPos = 0
+	m.graphSearchActive = true
+}
+
+// recomputeGraphMatches walks the layout's real nodes (dummies excluded)
+// looking for stage names containing q (case-insensitive), in cursor
+// order — layer-major then slot. The cursor jumps to the first match;
+// the full list is remembered so n/N can cycle after the search is
+// committed. An empty query clears matches without moving the cursor.
+func (m *Model) recomputeGraphMatches(q string) {
+	q = strings.ToLower(strings.TrimSpace(q))
+	if q == "" {
+		m.graphSearchMatches = nil
+		m.graphSearchPos = 0
+		return
+	}
+	var matches []int
+	for i, n := range m.graphLayout.nodes {
+		if n.Dummy || n.Stage == nil {
+			continue
+		}
+		if strings.Contains(strings.ToLower(n.Stage.Name), q) {
+			matches = append(matches, i)
+		}
+	}
+	m.graphSearchMatches = matches
+	if len(matches) == 0 {
+		return
+	}
+	m.graphSearchPos = 0
+	m.graphCursor = matches[0]
+	m.refreshPanel()
+}
+
+// stepGraphMatch advances through the saved match list by delta (+1 / -1)
+// with wrap-around. Used by n/N after the search is committed. No-op
+// when there are no matches yet (e.g. the user pressed n outside of an
+// active search session).
+func (m *Model) stepGraphMatch(delta int) {
+	if len(m.graphSearchMatches) == 0 {
+		return
+	}
+	pos := m.graphSearchPos + delta
+	for pos < 0 {
+		pos += len(m.graphSearchMatches)
+	}
+	pos %= len(m.graphSearchMatches)
+	m.graphSearchPos = pos
+	m.graphCursor = m.graphSearchMatches[pos]
+	m.refreshPanel()
+}
+
+// cancelGraphSearch restores the pre-search cursor and drops any saved
+// match list. Called on esc while a search is in progress (filter still
+// focused). The textinput clear is left to the caller because the
+// regular filter-mode esc path already handles it.
+func (m *Model) cancelGraphSearch() {
+	if !m.graphSearchActive {
+		return
+	}
+	m.graphSearchActive = false
+	m.graphSearchMatches = nil
+	m.graphSearchPos = 0
+	if m.graphSearchSaved >= 0 && m.graphSearchSaved < len(m.graphLayout.nodes) {
+		m.graphCursor = m.graphSearchSaved
+		m.refreshPanel()
+	}
 }

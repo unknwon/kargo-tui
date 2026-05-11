@@ -37,10 +37,70 @@ func (m Model) layoutDims() (int, int) {
 // Update is the Bubble Tea reducer. It routes window resizes, refresh ticks,
 // loaded data, key presses, and overlay/picker events to the right handler
 // and returns a possibly-mutated model plus any follow-up commands.
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+//
+// Update wraps the real reducer in a panic recovery shim so a bug in any
+// handler surfaces as a copyable popup instead of tearing the program
+// down. The deferred closure captures `m` by reference, so any mutations
+// the inner reducer made before the panic are still visible here and get
+// returned — the model can be partially-updated but the popup always
+// shows, which is the property we care about.
+func (m Model) Update(msg tea.Msg) (out tea.Model, cmd tea.Cmd) {
+	defer func() {
+		if r := recover(); r != nil {
+			m.panicMessage = formatPanic(r)
+			m.preparePanicViewport()
+			out, cmd = m, nil
+		}
+	}()
+	return m.updateInner(msg)
+}
+
+func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if sm, ok := msg.(SetSendMsg); ok {
 		m.ctxSend = sm.Send
 		m.restartStageWatch()
+		return m, nil
+	}
+
+	// Panic overlay takes precedence over every other key handler so a
+	// recovered-but-still-buggy state can always be dismissed. esc clears
+	// the popup; everything else routes to the trace viewport so the user
+	// can scroll a long stack. Non-key messages (ticks, watch updates)
+	// are dropped while the popup is up — the underlying state may be
+	// inconsistent and we don't want to re-trigger the same panic.
+	if m.panicMessage != "" {
+		switch msg := msg.(type) {
+		case tea.WindowSizeMsg:
+			m.width, m.height = msg.Width, msg.Height
+			m.preparePanicViewport()
+			return m, nil
+		case tea.KeyPressMsg:
+			switch msg.String() {
+			case "esc":
+				m.panicMessage = ""
+				return m, nil
+			case "q", "ctrl+c":
+				// Always offer an exit path: if the underlying state
+				// keeps re-panicking after dismiss, esc alone won't
+				// help. Mirror the help/overlay/picker convention so
+				// the user is never stuck.
+				return m, tea.Quit
+			}
+			var cmd tea.Cmd
+			m.panicVP, cmd = m.panicVP.Update(msg)
+			return m, cmd
+		case tea.MouseWheelMsg:
+			// Mirror the help/logs/diff overlays so the trace is
+			// wheel-scrollable too — a deep stack is hard to read
+			// without it.
+			switch msg.Button {
+			case tea.MouseWheelUp:
+				m.panicVP.ScrollUp(3)
+			case tea.MouseWheelDown:
+				m.panicVP.ScrollDown(3)
+			}
+			return m, nil
+		}
 		return m, nil
 	}
 
@@ -58,7 +118,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.filtering {
 			var cmd tea.Cmd
 			m.filter, cmd = m.filter.Update(pm)
-			m.refreshRows()
+			// Mirror the per-keystroke filter dispatch below: graph
+			// view drives a search instead of filtering rows, so a
+			// paste during graph filtering needs recomputeGraphMatches
+			// to keep matches/cursor consistent with the new query.
+			if m.view == viewGraph {
+				m.recomputeGraphMatches(m.filter.Value())
+			} else {
+				m.refreshRows()
+			}
 			return m, cmd
 		}
 		return m, nil
@@ -273,16 +341,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filtering = false
 				m.filter.Blur()
 				m.filter.SetValue("")
-				m.refreshRows()
+				if m.view == viewGraph {
+					// Graph search: drop the matches *and* roll the
+					// cursor back to where the user started. esc on
+					// list views just clears the row filter; graph has
+					// to undo the spatial jump too.
+					m.cancelGraphSearch()
+				} else {
+					m.refreshRows()
+				}
 				return m, nil
 			case "enter":
 				m.filtering = false
 				m.filter.Blur()
+				if m.view == viewGraph {
+					// Commit the search: keep the matches around so n/N
+					// can step through them, but leave the active flag
+					// false — the cursor stays on the current match.
+					m.graphSearchActive = false
+				}
 				return m, nil
 			}
 			var cmd tea.Cmd
 			m.filter, cmd = m.filter.Update(msg)
-			m.refreshRows()
+			if m.view == viewGraph {
+				// Live-search: every keystroke recomputes matches and
+				// jumps the cursor to the first hit. The list/tree
+				// views filter rows instead via refreshRows.
+				m.recomputeGraphMatches(m.filter.Value())
+			} else {
+				m.refreshRows()
+			}
 			return m, cmd
 		}
 
@@ -357,18 +446,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "/":
 			m.filtering = true
+			if m.view == viewGraph {
+				m.beginGraphSearch()
+			}
 			cmd := m.filter.Focus()
 			return m, cmd
 		case "esc":
 			// Dismiss details overlay on the first press; clear filter on a
-			// subsequent press.
+			// subsequent press. In graph view a committed search also
+			// leaves a match list behind that n/N steps through; clear
+			// that too so esc fully exits the search state instead of
+			// leaving stale matches that the persistent line hides but
+			// n/N still cycles through.
 			if m.detailsOnly {
 				m.detailsOnly = false
 				return m, nil
 			}
 			if m.filter.Value() != "" {
 				m.filter.SetValue("")
-				m.refreshRows()
+				if m.view == viewGraph {
+					m.graphSearchMatches = nil
+					m.graphSearchPos = 0
+					m.graphSearchActive = false
+				} else {
+					m.refreshRows()
+				}
+			} else if m.view == viewGraph && len(m.graphSearchMatches) > 0 {
+				// Defensive: filter was cleared by some other path but
+				// the match list lingered. esc should still tidy it up.
+				m.graphSearchMatches = nil
+				m.graphSearchPos = 0
 			}
 			return m, nil
 		case "d":
@@ -542,6 +649,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.yankedMessage = "promoting " + shortFreight(fr) + " downstream from " + s.Name + "…"
 			m.yankedAt = time.Now()
 			return m, promoteDownstreamCmd(m.client, m.project, s.Name, fr)
+		case "n":
+			// Graph view only: step to the next saved search match.
+			// No-op when there are no matches (the search was either
+			// never started or returned nothing).
+			if m.view == viewGraph && len(m.graphSearchMatches) > 0 {
+				m.stepGraphMatch(1)
+				return m, nil
+			}
+		case "N":
+			if m.view == viewGraph && len(m.graphSearchMatches) > 0 {
+				m.stepGraphMatch(-1)
+				return m, nil
+			}
 		case "?":
 			m.showHelp = true
 			m.prepareHelpViewport()

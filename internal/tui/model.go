@@ -172,6 +172,19 @@ type Model struct {
 	graphLayout graphLayout
 	graphCursor int
 
+	// Graph-view name search. `/` opens m.filter as usual; in graph view
+	// the filter doesn't hide nodes (that would break the DAG layout)
+	// but instead drives a search that jumps the cursor to the first
+	// matching stage and remembers the full match list so n/N step
+	// through them after the search is committed with enter.
+	// graphSearchSaved snapshots the pre-search cursor so esc restores
+	// it; graphSearchActive distinguishes "searching, query is empty"
+	// from "no search in progress".
+	graphSearchMatches []int
+	graphSearchPos     int
+	graphSearchSaved   int
+	graphSearchActive  bool
+
 	// Promote overlay state.
 	promoteStage      string // target stage name
 	promoteCandidates []kargo.Freight
@@ -189,6 +202,13 @@ type Model struct {
 	width, height int
 
 	loading bool
+
+	// panicMessage holds a captured panic + stack trace so the View can
+	// surface it as a copyable popup instead of letting the program tear
+	// down with the alt-screen still active. Cleared by pressing esc on
+	// the popup. panicVP is a scrollable viewport over the trace.
+	panicMessage string
+	panicVP      viewport.Model
 }
 
 // allStageColumns / allFreightColumns are the full set of columns. Horizontal
@@ -363,6 +383,8 @@ func newBase() Model {
 	overlayVP.SoftWrap = true
 	helpVP := viewport.New(viewport.WithHeight(20), viewport.WithWidth(60))
 	helpVP.SoftWrap = true
+	panicVP := viewport.New(viewport.WithHeight(20), viewport.WithWidth(80))
+	panicVP.SoftWrap = false
 
 	return Model{
 		view:          viewDeploys,
@@ -373,6 +395,7 @@ func newBase() Model {
 		panelVP:       vp,
 		overlayVP:     overlayVP,
 		helpVP:        helpVP,
+		panicVP:       panicVP,
 		filterValues:  make(map[view]string),
 		sort:          make(map[view]sortMode),
 	}

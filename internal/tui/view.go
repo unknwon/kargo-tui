@@ -9,10 +9,27 @@ import (
 )
 
 // View renders the current frame. It dispatches, in priority order,
-// between the project picker, context picker, help overlay, promote
-// overlay, logs/diff overlay, full-screen details panel, tree view,
-// graph view, and the default table+details layout.
-func (m Model) View() tea.View {
+// between the panic popup, project picker, context picker, help overlay,
+// promote overlay, logs/diff overlay, full-screen details panel, tree
+// view, graph view, and the default table+details layout.
+//
+// View wraps the real renderer in a panic recovery shim. A panic during
+// rendering would otherwise tear the program down with the alt-screen
+// still active; instead we fall back to a plain-text panic frame so the
+// trace stays visible and copyable.
+func (m Model) View() (v tea.View) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Prefer the freshly-recovered trace over m.panicMessage:
+			// a panic here means panicView (or the fallback path) just
+			// failed, so the most useful trace to surface is the new
+			// one, not whatever the previous Update panic recorded.
+			v = renderPanicFallback(formatPanic(r), m.width, m.height)
+		}
+	}()
+	if m.panicMessage != "" {
+		return m.panicView()
+	}
 	if m.phase == phasePickingProject {
 		return m.pickerView()
 	}
@@ -97,16 +114,30 @@ func (m Model) View() tea.View {
 		filterLine = lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).Render(hint)
 	}
 
-	help := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).
-		Render("d deploys · c controls · f freights · t tree · g graph · v details · l logs · D diff · P promote · > downstream · o argo · s sort · y yank · p projects · C contexts · / filter · ? help · q quit")
+	// Each list view gets a tailored hint line — controls don't have
+	// per-stage promotions in the same sense as deploys, freights have
+	// no logs / diff / argo actions at all, so reusing one generic
+	// line either lies about what works here or buries the action
+	// keys the user actually has. Common keys (s sort, / filter, p
+	// projects, C contexts, ? help, q quit) appear in all three.
+	var helpText string
+	switch m.view {
+	case viewDeploys:
+		helpText = "↑/↓ select · ←/→ scroll cols · v details · l logs · D diff · P promote · > downstream · o argo · y yank · s sort · / filter · t tree · g graph · c controls · f freights · p projects · C contexts · ? help · q quit"
+	case viewControlFlow:
+		helpText = "↑/↓ select · ←/→ scroll cols · v details · l logs · D diff · P promote · > downstream · y yank · s sort · / filter · t tree · g graph · d deploys · f freights · p projects · C contexts · ? help · q quit"
+	case viewFreights:
+		helpText = "↑/↓ select · ←/→ scroll cols · v details · y yank · s sort · / filter · t tree · g graph · d deploys · c controls · p projects · C contexts · ? help · q quit"
+	}
+	help := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).Render(helpText)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, header, body, filterLine, help)
 
-	v := tea.NewView(content)
-	v.AltScreen = true
-	v.BackgroundColor = bg
-	v.MouseMode = tea.MouseModeCellMotion
-	return v
+	view := tea.NewView(content)
+	view.AltScreen = true
+	view.BackgroundColor = bg
+	view.MouseMode = tea.MouseModeCellMotion
+	return view
 }
 
 // renderAuthBanner renders the persistent "session expired" status line
@@ -158,7 +189,20 @@ func (m Model) detailsOnlyView() tea.View {
 	}
 	body := m.renderPanel(w, panelHeight)
 
-	hint := hintStyle.Render("v back · j/k pgup/pgdn home/end scroll · l logs · D diff · P promote · esc back · q quit")
+	// detailsOnly is contextual to whichever structural view is behind it.
+	// Trim each hint to the action set the backing view actually exposes —
+	// otherwise we'd advertise keys (e.g. `o argo` for controls, or
+	// logs/diff/promote for freights) that do nothing in this context.
+	var hintText string
+	switch m.view {
+	case viewFreights:
+		hintText = "v back · j/k pgup/pgdn home/end scroll · y yank · esc back · q quit"
+	case viewControlFlow:
+		hintText = "v back · j/k pgup/pgdn home/end scroll · l logs · D diff · P promote · > downstream · y yank · esc back · q quit"
+	default:
+		hintText = "v back · j/k pgup/pgdn home/end scroll · l logs · D diff · P promote · > downstream · o argo · y yank · esc back · q quit"
+	}
+	hint := hintStyle.Render(hintText)
 	content := lipgloss.JoinVertical(lipgloss.Left, header, body, hint)
 
 	v := tea.NewView(content)
