@@ -186,11 +186,6 @@ type Model struct {
 	// moves between already-visible nodes.
 	graphPanX int
 	graphPanY int
-	// graphPanUserDriven is set by panGraph when the user explicitly pans
-	// (wheel scroll); Update's tail recomputeGraphPan reads + clears it
-	// so the recompute doesn't immediately yank the viewport back to the
-	// cursor and undo the pan.
-	graphPanUserDriven bool
 
 	// Graph-view name search. `/` opens m.filter as usual; in graph view
 	// the filter doesn't hide nodes (that would break the DAG layout)

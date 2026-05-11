@@ -1277,11 +1277,11 @@ func (m *Model) rebuildGraph() {
 // unlike cursor navigation which also rebuilds the side panel.
 const graphWheelStep = 3
 
-// panGraph shifts the graph viewport by (dx, dy) canvas cells, clamping
-// to the canvas bounds. Sets graphPanUserDriven so Update's tail
-// recomputeGraphPan skips this turn; otherwise the recompute would yank
-// the viewport back to keep the (unchanged) cursor visible, undoing the
-// pan. The cursor stays put even if it leaves the viewport.
+// panGraph shifts the graph viewport by (dx, dy) canvas cells. If the
+// current cursor node would leave the viewport, the cursor moves to the
+// non-dummy node closest to its previous position that still fits in the
+// new viewport, so the tail-of-Update recomputeGraphPan doesn't yank the
+// viewport back to follow the cursor and undo the pan.
 func (m *Model) panGraph(dx, dy int) {
 	g := m.graphLayout
 	if len(g.nodes) == 0 {
@@ -1308,11 +1308,45 @@ func (m *Model) panGraph(dx, dy int) {
 	} else if y > maxY {
 		y = maxY
 	}
-	if x == m.graphPanX && y == m.graphPanY {
+	m.graphPanX, m.graphPanY = x, y
+
+	if m.graphCursor < 0 || m.graphCursor >= len(g.nodes) {
 		return
 	}
-	m.graphPanX, m.graphPanY = x, y
-	m.graphPanUserDriven = true
+	cur := g.nodes[m.graphCursor]
+	if nodeFitsInViewport(cur, x, y, bodyW, bodyH) {
+		return
+	}
+	best := -1
+	bestDist := 0
+	curCx, curCy := cur.X+cur.W/2, cur.Y+cur.H/2
+	for i, n := range g.nodes {
+		if n.Dummy {
+			continue
+		}
+		if !nodeFitsInViewport(n, x, y, bodyW, bodyH) {
+			continue
+		}
+		cx, cy := n.X+n.W/2, n.Y+n.H/2
+		dx, dy := cx-curCx, cy-curCy
+		d := dx*dx + dy*dy
+		if best < 0 || d < bestDist {
+			best = i
+			bestDist = d
+		}
+	}
+	if best >= 0 && best != m.graphCursor {
+		m.graphCursor = best
+		m.resetPanelScroll()
+		m.refreshPanel()
+	}
+}
+
+// nodeFitsInViewport reports whether node n is fully contained within
+// the bodyW × bodyH viewport anchored at (panX, panY).
+func nodeFitsInViewport(n graphNode, panX, panY, bodyW, bodyH int) bool {
+	return n.X >= panX && n.X+n.W <= panX+bodyW &&
+		n.Y >= panY && n.Y+n.H <= panY+bodyH
 }
 
 // recomputeGraphPan updates m.graphPanX/Y so the cursor node stays
