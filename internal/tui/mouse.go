@@ -179,19 +179,22 @@ func (m *Model) hitTestGraphNode(x, y int) (int, bool) {
 	// body's top is at screen Y = 1; shift the click into body
 	// coordinates before applying the renderer's pan offset.
 	bodyY := y - 1
-	if bodyY < 0 {
+	bodyW, bodyH := m.graphBodyDims()
+	if bodyY < 0 || bodyY >= bodyH {
 		return 0, false
 	}
-	bodyW, bodyH := m.graphBodyDims()
+	// Body is rendered with Padding(0, 1) so the canvas starts at screen
+	// X = 1 and extends bodyW cells right.
+	bodyX := x - 1
+	if bodyX < 0 || bodyX >= bodyW {
+		return 0, false
+	}
 	cursorIdx := -1
 	if m.graphCursor >= 0 && m.graphCursor < len(g.nodes) {
 		cursorIdx = m.graphCursor
 	}
 	x0, y0 := graphPanOffsetFor(g, cursorIdx, bodyW, bodyH)
-	// Body is rendered with Padding(0, 1) so the canvas starts at screen
-	// X = 1. The render call passes bodyW directly without accounting
-	// for that padding (the canvas is clipped inside the padded box).
-	cx := x - 1 + x0
+	cx := bodyX + x0
 	cy := bodyY + y0
 	for i, n := range g.nodes {
 		if n.Dummy {
@@ -271,14 +274,15 @@ func (m *Model) openMenuForStage(x, y int, s *kargo.Stage) {
 
 // openMenuForFreight anchors a right-click context menu at (x, y) with
 // the actions applicable to a freight.
-func (m *Model) openMenuForFreight(x, y int, _ *kargo.Freight) {
+func (m *Model) openMenuForFreight(x, y int, f *kargo.Freight) {
+	freight := *f
 	items := []menuItem{
 		{label: "Details", action: func(m *Model) tea.Cmd {
 			m.detailsOnly = true
 			return nil
 		}},
 		{label: "Yank name", action: func(m *Model) tea.Cmd {
-			m.yankSelection()
+			m.yankValue("freight", freight.Name)
 			return nil
 		}},
 	}
