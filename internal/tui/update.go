@@ -776,50 +776,16 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openPromoteOverlay(s)
 			return m, nil
 		case ">":
-			// Open the downstream-promote overlay. The overlay always
-			// confirms (y/n) before firing the RPC — `>` fans out to
-			// every downstream subscriber, so an accidental keystroke
-			// shouldn't be irreversible.
-			//
-			// Behavior by stage shape:
-			//   - control-flow: picker (verified at this stage)
-			//   - one CurrentFreight: jump straight to confirm
-			//   - multi CurrentFreight (multi-origin stage): picker
-			//     restricted to the current freight set, so the user
-			//     chooses which origin's freight to fan out
+			// Open the downstream-promote overlay. The picker always
+			// shows the full freight list (newest-first, eligible
+			// first), with the currently-deployed freight marked, so
+			// every stage shape uses the same flow. The overlay
+			// confirms (y/n) before firing the RPC.
 			s := m.selectedStage()
 			if s == nil {
 				return m, nil
 			}
 			m.openPromoteDownstreamOverlay(s)
-			if !s.IsControlFlow {
-				if len(s.CurrentFreight) == 0 {
-					// No current freight on a non-control-flow stage:
-					// nothing to fan out. Close the overlay and tell
-					// the user.
-					m.overlay = overlayNone
-					m.yankedMessage = "no current freight on " + s.Name + " to promote downstream"
-					m.yankedAt = time.Now()
-					return m, nil
-				}
-				// Try to restrict to CurrentFreight. If the resulting
-				// list is empty (current freight isn't in our
-				// verified-at-this-stage snapshot — e.g. deployed but
-				// not yet verified, or stale data) fall back to the
-				// full picker so the user has something to choose.
-				m.restrictPromoteCandidates(s.CurrentFreight)
-				if len(m.promoteCandidates) == 1 {
-					if m.promoteCandidates[0].Eligible {
-						m.promoteStep = promoteConfirming
-					} else {
-						m.promoteStep = promoteApproving
-					}
-				} else if len(m.promoteCandidates) == 0 {
-					// Restore the unfiltered downstream candidate list.
-					m.promoteCandidates = downstreamCandidateFreight(m.freights, s)
-					m.promoteCursor = 0
-				}
-			}
 			return m, nil
 		case "n":
 			// Graph view only: step to the next saved search match.

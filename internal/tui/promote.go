@@ -101,29 +101,6 @@ func (m *Model) openPromoteDownstreamOverlay(stage *kargo.Stage) {
 	m.promoteCandidates = downstreamCandidateFreight(m.freights, stage)
 }
 
-// restrictPromoteCandidates narrows the candidate list to the freight
-// whose names are in keep, preserving the existing newest-first order.
-// Used by `>` on a multi-origin deploy stage to restrict the picker to
-// the freight actually currently deployed, since PromoteDownstream
-// targets one freight at a time. Resets the cursor to the top.
-func (m *Model) restrictPromoteCandidates(keep []string) {
-	if len(keep) == 0 {
-		return
-	}
-	want := make(map[string]struct{}, len(keep))
-	for _, n := range keep {
-		want[n] = struct{}{}
-	}
-	out := m.promoteCandidates[:0]
-	for _, c := range m.promoteCandidates {
-		if _, ok := want[c.Freight.Name]; ok {
-			out = append(out, c)
-		}
-	}
-	m.promoteCandidates = out
-	m.promoteCursor = 0
-}
-
 // downstreamCandidateFreight returns every freight in the project sorted
 // newest-first, with Eligible set on the entries verified at the source
 // stage (the natural PromoteDownstream candidates). Non-eligible entries
