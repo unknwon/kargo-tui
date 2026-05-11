@@ -37,9 +37,19 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 		return *m, nil
 	}
 
-	// Pickers, overlays, help, and the panic popup own their own input.
-	// Clicks while filtering also fall through to keep the filter input
-	// in charge of its caret.
+	// Logs overlay tabs are clickable; other overlays/pickers/help/panic
+	// own their own input. Clicks while filtering also fall through to
+	// keep the filter input in charge of its caret.
+	if m.overlay == overlayLogs && !m.overlayLoading && msg.Button == tea.MouseLeft {
+		if tab, ok := logsTabHitTest(msg.X, msg.Y); ok {
+			if tab != m.overlayLogsTab {
+				m.overlayLogsTab = tab
+				m.overlayVP.GotoTop()
+				m.renderLogs()
+			}
+			return *m, nil
+		}
+	}
 	if m.phase != phaseRunning ||
 		m.showHelp ||
 		m.overlay != overlayNone ||
@@ -166,9 +176,9 @@ func tableCursorScreenRow(t *table.Model) (int, bool) {
 	return 0, false
 }
 
-// hitTestGraphNode maps a screen click to a graph node index. The graph
-// pans so the cursor stays visible; we replicate the same pan math here
-// so a click on a visible node resolves to its node index.
+// hitTestGraphNode maps a screen click to a graph node index, using the
+// renderer's stored pan offset (m.graphPanX/Y) to translate body-relative
+// click coordinates back into canvas-relative node bounds.
 func (m *Model) hitTestGraphNode(x, y int) (int, bool) {
 	g := m.graphLayout
 	if len(g.nodes) == 0 {
@@ -189,13 +199,8 @@ func (m *Model) hitTestGraphNode(x, y int) (int, bool) {
 	if bodyX < 0 || bodyX >= bodyW {
 		return 0, false
 	}
-	cursorIdx := -1
-	if m.graphCursor >= 0 && m.graphCursor < len(g.nodes) {
-		cursorIdx = m.graphCursor
-	}
-	x0, y0 := graphPanOffsetFor(g, cursorIdx, bodyW, bodyH)
-	cx := bodyX + x0
-	cy := bodyY + y0
+	cx := bodyX + m.graphPanX
+	cy := bodyY + m.graphPanY
 	for i, n := range g.nodes {
 		if n.Dummy {
 			continue

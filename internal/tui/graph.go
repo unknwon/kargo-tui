@@ -595,7 +595,7 @@ func (c *canvas) renderRect(x0, y0, w, h int) string {
 
 // renderGraph paints g onto a fresh canvas, then crops a viewport
 // (viewW × viewH) that keeps the cursor node visible.
-func renderGraph(g graphLayout, cursorIdx, viewW, viewH int) string {
+func renderGraph(g graphLayout, cursorIdx, viewW, viewH, panX, panY int) string {
 	cv := newCanvas(g.width, g.height)
 
 	edgeStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
@@ -680,29 +680,36 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int) string {
 		drawNode(cv, n, border, bgStyle, i == cursorIdx, borderColor)
 	}
 
-	x0, y0 := graphPanOffsetFor(g, cursorIdx, viewW, viewH)
 	if viewW <= 0 {
 		viewW = g.width
 	}
 	if viewH <= 0 {
 		viewH = g.height
 	}
-	return cv.renderRect(x0, y0, viewW, viewH)
+	return cv.renderRect(panX, panY, viewW, viewH)
 }
 
-// graphPanOffsetFor computes the top-left canvas coordinate that the
-// renderer pans to so the cursor node stays fully on screen with a
-// small margin. Shared by the renderer and the mouse hit-tester so a
-// click on a visible node resolves back to its node index.
-func graphPanOffsetFor(g graphLayout, cursorIdx, viewW, viewH int) (int, int) {
-	x0, y0 := 0, 0
+// graphPanOffsetFor returns the top-left canvas coordinate the renderer
+// pans to. It keeps the cursor node fully on screen with a small margin
+// but otherwise preserves the incoming prevX/prevY so the viewport
+// doesn't shift when the cursor moves between already-visible nodes.
+// Shared by the renderer and the mouse hit-tester so a click on a visible
+// node resolves back to its node index.
+func graphPanOffsetFor(g graphLayout, cursorIdx, viewW, viewH, prevX, prevY int) (int, int) {
 	if viewW <= 0 {
 		viewW = g.width
 	}
 	if viewH <= 0 {
 		viewH = g.height
 	}
+	x0, y0 := prevX, prevY
 	if cursorIdx < 0 || cursorIdx >= len(g.nodes) {
+		if x0 < 0 {
+			x0 = 0
+		}
+		if y0 < 0 {
+			y0 = 0
+		}
 		return x0, y0
 	}
 	n := g.nodes[cursorIdx]
@@ -1038,7 +1045,7 @@ func (m Model) graphView() tea.View {
 		bodyH = 5
 	}
 	body := lipgloss.NewStyle().Background(bg).Padding(0, 1).
-		Render(renderGraph(g, cursorIdx, bodyW, bodyH))
+		Render(renderGraph(g, cursorIdx, bodyW, bodyH, m.graphPanX, m.graphPanY))
 
 	// Compose the frame. Slot order: header, body, [banner|error|yank],
 	// [searchLine], statusLine, hint. searchLine is only emitted when it
@@ -1247,6 +1254,24 @@ func (m *Model) rebuildGraph() {
 			}
 		}
 	}
+}
+
+// recomputeGraphPan updates m.graphPanX/Y so the cursor node stays
+// visible, otherwise preserving the existing offset. Call after any
+// change that could move the cursor or resize the viewport (key
+// navigation, mouse click, window resize, graph layout rebuild).
+func (m *Model) recomputeGraphPan() {
+	g := m.graphLayout
+	if len(g.nodes) == 0 {
+		m.graphPanX, m.graphPanY = 0, 0
+		return
+	}
+	cursorIdx := -1
+	if m.graphCursor >= 0 && m.graphCursor < len(g.nodes) {
+		cursorIdx = m.graphCursor
+	}
+	bodyW, bodyH := m.graphBodyDims()
+	m.graphPanX, m.graphPanY = graphPanOffsetFor(g, cursorIdx, bodyW, bodyH, m.graphPanX, m.graphPanY)
 }
 
 // selectedGraphStage returns the stage under the graph cursor, or nil

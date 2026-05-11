@@ -180,6 +180,12 @@ type Model struct {
 	// (Sugiyama layered DAG); graphCursor indexes into graphLayout.nodes.
 	graphLayout graphLayout
 	graphCursor int
+	// graphPanX/Y is the canvas-coordinate top-left the renderer pans to.
+	// Sticky across renders so the viewport only shifts when the cursor
+	// would otherwise leave it, avoiding a jump every time the cursor
+	// moves between already-visible nodes.
+	graphPanX int
+	graphPanY int
 
 	// Graph-view name search. `/` opens m.filter as usual; in graph view
 	// the filter doesn't hide nodes (that would break the DAG layout)

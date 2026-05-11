@@ -52,7 +52,16 @@ func (m Model) Update(msg tea.Msg) (out tea.Model, cmd tea.Cmd) {
 			out, cmd = m, nil
 		}
 	}()
-	return m.updateInner(msg)
+	out, cmd = m.updateInner(msg)
+	// Refresh the graph pan offset after every update so the cursor stays
+	// visible without snapping the viewport when the cursor is already in
+	// view. Cheap and uniform: avoids sprinkling recomputeGraphPan calls
+	// across every cursor / resize / data-load handler.
+	if mm, ok := out.(Model); ok {
+		mm.recomputeGraphPan()
+		out = mm
+	}
+	return out, cmd
 }
 
 func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
