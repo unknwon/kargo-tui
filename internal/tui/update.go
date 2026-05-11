@@ -816,7 +816,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				} else if len(m.promoteCandidates) == 0 {
 					// Restore the unfiltered downstream candidate list.
-					m.promoteCandidates = downstreamCandidateFreight(m.freights, s.Name)
+					m.promoteCandidates = downstreamCandidateFreight(m.freights, s)
 					m.promoteCursor = 0
 				}
 			}
