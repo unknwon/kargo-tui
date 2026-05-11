@@ -145,13 +145,13 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.freightsTable.SetWidth(m.width)
 		// Resize the full-screen viewports too so SoftWrap recalculates and
 		// scroll bounds stay correct.
-		ow := m.width - 4
+		ow := m.width - 6
 		oh := m.height - 8
 		if ow < 20 {
 			ow = 20
 		}
-		if oh < 5 {
-			oh = 5
+		if oh < 1 {
+			oh = 1
 		}
 		m.overlayVP.SetWidth(ow)
 		m.overlayVP.SetHeight(oh)
@@ -633,22 +633,40 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openPromoteOverlay(s)
 			return m, nil
 		case ">":
-			// Promote the selected stage's currently-deployed freight to
-			// every downstream stage that requested it. No picker — the
-			// stage's current freight is the natural input.
+			// Open the downstream-promote overlay. The overlay always
+			// confirms (y/n) before firing the RPC — `>` fans out to
+			// every downstream subscriber, so an accidental keystroke
+			// shouldn't be irreversible.
+			//
+			// Behavior by stage shape:
+			//   - control-flow: picker (verified at this stage)
+			//   - one CurrentFreight: jump straight to confirm
+			//   - multi CurrentFreight (multi-origin stage): picker
+			//     restricted to the current freight set, so the user
+			//     chooses which origin's freight to fan out
 			s := m.selectedStage()
 			if s == nil {
 				return m, nil
 			}
-			if len(s.CurrentFreight) == 0 {
-				m.yankedMessage = "no current freight on " + s.Name + " to promote downstream"
-				m.yankedAt = time.Now()
-				return m, nil
+			m.openPromoteDownstreamOverlay(s)
+			if !s.IsControlFlow {
+				switch len(s.CurrentFreight) {
+				case 0:
+					// No current freight on a non-control-flow stage:
+					// nothing to fan out. Close the overlay and tell
+					// the user.
+					m.overlay = overlayNone
+					m.yankedMessage = "no current freight on " + s.Name + " to promote downstream"
+					m.yankedAt = time.Now()
+					return m, nil
+				case 1:
+					m.restrictPromoteCandidates(s.CurrentFreight)
+					m.promoteStep = promoteConfirming
+				default:
+					m.restrictPromoteCandidates(s.CurrentFreight)
+				}
 			}
-			fr := s.CurrentFreight[0]
-			m.yankedMessage = "promoting " + shortFreight(fr) + " downstream from " + s.Name + "…"
-			m.yankedAt = time.Now()
-			return m, promoteDownstreamCmd(m.client, m.project, s.Name, fr)
+			return m, nil
 		case "n":
 			// Graph view only: step to the next saved search match.
 			// No-op when there are no matches (the search was either

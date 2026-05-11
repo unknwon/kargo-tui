@@ -30,6 +30,11 @@ type Stage struct {
 	// by Spec.RequestedFreight[].Sources.Stages — used to build the tree
 	// view's parent/child relationships.
 	Upstreams []string
+	// DirectWarehouses lists every Warehouse this stage pulls freight
+	// directly from (Spec.RequestedFreight[].Sources.Direct == true).
+	// Used by the promote picker to surface warehouse-origin freight on
+	// stages with no upstream stages.
+	DirectWarehouses []string
 }
 
 // ListStages loads all Stages in the given project via the Kargo API server.
@@ -121,24 +126,50 @@ func flattenStage(s *kargoapi.Stage) Stage {
 	}
 
 	upstreams := upstreamStages(s)
+	directWarehouses := directWarehouses(s)
 
 	return Stage{
-		Name:           s.Name,
-		Namespace:      s.Namespace,
-		Shard:          s.Spec.Shard,
-		IsControlFlow:  s.IsControlFlow(),
-		Health:         health,
-		HealthIssues:   healthIssues,
-		FreightSummary: s.Status.FreightSummary,
-		LastPromo:      lastPromo,
-		LastPromoName:  lastPromoName,
-		LastPromoAt:    lastPromoAt,
-		CurrentFreight: current,
-		ArgoCDApps:     argoApps,
-		Created:        s.CreationTimestamp.Time,
-		Labels:         s.Labels,
-		Upstreams:      upstreams,
+		Name:             s.Name,
+		Namespace:        s.Namespace,
+		Shard:            s.Spec.Shard,
+		IsControlFlow:    s.IsControlFlow(),
+		Health:           health,
+		HealthIssues:     healthIssues,
+		FreightSummary:   s.Status.FreightSummary,
+		LastPromo:        lastPromo,
+		LastPromoName:    lastPromoName,
+		LastPromoAt:      lastPromoAt,
+		CurrentFreight:   current,
+		ArgoCDApps:       argoApps,
+		Created:          s.CreationTimestamp.Time,
+		Labels:           s.Labels,
+		Upstreams:        upstreams,
+		DirectWarehouses: directWarehouses,
 	}
+}
+
+// directWarehouses collects the deduplicated warehouse names this stage
+// pulls freight directly from (RequestedFreight entries with
+// Sources.Direct == true).
+func directWarehouses(s *kargoapi.Stage) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, req := range s.Spec.RequestedFreight {
+		if !req.Sources.Direct {
+			continue
+		}
+		name := req.Origin.Name
+		if name == "" {
+			continue
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // upstreamStages collects the deduplicated upstream stage names from every

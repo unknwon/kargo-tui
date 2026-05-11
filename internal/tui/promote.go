@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -45,11 +44,6 @@ func (m *Model) openPromoteOverlay(stage *kargo.Stage) {
 	if stage == nil {
 		return
 	}
-	if stage.IsControlFlow {
-		m.yankedMessage = "control-flow stages cannot be promoted to directly"
-		m.yankedAt = time.Now()
-		return
-	}
 	m.overlay = overlayPromote
 	m.overlayTitle = "Promote · " + stage.Name
 	m.promoteStage = stage.Name
@@ -57,6 +51,7 @@ func (m *Model) openPromoteOverlay(stage *kargo.Stage) {
 	m.promoteCursor = 0
 	m.promoteResult = ""
 	m.promoteError = nil
+	m.promoteDownstream = false
 	m.promoteCandidates = candidateFreight(m.freights, stage)
 	// Empty candidates → the picker renders "no candidate freight found
 	// for this stage" with esc-to-dismiss. We deliberately don't fall
@@ -64,10 +59,76 @@ func (m *Model) openPromoteOverlay(stage *kargo.Stage) {
 	// promotion of freight that isn't verified upstream of the target.
 }
 
+// openPromoteDownstreamOverlay seeds the overlay for a "promote from this
+// stage to every downstream subscriber" flow. Candidates are the freight
+// verified at the source stage itself — i.e. anything Kargo will accept
+// for a PromoteDownstream call from this stage.
+func (m *Model) openPromoteDownstreamOverlay(stage *kargo.Stage) {
+	if stage == nil {
+		return
+	}
+	m.overlay = overlayPromote
+	m.overlayTitle = "Promote downstream from · " + stage.Name
+	m.promoteStage = stage.Name
+	m.promoteStep = promotePicking
+	m.promoteCursor = 0
+	m.promoteResult = ""
+	m.promoteError = nil
+	m.promoteDownstream = true
+	m.promoteCandidates = downstreamCandidateFreight(m.freights, stage.Name)
+}
+
+// restrictPromoteCandidates narrows the candidate list to the freight
+// whose names are in keep, preserving the existing newest-first order.
+// Used by `>` on a multi-origin deploy stage to restrict the picker to
+// the freight actually currently deployed, since PromoteDownstream
+// targets one freight at a time. Resets the cursor to the top.
+func (m *Model) restrictPromoteCandidates(keep []string) {
+	if len(keep) == 0 {
+		return
+	}
+	want := make(map[string]struct{}, len(keep))
+	for _, n := range keep {
+		want[n] = struct{}{}
+	}
+	out := m.promoteCandidates[:0]
+	for _, f := range m.promoteCandidates {
+		if _, ok := want[f.Name]; ok {
+			out = append(out, f)
+		}
+	}
+	m.promoteCandidates = out
+	m.promoteCursor = 0
+}
+
+// downstreamCandidateFreight returns the freight that the given stage has
+// verified — these are the items eligible to flow to downstream
+// subscribers via PromoteDownstream. Sorted newest-first.
+func downstreamCandidateFreight(all []kargo.Freight, sourceStage string) []kargo.Freight {
+	var out []kargo.Freight
+	for _, f := range all {
+		for _, vs := range f.VerifiedStages {
+			if vs == sourceStage {
+				out = append(out, f)
+				break
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].Created.Equal(out[j].Created) {
+			return out[i].Created.After(out[j].Created)
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
 // candidateFreight returns the freight a user might reasonably promote to
-// stage, sorted newest-first. We include any freight whose VerifiedStages
-// contains an upstream of the target stage, plus any freight whose
-// ApprovedStages explicitly lists this stage.
+// stage, sorted newest-first. A freight is a candidate if any of:
+//   - It's verified in one of the stage's upstream stages.
+//   - It originated from a Warehouse the stage pulls directly from
+//     (Spec.RequestedFreight[].Sources.Direct).
+//   - It's explicitly approved for this stage via ApprovedStages.
 func candidateFreight(all []kargo.Freight, target *kargo.Stage) []kargo.Freight {
 	if target == nil {
 		return nil
@@ -76,6 +137,10 @@ func candidateFreight(all []kargo.Freight, target *kargo.Stage) []kargo.Freight 
 	for _, u := range target.Upstreams {
 		upstream[u] = struct{}{}
 	}
+	directWH := make(map[string]struct{}, len(target.DirectWarehouses))
+	for _, w := range target.DirectWarehouses {
+		directWH[w] = struct{}{}
+	}
 	var out []kargo.Freight
 	for _, f := range all {
 		match := false
@@ -83,6 +148,11 @@ func candidateFreight(all []kargo.Freight, target *kargo.Stage) []kargo.Freight 
 			if _, ok := upstream[vs]; ok {
 				match = true
 				break
+			}
+		}
+		if !match {
+			if _, ok := directWH[f.Warehouse]; ok {
+				match = true
 			}
 		}
 		if !match {
@@ -447,6 +517,9 @@ func (m Model) updatePromoteOverlay(key string) (tea.Model, tea.Cmd) {
 		case "y", "Y":
 			f := m.promoteCandidates[m.promoteCursor]
 			m.promoteStep = promoteSubmitting
+			if m.promoteDownstream {
+				return m, promoteDownstreamCmd(m.client, m.project, m.promoteStage, f.Name)
+			}
 			return m, promoteCmd(m.client, m.project, m.promoteStage, f.Name)
 		case "n", "N", "esc":
 			m.promoteStep = promotePicking
