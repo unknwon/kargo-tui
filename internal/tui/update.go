@@ -354,13 +354,9 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case shift && m.activeTable() != nil:
 				m.scrollLeft()
 			case shift && m.view == viewGraph:
-				m.moveGraphCursor("left")
-				m.resetPanelScroll()
-				m.refreshPanel()
+				m.panGraph(-graphWheelStep, 0)
 			case m.view == viewGraph:
-				m.moveGraphCursor("up")
-				m.resetPanelScroll()
-				m.refreshPanel()
+				m.panGraph(0, -graphWheelStep)
 			case m.view == viewTree:
 				m.moveTreeCursor(-1)
 				m.resetPanelScroll()
@@ -379,13 +375,9 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case shift && m.activeTable() != nil:
 				m.scrollRight()
 			case shift && m.view == viewGraph:
-				m.moveGraphCursor("right")
-				m.resetPanelScroll()
-				m.refreshPanel()
+				m.panGraph(graphWheelStep, 0)
 			case m.view == viewGraph:
-				m.moveGraphCursor("down")
-				m.resetPanelScroll()
-				m.refreshPanel()
+				m.panGraph(0, graphWheelStep)
 			case m.view == viewTree:
 				m.moveTreeCursor(1)
 				m.resetPanelScroll()
@@ -398,18 +390,14 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case m.activeTable() != nil:
 				m.scrollLeft()
 			case m.view == viewGraph:
-				m.moveGraphCursor("left")
-				m.resetPanelScroll()
-				m.refreshPanel()
+				m.panGraph(-graphWheelStep, 0)
 			}
 		case tea.MouseWheelRight:
 			switch {
 			case m.activeTable() != nil:
 				m.scrollRight()
 			case m.view == viewGraph:
-				m.moveGraphCursor("right")
-				m.resetPanelScroll()
-				m.refreshPanel()
+				m.panGraph(graphWheelStep, 0)
 			}
 		}
 		return m, nil
