@@ -265,13 +265,12 @@ func (m *Model) openMenuForStage(x, y int, s *kargo.Stage) {
 		m.yankSelection()
 		return nil
 	}})
-	m.openMenu(x, y, items, menuTarget{stage: &stage})
+	m.openMenu(x, y, items)
 }
 
 // openMenuForFreight anchors a right-click context menu at (x, y) with
 // the actions applicable to a freight.
-func (m *Model) openMenuForFreight(x, y int, f *kargo.Freight) {
-	freight := *f
+func (m *Model) openMenuForFreight(x, y int, _ *kargo.Freight) {
 	items := []menuItem{
 		{label: "Details", action: func(m *Model) tea.Cmd {
 			m.detailsOnly = true
@@ -282,7 +281,7 @@ func (m *Model) openMenuForFreight(x, y int, f *kargo.Freight) {
 			return nil
 		}},
 	}
-	m.openMenu(x, y, items, menuTarget{freight: &freight})
+	m.openMenu(x, y, items)
 }
 
 // activeMouseMode returns the mouse capture mode to install on the
@@ -296,20 +295,18 @@ func (m Model) activeMouseMode() tea.MouseMode {
 	return tea.MouseModeCellMotion
 }
 
-func (m *Model) openMenu(x, y int, items []menuItem, target menuTarget) {
+func (m *Model) openMenu(x, y int, items []menuItem) {
 	m.menuOpen = true
 	m.menuX = x
 	m.menuY = y
 	m.menuItems = items
 	m.menuCursor = 0
-	m.menuTarget = target
 }
 
 func (m *Model) closeMenu() {
 	m.menuOpen = false
 	m.menuItems = nil
 	m.menuCursor = 0
-	m.menuTarget = menuTarget{}
 }
 
 // menuHitTest returns the menu item index at screen (x, y), or -1 when

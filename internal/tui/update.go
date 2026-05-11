@@ -409,6 +409,8 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc", "q":
 				m.closeMenu()
 				return m, nil
+			case "ctrl+c":
+				return m, tea.Quit
 			case "up", "k":
 				if m.menuCursor > 0 {
 					m.menuCursor--
@@ -757,7 +759,11 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// full picker so the user has something to choose.
 				m.restrictPromoteCandidates(s.CurrentFreight)
 				if len(m.promoteCandidates) == 1 {
-					m.promoteStep = promoteConfirming
+					if m.promoteCandidates[0].Eligible {
+						m.promoteStep = promoteConfirming
+					} else {
+						m.promoteStep = promoteApproving
+					}
 				} else if len(m.promoteCandidates) == 0 {
 					// Restore the unfiltered downstream candidate list.
 					m.promoteCandidates = downstreamCandidateFreight(m.freights, s.Name)
