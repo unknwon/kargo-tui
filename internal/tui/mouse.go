@@ -439,7 +439,7 @@ func (m Model) renderMenu() string {
 	}
 	rowStyle := lipgloss.NewStyle().
 		Foreground(normal).Background(bg).Padding(0, 1).Width(width + 2)
-	cursorStyle := rowStyle.Background(selected).Foreground(normal).Bold(true)
+	cursorStyle := rowStyle.Background(selected).Foreground(darkFg).Bold(true)
 
 	var rows []string
 	for i, it := range m.menuItems {
