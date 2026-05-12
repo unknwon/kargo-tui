@@ -21,32 +21,20 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+  prepare-release:
+    name: Prepare release
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - {goos: linux, goarch: amd64}
-          - {goos: linux, goarch: arm64}
-          - {goos: linux, goarch: "386"}
-          - {goos: darwin, goarch: amd64}
-          - {goos: darwin, goarch: arm64}
-          - {goos: windows, goarch: amd64}
-          - {goos: windows, goarch: arm64}
-          - {goos: windows, goarch: "386"}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
+      build_version: ${{ steps.version.outputs.build_version }}
     steps:
       - name: Check out code
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
-      - name: Set up Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        with:
-          go-version: 1.26.x
       - name: Determine version
         id: version
         run: |
-          # Need the full history so `git describe` can find tags.
+          # Need tags reachable so `git describe` can find them.
           git fetch --tags --depth=1 origin || true
 
           # closest_tag is the nearest annotated/lightweight tag reachable
@@ -74,6 +62,56 @@ jobs:
             echo "release_tag=$release_tag"
             echo "build_version=$build_version"
           } >> "$GITHUB_OUTPUT"
+      - name: Ensure rolling tag and release exist
+        if: ${{ github.event_name != 'release' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+        run: |
+          # Force-move the rolling tag to HEAD. For `release` events the tag
+          # already exists at the right commit, so we skip this step entirely.
+          git tag -f "$RELEASE_TAG"
+          git push origin "$RELEASE_TAG" --force
+
+          RELEASE_TITLE="Release archive testing"
+          RELEASE_NOTES="Automated testing release for workflow development."
+          if [ "$RELEASE_TAG" = "latest-commit-build" ]; then
+            RELEASE_TITLE="Latest commit build"
+            RELEASE_NOTES="Automated build from the latest commit on main branch. This release is updated automatically with every push to main."
+          fi
+
+          # Single-flight: this job is the only one that creates the release,
+          # so the build matrix never races on `gh release create`.
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --title "$RELEASE_TITLE" \
+              --notes "$RELEASE_NOTES" \
+              --prerelease
+          fi
+
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {goos: linux, goarch: amd64}
+          - {goos: linux, goarch: arm64}
+          - {goos: linux, goarch: "386"}
+          - {goos: darwin, goarch: amd64}
+          - {goos: darwin, goarch: arm64}
+          - {goos: windows, goarch: amd64}
+          - {goos: windows, goarch: arm64}
+          - {goos: windows, goarch: "386"}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: 1.26.x
       - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
@@ -87,7 +125,7 @@ jobs:
 
           go build -v \
             -ldflags "
-              -X 'main.buildVersion=${{ steps.version.outputs.build_version }}'
+              -X 'main.buildVersion=${{ needs.prepare-release.outputs.build_version }}'
               -X 'main.buildDate=$(date -u '+%Y-%m-%d %I:%M:%S %Z')'
               -X 'main.buildCommit=$(git rev-parse HEAD)'
             " \
@@ -100,7 +138,7 @@ jobs:
             BINARY_NAME="kargo-tui.exe"
           fi
 
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ needs.prepare-release.outputs.version }}"
           ARCHIVE_BASE="kargo-tui_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}"
 
           zip "dist/${ARCHIVE_BASE}.zip" "$BINARY_NAME"
@@ -111,23 +149,10 @@ jobs:
       - name: Upload to release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: |
-          RELEASE_TAG="${{ steps.version.outputs.release_tag }}"
-
-          if [ "${{ github.event_name }}" != "release" ]; then
-            git tag -f "$RELEASE_TAG"
-            git push origin "$RELEASE_TAG" --force || true
-
-            RELEASE_TITLE="Release archive testing"
-            RELEASE_NOTES="Automated testing release for workflow development."
-            if [ "$RELEASE_TAG" = "latest-commit-build" ]; then
-              RELEASE_TITLE="Latest commit build"
-              RELEASE_NOTES="Automated build from the latest commit on main branch. This release is updated automatically with every push to main."
-            fi
-
-            gh release view "$RELEASE_TAG" || gh release create "$RELEASE_TAG" --title "$RELEASE_TITLE" --notes "$RELEASE_NOTES" --prerelease
-          fi
-
+          # Clean any existing assets for this os/arch so rebuilds replace
+          # rather than accumulate alongside.
           PATTERN="_${{ matrix.goos }}_${{ matrix.goarch }}\."
           gh release view "$RELEASE_TAG" --json assets --jq ".assets[].name" | grep "$PATTERN" | while read -r asset; do
             gh release delete-asset "$RELEASE_TAG" "$asset" --yes || true
