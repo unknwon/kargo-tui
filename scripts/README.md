@@ -56,22 +56,22 @@ or anything in the TUI that affects an RPC. It exercises every RPC
 the TUI calls.
 
 ```bash
-# 0. one-time setup: register mock as a kargo context
+# 0. one-time setup: register the mock as a kargo context named "demo"
 go build -o bin/kargo-tui ./cmd/kargo-tui
-./bin/kargo-tui auth login http://localhost:8080 --name mock
+./bin/kargo-tui auth login http://localhost:8080 --name demo
 
 # 1. boot mock + TUI
 ./scripts/tui-probe.sh start-mock
 ./scripts/tui-probe.sh start http://localhost:8080
 sleep 2
 ./scripts/tui-probe.sh capture | head -15
-# expect: project picker showing acme-web / acme-platform / acme-mobile
+# expect: project picker showing acme-commerce / acme-edge
 
-# 2. enter acme-web
+# 2. enter acme-commerce
 ./scripts/tui-probe.sh send "Down" "Down" "Enter"
 sleep 2
 ./scripts/tui-probe.sh capture | head -5
-# expect: header "kargo-tui · deploys · mock · project=acme-web · 150 items"
+# expect: header "kargo-tui · deploys · demo · project=acme-commerce · 92 items"
 
 # 3. promote on the selected stage (capital P)
 ./scripts/tui-probe.sh send "P"
@@ -131,19 +131,16 @@ sleep 1
 ./scripts/tui-probe.sh capture | head -20
 # expect: ascii-tree rendering with [-]/[+] expand markers, ages
 
-# 9. switch to acme-platform + verify it renders too
+# 9. switch to acme-edge + verify it renders too
 ./scripts/tui-probe.sh send "p"
 ./scripts/tui-probe.sh send "Down" "Enter"
 sleep 2
 ./scripts/tui-probe.sh send "g"
 sleep 1
 ./scripts/tui-probe.sh capture | head -10
-# expect: "project=acme-platform · 100 stages" header, graph renders
+# expect: "project=acme-edge · 100 stages" header, graph renders
 
-# 10. acme-mobile + hotfix-lane verification
-./scripts/tui-probe.sh send "p"
-./scripts/tui-probe.sh send "Enter"
-sleep 2
+# 10. acme-edge chained control-flow verification
 ./scripts/tui-probe.sh send "t"
 sleep 1
 ./scripts/tui-probe.sh capture | head -10
