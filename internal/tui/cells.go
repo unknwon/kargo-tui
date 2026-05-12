@@ -401,6 +401,27 @@ func centerPopup(box string, termWidth, termHeight int) string {
 	return lipgloss.Place(termWidth, termHeight, hPos, vPos, box)
 }
 
+// centerPopupOffsets returns the (offsetX, offsetY) the box origin lands at
+// inside a (termWidth × termHeight) frame after centerPopup runs. Callers
+// that overlay a real cursor on the box add these to the box-local cursor
+// coordinates so the cursor tracks the centered popup. Falls back to (0, 0)
+// in the same overflow cases centerPopup falls back to top-left.
+func centerPopupOffsets(box string, termWidth, termHeight int) (int, int) {
+	if termWidth <= 0 || termHeight <= 0 {
+		return 0, 0
+	}
+	boxW := lipgloss.Width(box)
+	boxH := lipgloss.Height(box)
+	ox, oy := 0, 0
+	if boxW < termWidth {
+		ox = (termWidth - boxW) / 2
+	}
+	if boxH < termHeight {
+		oy = (termHeight - boxH) / 2
+	}
+	return ox, oy
+}
+
 // popupInnerWidth returns the wrap target for popup body text given the
 // terminal width. Accounts for the rounded border (2 cells) and Padding(1,2)
 // (4 cells) used by every popup box, and caps at 100 cells so popups don't

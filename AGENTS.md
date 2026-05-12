@@ -24,6 +24,12 @@ This applies to all texts, including but not limited to UI, documentation, code 
     - Logger scoping (`logger.Scoped(...)`) is done at the call site, not inside the callee's constructor. The constructor stores the logger as-is.
     - Log scope and attribute names use camelCase while respecting Go idioms, e.g., `"userID"`, `"messageLength"`.
 
+## UX consistency
+
+- All popup overlays (project picker, context picker, promote confirm, freight picker, etc.) must share the same placement behavior: centered when the terminal is large enough to fit the box, anchored to the top-left when it isn't. Use the `centerPopup` and `centerPopupOffsets` helpers in `internal/tui/cells.go`. Top-left fallback keeps content readable on tiny terminals instead of pushing it off-screen.
+- Full-screen frames (the main tree/graph/list views, the Logs and Diff overlays, the keybindings help, the panic popup) are not popups and stay full-screen, not centered.
+- When a popup hosts a focused text input, remember to add the centering `(offsetX, offsetY)` to the cursor coordinates so the real cursor tracks the centered box.
+
 ## Build instructions
 
 - Prefer `moon` command over vanilla `go` command when available.
