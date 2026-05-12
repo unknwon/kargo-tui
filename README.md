@@ -6,17 +6,9 @@ Here it is, the missing Kargo console for operating with hundreds of stages. Ent
 
 ## Demo
 
-![kargo-tui demo](https://vhs.charm.sh/vhs-2JsGDXaB9SJ8f3ZQ1pSiHN.gif)
+https://github.com/user-attachments/assets/2be76079-b716-45ca-a4ab-a6c02d897359
 
-The demo runs against a local mock Kargo API server that ships with this repo. To try it yourself:
-
-```zsh
-moon run :mock-server                                       # terminal 1
-kargo-tui auth login http://localhost:8080 --name demo     # terminal 2, one-time
-kargo-tui --context demo
-```
-
-See [`scripts/README.md`](scripts/README.md) for the full end-to-end test playbook.
+The demo runs against a local mock Kargo API server that ships with this repository.
 
 ## Authentication
 
