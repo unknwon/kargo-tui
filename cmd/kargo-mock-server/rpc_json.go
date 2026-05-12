@@ -72,7 +72,9 @@ func (h *handlers) listProjectEvents(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"events": []rawEventJSON{}})
 		return
 	}
+	h.store.mu.RLock()
 	events := append([]rawEventJSON(nil), p.events...)
+	h.store.mu.RUnlock()
 	sort.Slice(events, func(i, j int) bool {
 		return events[i].LastTimestamp > events[j].LastTimestamp
 	})

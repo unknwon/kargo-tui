@@ -100,7 +100,12 @@ func (h *handlers) transitionPromotion(p *projectState, promoName string, phase 
 	case kargoapi.PromotionPhaseSucceeded:
 		t := metav1.NewTime(now)
 		promo.Status.FinishedAt = &t
-		stage.Status.CurrentPromotion = nil
+		// Only clear CurrentPromotion if it still points at this promo;
+		// otherwise a newer in-flight promotion against the same stage
+		// would lose its running marker.
+		if stage.Status.CurrentPromotion != nil && stage.Status.CurrentPromotion.Name == promo.Name {
+			stage.Status.CurrentPromotion = nil
+		}
 		stage.Status.LastPromotion = &kargoapi.PromotionReference{
 			Name:       promo.Name,
 			Freight:    refForFreight(freight),

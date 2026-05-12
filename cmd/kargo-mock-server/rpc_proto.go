@@ -3,7 +3,8 @@ package main
 import (
 	"net/http"
 
-	kargoapi "github.com/akuity/kargo/api/v1alpha1"
+	"google.golang.org/protobuf/proto"
+
 	svcv1alpha1 "unknwon.dev/kargo-tui/internal/kargoapi/svc"
 )
 
@@ -19,10 +20,15 @@ func (h *handlers) listStages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.store.mu.RLock()
-	stages := p.listStages()
+	resp := &svcv1alpha1.ListStagesResponse{Stages: p.listStages()}
+	body, err := proto.Marshal(resp)
 	h.store.mu.RUnlock()
-	resp := &svcv1alpha1.ListStagesResponse{Stages: stages}
-	writeProto(w, resp)
+	if err != nil {
+		writeConnectError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/proto")
+	_, _ = w.Write(body)
 }
 
 func (h *handlers) queryFreight(w http.ResponseWriter, r *http.Request) {
@@ -36,19 +42,23 @@ func (h *handlers) queryFreight(w http.ResponseWriter, r *http.Request) {
 		writeProto(w, &svcv1alpha1.QueryFreightResponse{})
 		return
 	}
-	h.store.mu.RLock()
-	freight := p.listFreight()
-	h.store.mu.RUnlock()
 	// The TUI's ListFreight flattens every group's freight into one list,
 	// dedup by name. Returning a single empty-key group works fine.
-	fl := make([]*kargoapi.Freight, len(freight))
-	copy(fl, freight)
+	h.store.mu.RLock()
+	freight := p.listFreight()
 	resp := &svcv1alpha1.QueryFreightResponse{
 		Groups: map[string]*svcv1alpha1.FreightList{
-			"": {Freight: fl},
+			"": {Freight: freight},
 		},
 	}
-	writeProto(w, resp)
+	body, err := proto.Marshal(resp)
+	h.store.mu.RUnlock()
+	if err != nil {
+		writeConnectError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/proto")
+	_, _ = w.Write(body)
 }
 
 func (h *handlers) listPromotions(w http.ResponseWriter, r *http.Request) {
@@ -67,9 +77,15 @@ func (h *handlers) listPromotions(w http.ResponseWriter, r *http.Request) {
 		stage = *req.Stage
 	}
 	h.store.mu.RLock()
-	promos := p.listPromotions(stage)
+	resp := &svcv1alpha1.ListPromotionsResponse{Promotions: p.listPromotions(stage)}
+	body, err := proto.Marshal(resp)
 	h.store.mu.RUnlock()
-	writeProto(w, &svcv1alpha1.ListPromotionsResponse{Promotions: promos})
+	if err != nil {
+		writeConnectError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/proto")
+	_, _ = w.Write(body)
 }
 
 func (h *handlers) promoteToStage(w http.ResponseWriter, r *http.Request) {

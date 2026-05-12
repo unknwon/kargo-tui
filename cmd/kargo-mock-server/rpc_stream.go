@@ -48,7 +48,9 @@ func (h *handlers) watchStages(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
+	h.store.mu.RLock()
 	sub := p.subscribe()
+	h.store.mu.RUnlock()
 	defer p.unsubscribe(sub)
 
 	ctx := r.Context()
@@ -58,7 +60,9 @@ func (h *handlers) watchStages(w http.ResponseWriter, r *http.Request) {
 			writeEndOfStream(w, flusher)
 			return
 		case ev := <-sub.events:
+			h.store.mu.RLock()
 			payload, err := proto.Marshal(ev)
+			h.store.mu.RUnlock()
 			if err != nil {
 				return
 			}

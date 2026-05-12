@@ -106,7 +106,7 @@ main() {
         stop-all)    cmd_stop_all;;
         status)      cmd_status;;
         ""|-h|--help)
-            sed -n '2,/^set -euo/p' "$0" | sed 's/^# \?//' | head -n -1
+            sed -n '2,/^set -euo/p' "$0" | sed 's/^# \?//' | sed '$d'
             ;;
         *) die "unknown subcommand: $sub";;
     esac
