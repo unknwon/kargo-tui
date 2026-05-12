@@ -57,8 +57,8 @@ the TUI calls.
 
 ```bash
 # 0. one-time setup: register the mock as a kargo context named "demo"
-go build -o bin/kargo-tui ./cmd/kargo-tui
-./bin/kargo-tui auth login http://localhost:8080 --name demo
+moon run :install
+kargo-tui auth login http://localhost:8080 --name demo
 
 # 1. boot mock + TUI
 ./scripts/tui-probe.sh start-mock

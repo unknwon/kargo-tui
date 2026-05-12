@@ -8,7 +8,15 @@ Here it is, the missing Kargo console for operating with hundreds of stages. Ent
 
 ![kargo-tui demo](https://vhs.charm.sh/vhs-2JsGDXaB9SJ8f3ZQ1pSiHN.gif)
 
-The demo runs against a local mock server that ships with this repo (`./bin/kargo-mock-server`). See [`scripts/README.md`](scripts/README.md) for how to reproduce it.
+The demo runs against a local mock Kargo API server that ships with this repo. To try it yourself:
+
+```zsh
+moon run :mock-server                                       # terminal 1
+kargo-tui auth login http://localhost:8080 --name demo     # terminal 2, one-time
+kargo-tui --context demo
+```
+
+See [`scripts/README.md`](scripts/README.md) for the full end-to-end test playbook.
 
 ## Authentication
 
@@ -62,10 +70,11 @@ brew install moon
 Common tasks:
 
 ```zsh
-moon run :install   # Build and install the kargo-tui binary to $GOBIN.
-moon run :lint      # Tidy Go modules and run golangci-lint.
-moon run :test      # Run the test suite.
-moon run :build     # Compile all packages.
+moon run :install       # Build and install the kargo-tui binary to $GOBIN.
+moon run :lint          # Tidy Go modules and run golangci-lint.
+moon run :test          # Run the test suite.
+moon run :build         # Compile all packages.
+moon run :mock-server   # Run the local mock Kargo API server (see Demo above).
 ```
 
 After `moon run :install`, launch the TUI directly with `kargo-tui`.
