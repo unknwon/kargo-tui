@@ -86,7 +86,7 @@ func run(ctx context.Context, cmd *cli.Command) error {
 		fmt.Printf("kargo-mock-server listening on %s\n", addr)
 		fmt.Printf("  projects: %s\n", store.projectSummary())
 		fmt.Printf("  seed=%d speed=%.1fx\n", seed, speed)
-		fmt.Printf("\npoint the TUI at:\n  kargo-tui --server http://localhost%s --insecure\n", addr)
+		fmt.Printf("\npoint the TUI at:\n  kargo-tui auth login http://localhost%s --name demo --insecure-skip-tls-verify\n  kargo-tui --context demo\n", addr)
 		errCh <- srv.ListenAndServe()
 	}()
 
