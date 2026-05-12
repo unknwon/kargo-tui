@@ -9,7 +9,9 @@ Here it is, the missing Kargo console for operating with hundreds of stages. Ent
 ![kargo-tui demo graph](https://github.com/user-attachments/assets/5d3d313f-5d61-4785-8557-f9c8a1143ae2)
 
 <details><summary>Demo video</summary>
-https://github.com/user-attachments/assets/2be76079-b716-45ca-a4ab-a6c02d897359  
+  
+https://github.com/user-attachments/assets/2be76079-b716-45ca-a4ab-a6c02d897359
+
 </details>
 
 The demo runs against a local mock Kargo API server that ships with this repository.
