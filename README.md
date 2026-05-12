@@ -4,6 +4,12 @@ Kargo is nice, Kargo is cute, Kargo's UI works like crap,  Kargo's CLI won't eve
 
 Here it is, the missing Kargo console for operating with hundreds of stages. Entirely vibe-coded, use at your own risk.
 
+## Demo
+
+![kargo-tui demo](https://vhs.charm.sh/vhs-74M4JsQYmytTjras8vuc7q.gif)
+
+The demo runs against a local mock server that ships with this repo (`./bin/kargo-mock-server`). See [`scripts/README.md`](scripts/README.md) for how to reproduce it.
+
 ## Authentication
 
 `kargo-tui` authenticates against a Kargo API server using the same OIDC SSO (PKCE auth-code) flow as `kargo login --sso`. Credentials are saved as named "contexts" in the kargo-tui config file.

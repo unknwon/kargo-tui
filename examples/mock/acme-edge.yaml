@@ -1,0 +1,158 @@
+project: acme-edge
+argoCDURL: https://argocd.example.com
+
+# 7 apps. ios & android have a deeper "internal -> rc" chain of TWO
+# control-flow nodes; the other 5 have a single internal control-flow.
+# 100 stages total, 9 control-flow.
+warehouses:
+  - name: wh-ios
+    git:   [{repoURL: "github.com/acme/ios-app",       branch: main}]
+    image: [{repoURL: "ghcr.io/acme/ios-app"}]
+  - name: wh-android
+    git:   [{repoURL: "github.com/acme/android-app",   branch: main}]
+    image: [{repoURL: "ghcr.io/acme/android-app"}]
+  - name: wh-web
+    git:   [{repoURL: "github.com/acme/web-app",       branch: main}]
+    image: [{repoURL: "ghcr.io/acme/web-app"}]
+  - name: wh-desktop
+    git:   [{repoURL: "github.com/acme/desktop-app",   branch: main}]
+    image: [{repoURL: "ghcr.io/acme/desktop-app"}]
+  - name: wh-cli
+    git:   [{repoURL: "github.com/acme/cli",           branch: main}]
+    image: [{repoURL: "ghcr.io/acme/cli"}]
+  - name: wh-sdk
+    git:   [{repoURL: "github.com/acme/sdk",           branch: main}]
+    image: [{repoURL: "ghcr.io/acme/sdk"}]
+  - name: wh-api-client
+    git:   [{repoURL: "github.com/acme/api-client",    branch: main}]
+    image: [{repoURL: "ghcr.io/acme/api-client"}]
+
+stages:
+  # ============================================================
+  # ios — 14 stages, TWO control-flow nodes (internal -> rc)
+  # dev -> qa -> internal(ctl) -> {beta-tester, rc(ctl)} -> {prod-us, prod-eu, prod-jp, prod-row}
+  # ============================================================
+  - {name: ios-dev,                warehouses: [wh-ios]}
+  - {name: ios-qa,                 upstreams: [ios-dev]}
+  - {name: ios-internal,           upstreams: [ios-qa], controlFlow: true}
+  - {name: ios-beta-testflight,    upstreams: [ios-internal]}
+  - {name: ios-beta-staff,         upstreams: [ios-internal]}
+  - {name: ios-rc,                 upstreams: [ios-internal], controlFlow: true}
+  - {name: ios-prod-us,            upstreams: [ios-rc], requiresApproval: true}
+  - {name: ios-prod-eu,            upstreams: [ios-rc], requiresApproval: true}
+  - {name: ios-prod-jp,            upstreams: [ios-rc], requiresApproval: true}
+  - {name: ios-prod-au,            upstreams: [ios-rc], requiresApproval: true}
+  - {name: ios-prod-row,           upstreams: [ios-rc], requiresApproval: true}
+  - {name: ios-prod-staged,        upstreams: [ios-rc]}
+  - {name: ios-prod-late,          upstreams: [ios-rc]}
+  - {name: ios-hotfix,             upstreams: [ios-qa], requiresApproval: true}
+
+  # ============================================================
+  # android — 14 stages, TWO control-flow nodes (internal -> rc)
+  # ============================================================
+  - {name: android-dev,            warehouses: [wh-android]}
+  - {name: android-qa,             upstreams: [android-dev]}
+  - {name: android-internal,       upstreams: [android-qa], controlFlow: true}
+  - {name: android-beta-play,      upstreams: [android-internal]}
+  - {name: android-beta-staff,     upstreams: [android-internal]}
+  - {name: android-rc,             upstreams: [android-internal], controlFlow: true}
+  - {name: android-prod-us,        upstreams: [android-rc], requiresApproval: true}
+  - {name: android-prod-eu,        upstreams: [android-rc], requiresApproval: true}
+  - {name: android-prod-jp,        upstreams: [android-rc], requiresApproval: true}
+  - {name: android-prod-au,        upstreams: [android-rc], requiresApproval: true}
+  - {name: android-prod-row,       upstreams: [android-rc], requiresApproval: true}
+  - {name: android-prod-staged,    upstreams: [android-rc]}
+  - {name: android-prod-late,      upstreams: [android-rc]}
+  - {name: android-hotfix,         upstreams: [android-qa], requiresApproval: true}
+
+  # ============================================================
+  # web — 14 stages, single control-flow (internal)
+  # ============================================================
+  - {name: web-dev,                warehouses: [wh-web]}
+  - {name: web-qa,                 upstreams: [web-dev]}
+  - {name: web-staging,            upstreams: [web-qa]}
+  - {name: web-internal,           upstreams: [web-staging], controlFlow: true}
+  - {name: web-canary,             upstreams: [web-internal]}
+  - {name: web-us-east-prod,       upstreams: [web-internal]}
+  - {name: web-us-west-prod,       upstreams: [web-internal]}
+  - {name: web-us-central-prod,    upstreams: [web-internal]}
+  - {name: web-eu-west-prod,       upstreams: [web-internal]}
+  - {name: web-eu-north-prod,      upstreams: [web-internal]}
+  - {name: web-ap-south-prod,      upstreams: [web-internal]}
+  - {name: web-ap-east-prod,       upstreams: [web-internal]}
+  - {name: web-sa-east-prod,       upstreams: [web-internal]}
+  - {name: web-hotfix,             upstreams: [web-qa], requiresApproval: true}
+
+  # ============================================================
+  # desktop — 13 stages, single control-flow
+  # ============================================================
+  - {name: desktop-dev,            warehouses: [wh-desktop]}
+  - {name: desktop-qa,             upstreams: [desktop-dev]}
+  - {name: desktop-internal,       upstreams: [desktop-qa], controlFlow: true}
+  - {name: desktop-beta,           upstreams: [desktop-internal]}
+  - {name: desktop-prod-mac,       upstreams: [desktop-internal]}
+  - {name: desktop-prod-windows,   upstreams: [desktop-internal]}
+  - {name: desktop-prod-linux-deb, upstreams: [desktop-internal]}
+  - {name: desktop-prod-linux-rpm, upstreams: [desktop-internal]}
+  - {name: desktop-prod-linux-arch, upstreams: [desktop-internal]}
+  - {name: desktop-prod-linux-snap, upstreams: [desktop-internal]}
+  - {name: desktop-prod-staged,    upstreams: [desktop-internal]}
+  - {name: desktop-prod-late,      upstreams: [desktop-internal]}
+  - {name: desktop-hotfix,         upstreams: [desktop-qa], requiresApproval: true}
+
+  # ============================================================
+  # cli — 13 stages, single control-flow
+  # ============================================================
+  - {name: cli-dev,                warehouses: [wh-cli]}
+  - {name: cli-qa,                 upstreams: [cli-dev]}
+  - {name: cli-internal,           upstreams: [cli-qa], controlFlow: true}
+  - {name: cli-prod-homebrew,      upstreams: [cli-internal]}
+  - {name: cli-prod-apt,           upstreams: [cli-internal]}
+  - {name: cli-prod-yum,           upstreams: [cli-internal]}
+  - {name: cli-prod-chocolatey,    upstreams: [cli-internal]}
+  - {name: cli-prod-scoop,         upstreams: [cli-internal]}
+  - {name: cli-prod-snap,          upstreams: [cli-internal]}
+  - {name: cli-prod-archlinux,     upstreams: [cli-internal]}
+  - {name: cli-prod-binary,        upstreams: [cli-internal]}
+  - {name: cli-prod-docker,        upstreams: [cli-internal]}
+  - {name: cli-hotfix,             upstreams: [cli-qa], requiresApproval: true}
+
+  # ============================================================
+  # sdk — 16 stages, single control-flow (language matrix)
+  # ============================================================
+  - {name: sdk-dev,                warehouses: [wh-sdk]}
+  - {name: sdk-qa,                 upstreams: [sdk-dev]}
+  - {name: sdk-staging,            upstreams: [sdk-qa]}
+  - {name: sdk-internal,           upstreams: [sdk-staging], controlFlow: true}
+  - {name: sdk-prod-go,            upstreams: [sdk-internal]}
+  - {name: sdk-prod-typescript,    upstreams: [sdk-internal]}
+  - {name: sdk-prod-python,        upstreams: [sdk-internal]}
+  - {name: sdk-prod-java,          upstreams: [sdk-internal]}
+  - {name: sdk-prod-ruby,          upstreams: [sdk-internal]}
+  - {name: sdk-prod-rust,          upstreams: [sdk-internal]}
+  - {name: sdk-prod-csharp,        upstreams: [sdk-internal]}
+  - {name: sdk-prod-php,           upstreams: [sdk-internal]}
+  - {name: sdk-prod-swift,         upstreams: [sdk-internal]}
+  - {name: sdk-prod-kotlin,        upstreams: [sdk-internal]}
+  - {name: sdk-prod-elixir,        upstreams: [sdk-internal]}
+  - {name: sdk-hotfix,             upstreams: [sdk-qa], requiresApproval: true}
+
+  # ============================================================
+  # api-client — 16 stages, single control-flow
+  # ============================================================
+  - {name: api-client-dev,          warehouses: [wh-api-client]}
+  - {name: api-client-qa,           upstreams: [api-client-dev]}
+  - {name: api-client-staging,      upstreams: [api-client-qa]}
+  - {name: api-client-internal,     upstreams: [api-client-staging], controlFlow: true}
+  - {name: api-client-prod-go,      upstreams: [api-client-internal]}
+  - {name: api-client-prod-ts,      upstreams: [api-client-internal]}
+  - {name: api-client-prod-python,  upstreams: [api-client-internal]}
+  - {name: api-client-prod-java,    upstreams: [api-client-internal]}
+  - {name: api-client-prod-ruby,    upstreams: [api-client-internal]}
+  - {name: api-client-prod-rust,    upstreams: [api-client-internal]}
+  - {name: api-client-prod-csharp,  upstreams: [api-client-internal]}
+  - {name: api-client-prod-php,     upstreams: [api-client-internal]}
+  - {name: api-client-prod-swift,   upstreams: [api-client-internal]}
+  - {name: api-client-prod-kotlin,  upstreams: [api-client-internal]}
+  - {name: api-client-prod-elixir,  upstreams: [api-client-internal]}
+  - {name: api-client-hotfix,       upstreams: [api-client-qa], requiresApproval: true}

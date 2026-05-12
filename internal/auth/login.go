@@ -72,6 +72,28 @@ func SSOLogin(ctx context.Context, opts LoginOptions, status func(string)) (*con
 	if err != nil {
 		return nil, fmt.Errorf("retrieve public config: %w", err)
 	}
+	if pub != nil && pub.SkipAuth {
+		// Server is auth-less (e.g. kargo-mock-server). Persist a context
+		// with no token so subsequent RPCs go out with an empty Bearer.
+		cfg, err := config.Load()
+		if err != nil {
+			return nil, err
+		}
+		saved := &config.Context{
+			Name:                  opts.ContextName,
+			APIAddress:            opts.APIAddress,
+			InsecureSkipTLSVerify: opts.InsecureSkipTLSVerify,
+			Project:               opts.Project,
+		}
+		cfg.Upsert(saved)
+		if opts.MakeCurrent || cfg.CurrentContext == "" {
+			cfg.CurrentContext = opts.ContextName
+		}
+		if err := config.Save(cfg); err != nil {
+			return nil, err
+		}
+		return saved, nil
+	}
 	if pub == nil || pub.OIDC == nil {
 		return nil, errors.New("server does not advertise OIDC configuration")
 	}
