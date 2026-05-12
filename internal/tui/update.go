@@ -34,15 +34,53 @@ func (m Model) layoutDims() (int, int) {
 	return tw, panel
 }
 
-// Update is the Bubble Tea reducer. It routes window resizes, refresh ticks,
-// loaded data, key presses, and overlay/picker events to the right handler
-// and returns a possibly-mutated model plus any follow-up commands.
-//
+// startReloginCurrentContext launches the SSO re-login flow against the
+// model's current context and returns the dispatch command. Returns
+// (nil, false) when re-login isn't possible: ctxRelogin wasn't wired by
+// main, or there's no contextName yet. Mutates picker state to show the
+// "Re-authenticating…" status, so callers don't need to set it up
+// themselves. Used by both the `R` hotkey on the running view and the
+// cold-start project picker when the saved token has already expired.
+func (m *Model) startReloginCurrentContext() (tea.Cmd, bool) {
+	if m.ctxRelogin == nil || m.contextName == "" {
+		return nil, false
+	}
+	name := m.contextName
+	relogin := m.ctxRelogin
+	url := ""
+	if m.client != nil {
+		url = m.client.BaseURL()
+	}
+	m.phase = phasePickingContext
+	m.ctxAdding = false
+	m.ctxLoggingIn = true
+	if url != "" {
+		m.ctxLoginStatus = "Re-authenticating against " + url + "…"
+	} else {
+		m.ctxLoginStatus = "Re-authenticating " + name + "…"
+	}
+	m.ctxError = nil
+	lctx, cancel := context.WithCancel(context.Background())
+	m.ctxLoginCancel = cancel
+	send := m.ctxSend
+	if send == nil {
+		send = func(tea.Msg) {}
+	}
+	// Adapt the name-based relogin callback to the URL-based shape
+	// runContextLoginCmd expects. The name and relogin func are closed
+	// over by value here so a later mutation of the model can't change
+	// what the goroutine ends up calling.
+	loginByName := func(ctx context.Context, _ string, status func(string)) (string, error) {
+		return relogin(ctx, name, status)
+	}
+	return runContextLoginCmd(loginByName, lctx, name, send), true
+}
+
 // Update wraps the real reducer in a panic recovery shim so a bug in any
 // handler surfaces as a copyable popup instead of tearing the program
 // down. The deferred closure captures `m` by reference, so any mutations
 // the inner reducer made before the panic are still visible here and get
-// returned — the model can be partially-updated but the popup always
+// returned. The model can be partially-updated but the popup always
 // shows, which is the property we care about.
 func (m Model) Update(msg tea.Msg) (out tea.Model, cmd tea.Cmd) {
 	defer func() {
@@ -722,40 +760,15 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "R":
 			// Inline re-login for the current context. Only meaningful when
 			// the auth banner is up; otherwise the existing session is fine
-			// and `R` does nothing (avoids surprising the user). Uses the
-			// ctxRelogin callback (rather than ctxLogin) so the saved
-			// context's insecureSkipTLSVerify / project flags are preserved
-			// — ctxLogin would Upsert a brand-new context with default zero
-			// values for everything beyond the URL.
-			if !m.authExpired || m.ctxRelogin == nil || m.contextName == "" {
+			// and `R` does nothing (avoids surprising the user).
+			if !m.authExpired {
 				return m, nil
 			}
-			name := m.contextName
-			url := ""
-			if m.client != nil {
-				url = m.client.BaseURL()
+			cmd, ok := m.startReloginCurrentContext()
+			if !ok {
+				return m, nil
 			}
-			m.phase = phasePickingContext
-			m.ctxAdding = false
-			m.ctxLoggingIn = true
-			if url != "" {
-				m.ctxLoginStatus = "Re-authenticating against " + url + "…"
-			} else {
-				m.ctxLoginStatus = "Re-authenticating " + name + "…"
-			}
-			m.ctxError = nil
-			lctx, cancel := context.WithCancel(context.Background())
-			m.ctxLoginCancel = cancel
-			send := m.ctxSend
-			if send == nil {
-				send = func(tea.Msg) {}
-			}
-			// Adapt the name-based relogin callback to the URL-based shape
-			// runContextLoginCmd expects — the name is closed over here.
-			loginByName := func(ctx context.Context, _ string, status func(string)) (string, error) {
-				return m.ctxRelogin(ctx, name, status)
-			}
-			return m, runContextLoginCmd(loginByName, lctx, name, send)
+			return m, cmd
 		case "v":
 			m.detailsOnly = !m.detailsOnly
 			return m, nil

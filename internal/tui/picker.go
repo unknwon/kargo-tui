@@ -3,8 +3,11 @@ package tui
 import (
 	"strings"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"unknwon.dev/kargo-tui/internal/kargo"
 )
 
 // updatePicker handles input while the project picker is active. It owns
@@ -25,6 +28,39 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nsLoading = false
 		m.projects = msg.projects
 		m.projectsError = msg.err
+		// Cold-start error handling. The project picker can only retry
+		// against the same broken endpoint, so a hard error here is a
+		// dead end. Two automatic recoveries:
+		//
+		//  1. Token expired -> start the SSO re-login flow against the
+		//     current context. The user can't see/press anything before
+		//     the picker fails, so the TUI does it for them.
+		//  2. Other failures (network, server down) -> drop to the
+		//     context picker, with the error preserved, so the user can
+		//     switch contexts or add a new one.
+		//
+		// Restricted to the cold start (!nsExplicit): any later picker
+		// open (mid-session reopen, or load following an explicit
+		// context switch) keeps the error in-place. Otherwise repeated
+		// failures would bounce the user out of the picker after they
+		// just opened it.
+		if msg.err != nil && !m.nsExplicit {
+			if kargo.IsUnauthenticated(msg.err) {
+				m.noteAuthFailure(msg.err)
+				if cmd, ok := m.startReloginCurrentContext(); ok {
+					return m, cmd
+				}
+			}
+			if m.ctxBuilder != nil && len(m.ctxNames) > 0 {
+				m.phase = phasePickingContext
+				m.ctxCursor = 0
+				m.ctxError = msg.err
+				m.ctxAdding = false
+				m.ctxFilter.SetValue("")
+				m.ctxFilter.Focus()
+				return m, textinput.Blink
+			}
+		}
 		// Auto-select on initial startup only — when the user explicitly
 		// invoked the picker mid-session, always show the list even if it
 		// contains a single entry.

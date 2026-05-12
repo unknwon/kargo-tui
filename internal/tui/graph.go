@@ -1347,11 +1347,15 @@ func (m Model) selectedGraphStage() *kargo.Stage {
 }
 
 // moveGraphCursor advances the graph cursor in a spatial direction. left
-// / right step to the closest neighbour by edge; up / down step within
-// the same layer to the previous / next slot. Returns true when the
-// cursor actually moved so callers can skip selection-driven work (panel
-// reset, panel refresh) on a no-op step, which is the common case when
-// the wheel keeps firing past the top or bottom of the layer.
+// / right step to the closest neighbour by edge; when the current node has
+// no edge in that direction, the cursor "flows" to the nearest non-dummy
+// node on the next existing layer in that direction, measured by terminal
+// row (cell Y). up / down step within the same layer to the previous /
+// next slot.
+// Returns true when the cursor actually moved so callers can skip
+// selection-driven work (panel reset, panel refresh) on a no-op step,
+// which is the common case when the wheel keeps firing past the top or
+// bottom of the layer.
 func (m *Model) moveGraphCursor(dir string) bool {
 	g := m.graphLayout
 	if m.graphCursor < 0 || m.graphCursor >= len(g.nodes) {
@@ -1364,33 +1368,43 @@ func (m *Model) moveGraphCursor(dir string) bool {
 		// Pick outgoing edge whose target is closest in slot.
 		_, out := graphNeighbors(g, m.graphCursor)
 		if len(out) == 0 {
-			return false
-		}
-		best := out[0]
-		bestDist := abs(g.nodes[best].Slot - cur.Slot)
-		for _, n := range out[1:] {
-			d := abs(g.nodes[n].Slot - cur.Slot)
-			if d < bestDist {
-				best = n
-				bestDist = d
+			if flow, ok := nearestNodeInDir(g, m.graphCursor, +1); ok {
+				m.graphCursor = flow
+			} else {
+				return false
 			}
+		} else {
+			best := out[0]
+			bestDist := abs(g.nodes[best].Slot - cur.Slot)
+			for _, n := range out[1:] {
+				d := abs(g.nodes[n].Slot - cur.Slot)
+				if d < bestDist {
+					best = n
+					bestDist = d
+				}
+			}
+			m.graphCursor = best
 		}
-		m.graphCursor = best
 	case "left":
 		in, _ := graphNeighbors(g, m.graphCursor)
 		if len(in) == 0 {
-			return false
-		}
-		best := in[0]
-		bestDist := abs(g.nodes[best].Slot - cur.Slot)
-		for _, n := range in[1:] {
-			d := abs(g.nodes[n].Slot - cur.Slot)
-			if d < bestDist {
-				best = n
-				bestDist = d
+			if flow, ok := nearestNodeInDir(g, m.graphCursor, -1); ok {
+				m.graphCursor = flow
+			} else {
+				return false
 			}
+		} else {
+			best := in[0]
+			bestDist := abs(g.nodes[best].Slot - cur.Slot)
+			for _, n := range in[1:] {
+				d := abs(g.nodes[n].Slot - cur.Slot)
+				if d < bestDist {
+					best = n
+					bestDist = d
+				}
+			}
+			m.graphCursor = best
 		}
-		m.graphCursor = best
 	case "up", "down":
 		// Walk siblings within the same layer; skip dummies since they're
 		// not selectable.
@@ -1430,6 +1444,51 @@ func abs(i int) int {
 		return -i
 	}
 	return i
+}
+
+// nearestNodeInDir finds the closest non-dummy node to walk into when the
+// current node has no edge in the requested direction. step is +1 for
+// right, -1 for left. The search advances one layer at a time and returns
+// the candidate on the first layer that has any non-dummy nodes, picking
+// the one whose vertical centre sits closest (in terminal rows, the cell
+// Y coordinate from graphNode) to the current node's centre. Tie-breaks
+// pick the smaller Slot for stable behaviour. Returns (-1, false) when
+// no further layer in that direction holds a real node.
+func nearestNodeInDir(g graphLayout, idx, step int) (int, bool) {
+	if idx < 0 || idx >= len(g.nodes) || (step != 1 && step != -1) {
+		return -1, false
+	}
+	cur := g.nodes[idx]
+	curMid := cur.Y + cur.H/2
+
+	maxLayer := 0
+	for _, n := range g.nodes {
+		if n.Layer > maxLayer {
+			maxLayer = n.Layer
+		}
+	}
+
+	for layer := cur.Layer + step; layer >= 0 && layer <= maxLayer; layer += step {
+		best := -1
+		bestDist := 0
+		bestSlot := 0
+		for i, n := range g.nodes {
+			if n.Layer != layer || n.Dummy || n.Stage == nil {
+				continue
+			}
+			mid := n.Y + n.H/2
+			d := abs(mid - curMid)
+			if best < 0 || d < bestDist || (d == bestDist && n.Slot < bestSlot) {
+				best = i
+				bestDist = d
+				bestSlot = n.Slot
+			}
+		}
+		if best >= 0 {
+			return best, true
+		}
+	}
+	return -1, false
 }
 
 // beginGraphSearch snapshots the current cursor so esc can restore it
