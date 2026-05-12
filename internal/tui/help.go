@@ -7,6 +7,51 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+// Build information surfaced in the bottom of the help overlay. Populated
+// from main via SetBuildInfo so the tui package doesn't need to import
+// anything from cmd/.
+var (
+	buildVersion = "dev"
+	buildCommit  = "unknown"
+	buildDate    = "unknown"
+)
+
+// SetBuildInfo records the build metadata shown in the help overlay's
+// footer. Call from main before launching the program.
+func SetBuildInfo(version, commit, date string) {
+	if version != "" {
+		buildVersion = version
+	}
+	if commit != "" {
+		buildCommit = commit
+	}
+	if date != "" {
+		buildDate = date
+	}
+}
+
+// shortCommit trims a full git SHA to its first 7 characters. Non-SHA
+// fallbacks like "unknown" are returned unchanged.
+func shortCommit(s string) string {
+	if len(s) >= 7 && isHex(s) {
+		return s[:7]
+	}
+	return s
+}
+
+func isHex(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'f':
+		case r >= 'A' && r <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // helpBindings returns the static binding table rendered in the help
 // overlay. Lives outside helpView so prepareHelpViewport can format
 // it from Update.
@@ -76,13 +121,14 @@ func (m *Model) prepareHelpViewport() {
 	if h < 9 {
 		h = 9
 	}
-	// Match the box chrome in helpView: border(2) + Padding(1, 2) → 6 cols,
-	// 4 rows; body chrome: header(1) + spacer(1) + spacer(1) + hint(1) → 4 rows.
+	// Match the box chrome in helpView: border(2) + Padding(1, 2) -> 6 cols,
+	// 4 rows; body chrome: header(1) + spacer(1) + spacer(1) + hint(1) +
+	// build(1) -> 5 rows.
 	innerW := w - 6
 	if innerW < 10 {
 		innerW = 10
 	}
-	innerH := h - 4 - 4
+	innerH := h - 4 - 5
 	if innerH < 1 {
 		innerH = 1
 	}
@@ -100,7 +146,8 @@ func (m Model) helpView() tea.View {
 
 	header := titleStyle.Render("Keybindings")
 	hint := hintStyle.Render("j/k scroll · home/end top/bottom · esc/? dismiss")
-	body := lipgloss.JoinVertical(lipgloss.Left, header, "", m.helpVP.View(), "", hint)
+	build := hintStyle.Render("kargo-tui " + buildVersion + " · " + shortCommit(buildCommit) + " · built " + buildDate)
+	body := lipgloss.JoinVertical(lipgloss.Left, header, "", m.helpVP.View(), "", hint, build)
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

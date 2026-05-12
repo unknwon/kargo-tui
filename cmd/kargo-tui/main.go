@@ -15,10 +15,23 @@ import (
 	"unknwon.dev/kargo-tui/internal/tui"
 )
 
+// Populated at build time via -ldflags '-X main.buildVersion=...
+// -X main.buildDate=... -X main.buildCommit=...'. buildVersion is the
+// release tag (e.g. "v1.2.3") for tagged release builds, or
+// "<closest-tag>+dev" for local builds via moon.
+var (
+	buildVersion = "dev"
+	buildDate    = "unknown"
+	buildCommit  = "unknown"
+)
+
 func main() {
+	tui.SetBuildInfo(buildVersion, buildCommit, buildDate)
+
 	cmd := &cli.Command{
-		Name:  "kargo-tui",
-		Usage: "Interactive TUI for the Kargo continuous-delivery API",
+		Name:    "kargo-tui",
+		Usage:   "Interactive TUI for the Kargo continuous-delivery API",
+		Version: fmt.Sprintf("%s (commit %s, built %s)", buildVersion, buildCommit, buildDate),
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "context",
