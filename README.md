@@ -2,7 +2,17 @@
 
 Kargo is nice, Kargo is cute, Kargo's UI works like crap,  Kargo's CLI won't even start. Don't ask me to reproduce, don't ask me to report. I got no energy talking to void.
 
-Here it is, the missing Kargo console for operating with hundreds of stages. Entirely vibe-coded, use at your own risk.
+Here it is, the missing Kargo console for operating with hundreds of stages. Entirely vibe-coded, use at your own risk. Themed by [Pierre themes](https://diffs.com/theme).
+
+## Demo
+
+![kargo-tui demo graph](https://github.com/user-attachments/assets/5d3d313f-5d61-4785-8557-f9c8a1143ae2)
+
+<details><summary>Demo video</summary>
+  
+https://github.com/user-attachments/assets/2be76079-b716-45ca-a4ab-a6c02d897359
+
+</details>
 
 ## Authentication
 
@@ -56,10 +66,11 @@ brew install moon
 Common tasks:
 
 ```zsh
-moon run :install   # Build and install the kargo-tui binary to $GOBIN.
-moon run :lint      # Tidy Go modules and run golangci-lint.
-moon run :test      # Run the test suite.
-moon run :build     # Compile all packages.
+moon run :install       # Build and install the kargo-tui binary to $GOBIN.
+moon run :lint          # Tidy Go modules and run golangci-lint.
+moon run :test          # Run the test suite.
+moon run :build         # Compile all packages.
+moon run :mock-server   # Run the local mock Kargo API server (see Demo above).
 ```
 
 After `moon run :install`, launch the TUI directly with `kargo-tui`.

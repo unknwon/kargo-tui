@@ -43,3 +43,7 @@ tasks:
     inputs:
       - '@group(sources)'
       - '@group(configs)'
+
+  mock-server:
+    command: 'go run ./cmd/kargo-mock-server'
+    local: true

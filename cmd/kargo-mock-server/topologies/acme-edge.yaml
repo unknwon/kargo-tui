@@ -1,0 +1,184 @@
+project: acme-edge
+argoCDURL: https://argocd.example.com
+
+# 7 apps, each laid out across a 10-layer pipeline.
+# ios & android keep their TWO control-flow nodes (internal -> rc).
+# Other 5 apps use a single internal control-flow with extra post-prod gates.
+warehouses:
+  - name: wh-ios
+    git:   [{repoURL: "github.com/acme/ios-app",       branch: main}]
+    image: [{repoURL: "ghcr.io/acme/ios-app"}]
+  - name: wh-android
+    git:   [{repoURL: "github.com/acme/android-app",   branch: main}]
+    image: [{repoURL: "ghcr.io/acme/android-app"}]
+  - name: wh-web
+    git:   [{repoURL: "github.com/acme/web-app",       branch: main}]
+    image: [{repoURL: "ghcr.io/acme/web-app"}]
+  - name: wh-desktop
+    git:   [{repoURL: "github.com/acme/desktop-app",   branch: main}]
+    image: [{repoURL: "ghcr.io/acme/desktop-app"}]
+  - name: wh-cli
+    git:   [{repoURL: "github.com/acme/cli",           branch: main}]
+    image: [{repoURL: "ghcr.io/acme/cli"}]
+  - name: wh-sdk
+    git:   [{repoURL: "github.com/acme/sdk",           branch: main}]
+    image: [{repoURL: "ghcr.io/acme/sdk"}]
+  - name: wh-api-client
+    git:   [{repoURL: "github.com/acme/api-client",    branch: main}]
+    image: [{repoURL: "ghcr.io/acme/api-client"}]
+
+stages:
+  # ============================================================
+  # ios — 10-layer pipeline with TWO control-flow nodes
+  # dev -> qa -> integration -> staging -> internal(ctl)
+  #     -> preprod -> rc(ctl) -> canary -> smoke -> {prod-*}
+  # ============================================================
+  - {name: ios-dev,                warehouses: [wh-ios]}
+  - {name: ios-qa,                 upstreams: [ios-dev]}
+  - {name: ios-integration,        upstreams: [ios-qa]}
+  - {name: ios-staging,            upstreams: [ios-integration]}
+  - {name: ios-internal,           upstreams: [ios-staging], controlFlow: true}
+  - {name: ios-beta-testflight,    upstreams: [ios-internal]}
+  - {name: ios-beta-staff,         upstreams: [ios-internal]}
+  - {name: ios-preprod,            upstreams: [ios-internal]}
+  - {name: ios-rc,                 upstreams: [ios-preprod], controlFlow: true}
+  - {name: ios-canary,             upstreams: [ios-rc]}
+  - {name: ios-smoke,              upstreams: [ios-canary]}
+  - {name: ios-prod-us,            upstreams: [ios-smoke], requiresApproval: true}
+  - {name: ios-prod-eu,            upstreams: [ios-smoke], requiresApproval: true}
+  - {name: ios-prod-jp,            upstreams: [ios-smoke], requiresApproval: true}
+  - {name: ios-prod-au,            upstreams: [ios-smoke], requiresApproval: true}
+  - {name: ios-prod-row,           upstreams: [ios-smoke], requiresApproval: true}
+  - {name: ios-hotfix,             upstreams: [ios-qa], requiresApproval: true}
+
+  # ============================================================
+  # android — mirrors ios topology
+  # ============================================================
+  - {name: android-dev,            warehouses: [wh-android]}
+  - {name: android-qa,             upstreams: [android-dev]}
+  - {name: android-integration,    upstreams: [android-qa]}
+  - {name: android-staging,        upstreams: [android-integration]}
+  - {name: android-internal,       upstreams: [android-staging], controlFlow: true}
+  - {name: android-beta-play,      upstreams: [android-internal]}
+  - {name: android-beta-staff,     upstreams: [android-internal]}
+  - {name: android-preprod,        upstreams: [android-internal]}
+  - {name: android-rc,             upstreams: [android-preprod], controlFlow: true}
+  - {name: android-canary,         upstreams: [android-rc]}
+  - {name: android-smoke,          upstreams: [android-canary]}
+  - {name: android-prod-us,        upstreams: [android-smoke], requiresApproval: true}
+  - {name: android-prod-eu,        upstreams: [android-smoke], requiresApproval: true}
+  - {name: android-prod-jp,        upstreams: [android-smoke], requiresApproval: true}
+  - {name: android-prod-au,        upstreams: [android-smoke], requiresApproval: true}
+  - {name: android-prod-row,       upstreams: [android-smoke], requiresApproval: true}
+  - {name: android-hotfix,         upstreams: [android-qa], requiresApproval: true}
+
+  # ============================================================
+  # web — single control-flow, 10-layer pipeline
+  # dev -> qa -> integration -> staging -> preprod -> internal(ctl)
+  #     -> canary -> smoke -> soak -> {region-prod}
+  # ============================================================
+  - {name: web-dev,                warehouses: [wh-web]}
+  - {name: web-qa,                 upstreams: [web-dev]}
+  - {name: web-integration,        upstreams: [web-qa]}
+  - {name: web-staging,            upstreams: [web-integration]}
+  - {name: web-preprod,            upstreams: [web-staging]}
+  - {name: web-internal,           upstreams: [web-preprod], controlFlow: true}
+  - {name: web-canary,             upstreams: [web-internal]}
+  - {name: web-smoke,              upstreams: [web-canary]}
+  - {name: web-soak,               upstreams: [web-smoke]}
+  - {name: web-us-east-prod,       upstreams: [web-soak]}
+  - {name: web-us-west-prod,       upstreams: [web-soak]}
+  - {name: web-eu-west-prod,       upstreams: [web-soak]}
+  - {name: web-eu-north-prod,      upstreams: [web-soak]}
+  - {name: web-ap-south-prod,      upstreams: [web-soak]}
+  - {name: web-sa-east-prod,       upstreams: [web-soak]}
+  - {name: web-hotfix,             upstreams: [web-qa], requiresApproval: true}
+
+  # ============================================================
+  # desktop — single control-flow, 10-layer pipeline
+  # ============================================================
+  - {name: desktop-dev,             warehouses: [wh-desktop]}
+  - {name: desktop-qa,              upstreams: [desktop-dev]}
+  - {name: desktop-integration,     upstreams: [desktop-qa]}
+  - {name: desktop-staging,         upstreams: [desktop-integration]}
+  - {name: desktop-preprod,         upstreams: [desktop-staging]}
+  - {name: desktop-internal,        upstreams: [desktop-preprod], controlFlow: true}
+  - {name: desktop-beta,            upstreams: [desktop-internal]}
+  - {name: desktop-smoke,           upstreams: [desktop-beta]}
+  - {name: desktop-soak,            upstreams: [desktop-smoke]}
+  - {name: desktop-prod-mac,        upstreams: [desktop-soak]}
+  - {name: desktop-prod-windows,    upstreams: [desktop-soak]}
+  - {name: desktop-prod-linux-deb,  upstreams: [desktop-soak]}
+  - {name: desktop-prod-linux-rpm,  upstreams: [desktop-soak]}
+  - {name: desktop-prod-linux-arch, upstreams: [desktop-soak]}
+  - {name: desktop-prod-linux-snap, upstreams: [desktop-soak]}
+  - {name: desktop-hotfix,          upstreams: [desktop-qa], requiresApproval: true}
+
+  # ============================================================
+  # cli — single control-flow, 10-layer pipeline
+  # ============================================================
+  - {name: cli-dev,                warehouses: [wh-cli]}
+  - {name: cli-qa,                 upstreams: [cli-dev]}
+  - {name: cli-integration,        upstreams: [cli-qa]}
+  - {name: cli-staging,            upstreams: [cli-integration]}
+  - {name: cli-preprod,            upstreams: [cli-staging]}
+  - {name: cli-internal,           upstreams: [cli-preprod], controlFlow: true}
+  - {name: cli-canary,             upstreams: [cli-internal]}
+  - {name: cli-smoke,              upstreams: [cli-canary]}
+  - {name: cli-soak,               upstreams: [cli-smoke]}
+  - {name: cli-prod-homebrew,      upstreams: [cli-soak]}
+  - {name: cli-prod-apt,           upstreams: [cli-soak]}
+  - {name: cli-prod-yum,           upstreams: [cli-soak]}
+  - {name: cli-prod-chocolatey,    upstreams: [cli-soak]}
+  - {name: cli-prod-scoop,         upstreams: [cli-soak]}
+  - {name: cli-prod-snap,          upstreams: [cli-soak]}
+  - {name: cli-prod-docker,        upstreams: [cli-soak]}
+  - {name: cli-hotfix,             upstreams: [cli-qa], requiresApproval: true}
+
+  # ============================================================
+  # sdk — language matrix, single control-flow, 10-layer pipeline
+  # ============================================================
+  - {name: sdk-dev,                warehouses: [wh-sdk]}
+  - {name: sdk-qa,                 upstreams: [sdk-dev]}
+  - {name: sdk-integration,        upstreams: [sdk-qa]}
+  - {name: sdk-staging,            upstreams: [sdk-integration]}
+  - {name: sdk-preprod,            upstreams: [sdk-staging]}
+  - {name: sdk-internal,           upstreams: [sdk-preprod], controlFlow: true}
+  - {name: sdk-canary,             upstreams: [sdk-internal]}
+  - {name: sdk-smoke,              upstreams: [sdk-canary]}
+  - {name: sdk-soak,               upstreams: [sdk-smoke]}
+  - {name: sdk-prod-go,            upstreams: [sdk-soak]}
+  - {name: sdk-prod-typescript,    upstreams: [sdk-soak]}
+  - {name: sdk-prod-python,        upstreams: [sdk-soak]}
+  - {name: sdk-prod-java,          upstreams: [sdk-soak]}
+  - {name: sdk-prod-ruby,          upstreams: [sdk-soak]}
+  - {name: sdk-prod-rust,          upstreams: [sdk-soak]}
+  - {name: sdk-prod-csharp,        upstreams: [sdk-soak]}
+  - {name: sdk-prod-php,           upstreams: [sdk-soak]}
+  - {name: sdk-prod-swift,         upstreams: [sdk-soak]}
+  - {name: sdk-prod-kotlin,        upstreams: [sdk-soak]}
+  - {name: sdk-hotfix,             upstreams: [sdk-qa], requiresApproval: true}
+
+  # ============================================================
+  # api-client — single control-flow, 10-layer pipeline
+  # ============================================================
+  - {name: api-client-dev,          warehouses: [wh-api-client]}
+  - {name: api-client-qa,           upstreams: [api-client-dev]}
+  - {name: api-client-integration,  upstreams: [api-client-qa]}
+  - {name: api-client-staging,      upstreams: [api-client-integration]}
+  - {name: api-client-preprod,      upstreams: [api-client-staging]}
+  - {name: api-client-internal,     upstreams: [api-client-preprod], controlFlow: true}
+  - {name: api-client-canary,       upstreams: [api-client-internal]}
+  - {name: api-client-smoke,        upstreams: [api-client-canary]}
+  - {name: api-client-soak,         upstreams: [api-client-smoke]}
+  - {name: api-client-prod-go,      upstreams: [api-client-soak]}
+  - {name: api-client-prod-ts,      upstreams: [api-client-soak]}
+  - {name: api-client-prod-python,  upstreams: [api-client-soak]}
+  - {name: api-client-prod-java,    upstreams: [api-client-soak]}
+  - {name: api-client-prod-ruby,    upstreams: [api-client-soak]}
+  - {name: api-client-prod-rust,    upstreams: [api-client-soak]}
+  - {name: api-client-prod-csharp,  upstreams: [api-client-soak]}
+  - {name: api-client-prod-php,     upstreams: [api-client-soak]}
+  - {name: api-client-prod-swift,   upstreams: [api-client-soak]}
+  - {name: api-client-prod-kotlin,  upstreams: [api-client-soak]}
+  - {name: api-client-hotfix,       upstreams: [api-client-qa], requiresApproval: true}

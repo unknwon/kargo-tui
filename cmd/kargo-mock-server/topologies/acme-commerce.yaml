@@ -1,0 +1,177 @@
+project: acme-commerce
+argoCDURL: https://argocd.example.com
+
+# 8 services, each with a 10-layer pipeline:
+#   dev -> qa -> integration -> staging -> preprod -> trunk(ctl)
+#       -> canary -> smoke -> soak -> {region}-prod
+# Plus a hotfix branch off qa. 8 control-flow nodes total.
+warehouses:
+  - name: wh-checkout
+    git:   [{repoURL: "github.com/acme/checkout",      branch: main}]
+    image: [{repoURL: "ghcr.io/acme/checkout"}]
+  - name: wh-inventory
+    git:   [{repoURL: "github.com/acme/inventory",     branch: main}]
+    image: [{repoURL: "ghcr.io/acme/inventory"}]
+  - name: wh-auth
+    git:   [{repoURL: "github.com/acme/auth",          branch: main}]
+    image: [{repoURL: "ghcr.io/acme/auth"}]
+  - name: wh-search
+    git:   [{repoURL: "github.com/acme/search",        branch: main}]
+    image: [{repoURL: "ghcr.io/acme/search"}]
+  - name: wh-payments
+    git:   [{repoURL: "github.com/acme/payments",      branch: main}]
+    image: [{repoURL: "ghcr.io/acme/payments"}]
+  - name: wh-notifications
+    git:   [{repoURL: "github.com/acme/notifications", branch: main}]
+    image: [{repoURL: "ghcr.io/acme/notifications"}]
+  - name: wh-orders
+    git:   [{repoURL: "github.com/acme/orders",        branch: main}]
+    image: [{repoURL: "ghcr.io/acme/orders"}]
+  - name: wh-pricing
+    git:   [{repoURL: "github.com/acme/pricing",       branch: main}]
+    image: [{repoURL: "ghcr.io/acme/pricing"}]
+
+stages:
+  # ============================================================
+  # checkout
+  # ============================================================
+  - {name: checkout-dev,           warehouses: [wh-checkout]}
+  - {name: checkout-qa,            upstreams: [checkout-dev]}
+  - {name: checkout-integration,   upstreams: [checkout-qa]}
+  - {name: checkout-staging,       upstreams: [checkout-integration]}
+  - {name: checkout-preprod,       upstreams: [checkout-staging]}
+  - {name: checkout-trunk,         upstreams: [checkout-preprod], controlFlow: true}
+  - {name: checkout-canary,        upstreams: [checkout-trunk]}
+  - {name: checkout-smoke,         upstreams: [checkout-canary]}
+  - {name: checkout-soak,          upstreams: [checkout-smoke]}
+  - {name: checkout-us-east-prod,  upstreams: [checkout-soak]}
+  - {name: checkout-us-west-prod,  upstreams: [checkout-soak]}
+  - {name: checkout-eu-west-prod,  upstreams: [checkout-soak]}
+  - {name: checkout-ap-south-prod, upstreams: [checkout-soak]}
+  - {name: checkout-hotfix,        upstreams: [checkout-qa], requiresApproval: true}
+
+  # ============================================================
+  # inventory
+  # ============================================================
+  - {name: inventory-dev,           warehouses: [wh-inventory]}
+  - {name: inventory-qa,            upstreams: [inventory-dev]}
+  - {name: inventory-integration,   upstreams: [inventory-qa]}
+  - {name: inventory-staging,       upstreams: [inventory-integration]}
+  - {name: inventory-preprod,       upstreams: [inventory-staging]}
+  - {name: inventory-trunk,         upstreams: [inventory-preprod], controlFlow: true}
+  - {name: inventory-canary,        upstreams: [inventory-trunk]}
+  - {name: inventory-smoke,         upstreams: [inventory-canary]}
+  - {name: inventory-soak,          upstreams: [inventory-smoke]}
+  - {name: inventory-us-east-prod,  upstreams: [inventory-soak]}
+  - {name: inventory-us-west-prod,  upstreams: [inventory-soak]}
+  - {name: inventory-eu-west-prod,  upstreams: [inventory-soak]}
+  - {name: inventory-ap-south-prod, upstreams: [inventory-soak]}
+  - {name: inventory-hotfix,        upstreams: [inventory-qa], requiresApproval: true}
+
+  # ============================================================
+  # auth
+  # ============================================================
+  - {name: auth-dev,            warehouses: [wh-auth]}
+  - {name: auth-qa,             upstreams: [auth-dev]}
+  - {name: auth-integration,    upstreams: [auth-qa]}
+  - {name: auth-staging,        upstreams: [auth-integration]}
+  - {name: auth-preprod,        upstreams: [auth-staging]}
+  - {name: auth-trunk,          upstreams: [auth-preprod], controlFlow: true}
+  - {name: auth-canary,         upstreams: [auth-trunk]}
+  - {name: auth-smoke,          upstreams: [auth-canary]}
+  - {name: auth-soak,           upstreams: [auth-smoke]}
+  - {name: auth-us-east-prod,   upstreams: [auth-soak]}
+  - {name: auth-us-west-prod,   upstreams: [auth-soak]}
+  - {name: auth-eu-west-prod,   upstreams: [auth-soak]}
+  - {name: auth-ap-south-prod,  upstreams: [auth-soak]}
+  - {name: auth-hotfix,         upstreams: [auth-qa], requiresApproval: true}
+
+  # ============================================================
+  # search
+  # ============================================================
+  - {name: search-dev,           warehouses: [wh-search]}
+  - {name: search-qa,            upstreams: [search-dev]}
+  - {name: search-integration,   upstreams: [search-qa]}
+  - {name: search-staging,       upstreams: [search-integration]}
+  - {name: search-preprod,       upstreams: [search-staging]}
+  - {name: search-trunk,         upstreams: [search-preprod], controlFlow: true}
+  - {name: search-canary,        upstreams: [search-trunk]}
+  - {name: search-smoke,         upstreams: [search-canary]}
+  - {name: search-soak,          upstreams: [search-smoke]}
+  - {name: search-us-east-prod,  upstreams: [search-soak]}
+  - {name: search-us-west-prod,  upstreams: [search-soak]}
+  - {name: search-eu-west-prod,  upstreams: [search-soak]}
+  - {name: search-ap-south-prod, upstreams: [search-soak]}
+  - {name: search-hotfix,        upstreams: [search-qa], requiresApproval: true}
+
+  # ============================================================
+  # payments (compliance-heavy: regional prods require approval)
+  # ============================================================
+  - {name: payments-dev,           warehouses: [wh-payments]}
+  - {name: payments-qa,            upstreams: [payments-dev]}
+  - {name: payments-integration,   upstreams: [payments-qa]}
+  - {name: payments-staging,       upstreams: [payments-integration]}
+  - {name: payments-preprod,       upstreams: [payments-staging]}
+  - {name: payments-trunk,         upstreams: [payments-preprod], controlFlow: true}
+  - {name: payments-canary,        upstreams: [payments-trunk]}
+  - {name: payments-smoke,         upstreams: [payments-canary]}
+  - {name: payments-soak,          upstreams: [payments-smoke]}
+  - {name: payments-us-east-prod,  upstreams: [payments-soak], requiresApproval: true}
+  - {name: payments-us-west-prod,  upstreams: [payments-soak], requiresApproval: true}
+  - {name: payments-eu-west-prod,  upstreams: [payments-soak], requiresApproval: true}
+  - {name: payments-ap-south-prod, upstreams: [payments-soak], requiresApproval: true}
+  - {name: payments-hotfix,        upstreams: [payments-qa], requiresApproval: true}
+
+  # ============================================================
+  # notifications
+  # ============================================================
+  - {name: notifications-dev,           warehouses: [wh-notifications]}
+  - {name: notifications-qa,            upstreams: [notifications-dev]}
+  - {name: notifications-integration,   upstreams: [notifications-qa]}
+  - {name: notifications-staging,       upstreams: [notifications-integration]}
+  - {name: notifications-preprod,       upstreams: [notifications-staging]}
+  - {name: notifications-trunk,         upstreams: [notifications-preprod], controlFlow: true}
+  - {name: notifications-canary,        upstreams: [notifications-trunk]}
+  - {name: notifications-smoke,         upstreams: [notifications-canary]}
+  - {name: notifications-soak,          upstreams: [notifications-smoke]}
+  - {name: notifications-us-east-prod,  upstreams: [notifications-soak]}
+  - {name: notifications-us-west-prod,  upstreams: [notifications-soak]}
+  - {name: notifications-eu-west-prod,  upstreams: [notifications-soak]}
+  - {name: notifications-ap-south-prod, upstreams: [notifications-soak]}
+  - {name: notifications-hotfix,        upstreams: [notifications-qa], requiresApproval: true}
+
+  # ============================================================
+  # orders
+  # ============================================================
+  - {name: orders-dev,           warehouses: [wh-orders]}
+  - {name: orders-qa,            upstreams: [orders-dev]}
+  - {name: orders-integration,   upstreams: [orders-qa]}
+  - {name: orders-staging,       upstreams: [orders-integration]}
+  - {name: orders-preprod,       upstreams: [orders-staging]}
+  - {name: orders-trunk,         upstreams: [orders-preprod], controlFlow: true}
+  - {name: orders-canary,        upstreams: [orders-trunk]}
+  - {name: orders-smoke,         upstreams: [orders-canary]}
+  - {name: orders-soak,          upstreams: [orders-smoke]}
+  - {name: orders-us-east-prod,  upstreams: [orders-soak]}
+  - {name: orders-us-west-prod,  upstreams: [orders-soak]}
+  - {name: orders-eu-west-prod,  upstreams: [orders-soak]}
+  - {name: orders-ap-south-prod, upstreams: [orders-soak]}
+  - {name: orders-hotfix,        upstreams: [orders-qa], requiresApproval: true}
+
+  # ============================================================
+  # pricing
+  # ============================================================
+  - {name: pricing-dev,           warehouses: [wh-pricing]}
+  - {name: pricing-qa,            upstreams: [pricing-dev]}
+  - {name: pricing-integration,   upstreams: [pricing-qa]}
+  - {name: pricing-staging,       upstreams: [pricing-integration]}
+  - {name: pricing-preprod,       upstreams: [pricing-staging]}
+  - {name: pricing-trunk,         upstreams: [pricing-preprod], controlFlow: true}
+  - {name: pricing-canary,        upstreams: [pricing-trunk]}
+  - {name: pricing-smoke,         upstreams: [pricing-canary]}
+  - {name: pricing-soak,          upstreams: [pricing-smoke]}
+  - {name: pricing-us-east-prod,  upstreams: [pricing-soak]}
+  - {name: pricing-us-west-prod,  upstreams: [pricing-soak]}
+  - {name: pricing-eu-west-prod,  upstreams: [pricing-soak]}
+  - {name: pricing-ap-south-prod, upstreams: [pricing-soak]}
+  - {name: pricing-hotfix,        upstreams: [pricing-qa], requiresApproval: true}
