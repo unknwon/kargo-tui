@@ -28,30 +28,29 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nsLoading = false
 		m.projects = msg.projects
 		m.projectsError = msg.err
-		// Cold-start error handling. The project picker can only retry
-		// against the same broken endpoint, so a hard error here is a
-		// dead end. Two automatic recoveries:
+		// Automatic error recovery for the project picker. Two paths:
 		//
 		//  1. Token expired -> start the SSO re-login flow against the
-		//     current context. The user can't see/press anything before
-		//     the picker fails, so the TUI does it for them.
-		//  2. Other failures (network, server down) -> drop to the
-		//     context picker, with the error preserved, so the user can
-		//     switch contexts or add a new one.
-		//
-		// Restricted to the cold start (!nsExplicit): any later picker
-		// open (mid-session reopen, or load following an explicit
-		// context switch) keeps the error in-place. Otherwise repeated
-		// failures would bounce the user out of the picker after they
-		// just opened it.
-		if msg.err != nil && !m.nsExplicit {
+		//     current context. The picker can only retry against the
+		//     same broken endpoint, so the TUI does it for the user.
+		//     Fires for both cold start and post context-switch loads
+		//     since either can land on a saved-but-stale token.
+		//  2. Other failures (network, server down) on cold start ->
+		//     drop to the context picker with the error preserved so
+		//     the user can switch contexts or add a new one. Restricted
+		//     to cold start (!nsExplicit): later picker opens
+		//     (mid-session reopen, or load following an explicit
+		//     context switch) keep the error in place, otherwise
+		//     repeated failures would bounce the user out of the picker
+		//     they just opened.
+		if msg.err != nil {
 			if kargo.IsUnauthenticated(msg.err) {
 				m.noteAuthFailure(msg.err)
 				if cmd, ok := m.startReloginCurrentContext(); ok {
 					return m, cmd
 				}
 			}
-			if m.ctxBuilder != nil && len(m.ctxNames) > 0 {
+			if !m.nsExplicit && m.ctxBuilder != nil && len(m.ctxNames) > 0 {
 				m.phase = phasePickingContext
 				m.ctxCursor = 0
 				m.ctxError = msg.err
@@ -227,6 +226,8 @@ func (m Model) pickerView() tea.View {
 		Padding(1, 2).
 		Width(innerW).
 		Render(body)
+	offX, offY := centerPopupOffsets(box, m.width, m.height)
+	box = centerPopup(box, m.width, m.height)
 	box = paintFrame(box, m.width, m.height)
 
 	v := tea.NewView(box)
@@ -235,9 +236,10 @@ func (m Model) pickerView() tea.View {
 	if c := m.nsFilter.Cursor(); c != nil {
 		// Box: border (1) + Padding(1,2). Offset the input's intrinsic
 		// (x, 0) cursor by the popup's top-left content origin plus the
-		// filter line's position inside the body.
-		c.X += 3
-		c.Y += 2 + filterRow
+		// filter line's position inside the body, then by the centering
+		// offset so the cursor tracks the centered popup.
+		c.X += offX + 3
+		c.Y += offY + 2 + filterRow
 		v.Cursor = c
 	}
 	return v

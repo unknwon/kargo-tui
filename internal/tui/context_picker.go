@@ -288,6 +288,8 @@ func (m Model) contextPickerView() tea.View {
 		Padding(1, 2).
 		Width(innerW).
 		Render(body)
+	offX, offY := centerPopupOffsets(box, m.width, m.height)
+	box = centerPopup(box, m.width, m.height)
 	box = paintFrame(box, m.width, m.height)
 
 	v := tea.NewView(box)
@@ -302,9 +304,10 @@ func (m Model) contextPickerView() tea.View {
 			c = m.ctxFilter.Cursor()
 		}
 		if c != nil {
-			// Box: border (1) + Padding(1,2).
-			c.X += 3
-			c.Y += 2 + filterRow
+			// Box: border (1) + Padding(1,2). The extra (offX, offY)
+			// shift lands the cursor inside the centered popup.
+			c.X += offX + 3
+			c.Y += offY + 2 + filterRow
 			v.Cursor = c
 		}
 	}
