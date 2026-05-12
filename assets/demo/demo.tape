@@ -6,6 +6,7 @@
 # Output lands at assets/demo/demo.gif.
 
 Output assets/demo/demo.gif
+Output assets/demo/demo.mp4
 
 Set Width 1600
 Set Height 900
@@ -14,10 +15,18 @@ Set Framerate 24
 Set Theme "Catppuccin Mocha"
 Set PlaybackSpeed 1.0
 
+# Build silently so the tape is self-contained — vhs runs in a fresh
+# pty, so any artifact in ./bin from a previous run isn't guaranteed.
+Hide
+Type "go build -o ./bin/kargo-tui ./cmd/kargo-tui && clear"
+Enter
+Sleep 8s
+Show
+
 # ============================================================
 # 1. Boot
 # ============================================================
-Type "./bin/kargo-tui --context mock"
+Type "./bin/kargo-tui --context demo"
 Enter
 Sleep 1500ms
 

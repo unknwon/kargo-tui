@@ -6,7 +6,7 @@ Here it is, the missing Kargo console for operating with hundreds of stages. Ent
 
 ## Demo
 
-![kargo-tui demo](https://vhs.charm.sh/vhs-74M4JsQYmytTjras8vuc7q.gif)
+![kargo-tui demo](https://vhs.charm.sh/vhs-2JsGDXaB9SJ8f3ZQ1pSiHN.gif)
 
 The demo runs against a local mock server that ships with this repo (`./bin/kargo-mock-server`). See [`scripts/README.md`](scripts/README.md) for how to reproduce it.
 
