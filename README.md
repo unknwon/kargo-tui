@@ -20,6 +20,8 @@ https://github.com/user-attachments/assets/2be76079-b716-45ca-a4ab-a6c02d897359
 go install unknwon.dev/kargo-tui/cmd/kargo-tui@latest
 ```
 
+Or download [archives built from the latest `main`](https://github.com/unknwon/kargo-tui/releases/tag/latest-commit-build).
+
 ## Authentication
 
 `kargo-tui` authenticates against a Kargo API server using the same OIDC SSO (PKCE auth-code) flow as `kargo login --sso`. Credentials are saved as named "contexts" in the kargo-tui config file.
