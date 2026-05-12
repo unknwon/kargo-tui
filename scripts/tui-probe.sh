@@ -47,7 +47,7 @@ cmd_start_mock() {
     tmux kill-session -t "$MOCK_SESSION" 2>/dev/null || true
     go build -o ./bin/kargo-mock-server ./cmd/kargo-mock-server
     tmux new-session -d -s "$MOCK_SESSION" -x 120 -y 30 \
-        "./bin/kargo-mock-server --addr :8080 --fixtures-dir examples/mock"
+        "./bin/kargo-mock-server --addr :8080 --fixtures-dir cmd/kargo-mock-server/topologies"
     # Give the server a moment to bind and bootstrap.
     sleep 1
     echo "started mock server on :8080"

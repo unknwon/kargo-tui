@@ -207,4 +207,4 @@ at each step.
 - `scripts/tui-probe.sh` — the script itself.
 - `cmd/kargo-mock-server/` — fake Kargo API the TUI talks to during
   these tests.
-- `examples/mock/*.yaml` — topology fixtures consumed by the mock.
+- `cmd/kargo-mock-server/topologies/*.yaml` — topology fixtures consumed by the mock.

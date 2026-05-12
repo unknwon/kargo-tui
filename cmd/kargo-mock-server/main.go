@@ -44,8 +44,8 @@ func main() {
 			},
 			&cli.StringFlag{
 				Name:  "fixtures-dir",
-				Value: "examples/mock",
-				Usage: "Directory holding the three topology YAMLs",
+				Value: "cmd/kargo-mock-server/topologies",
+				Usage: "Directory holding the topology YAMLs",
 			},
 		},
 		Action: run,
