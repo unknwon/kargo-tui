@@ -285,7 +285,7 @@ func emptyDash(s string) string {
 	return s
 }
 
-// whenString is the canonical "<relative> ago (<absolute UTC>)" format used
+// whenString is the canonical "<relative> ago (<absolute local>)" format used
 // in every detail view. Returns a muted em-dash when t is zero.
 //
 // Future timestamps (clock skew, OCI image build > now) are clamped to "0s
@@ -294,7 +294,7 @@ func whenString(t time.Time) string {
 	if t.IsZero() {
 		return lipgloss.NewStyle().Foreground(muted).Render("—")
 	}
-	return ageString(t) + " ago (" + t.UTC().Format("2006-01-02 15:04:05 UTC") + ")"
+	return ageString(t) + " ago (" + t.Local().Format("2006-01-02 15:04:05 MST") + ")"
 }
 
 // whenStringApprox is whenString prefixed with "~" to mark the timestamp as
@@ -304,10 +304,10 @@ func whenStringApprox(t time.Time) string {
 	if t.IsZero() {
 		return lipgloss.NewStyle().Foreground(muted).Render("—")
 	}
-	return lipgloss.NewStyle().Foreground(muted).Render("~") + ageString(t) + lipgloss.NewStyle().Foreground(muted).Render(" ago ("+t.UTC().Format("2006-01-02 15:04:05 UTC")+")")
+	return lipgloss.NewStyle().Foreground(muted).Render("~") + ageString(t) + lipgloss.NewStyle().Foreground(muted).Render(" ago ("+t.Local().Format("2006-01-02 15:04:05 MST")+")")
 }
 
-// stepWhen renders a promotion step's "<relative> ago (<UTC>)" timestamp,
+// stepWhen renders a promotion step's "<relative> ago (<local>)" timestamp,
 // preferring finished > started. Falls back to the parent promotion's start
 // time prefixed with "~" to mark it approximate when the controller hasn't
 // stamped the step yet (e.g. step still queued, or older Kargo server).
