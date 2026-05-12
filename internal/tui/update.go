@@ -34,9 +34,6 @@ func (m Model) layoutDims() (int, int) {
 	return tw, panel
 }
 
-// Update is the Bubble Tea reducer. It routes window resizes, refresh ticks,
-// loaded data, key presses, and overlay/picker events to the right handler
-// and returns a possibly-mutated model plus any follow-up commands.
 // startReloginCurrentContext launches the SSO re-login flow against the
 // model's current context and returns the dispatch command. Returns
 // (nil, false) when re-login isn't possible: ctxRelogin wasn't wired by
@@ -49,6 +46,7 @@ func (m *Model) startReloginCurrentContext() (tea.Cmd, bool) {
 		return nil, false
 	}
 	name := m.contextName
+	relogin := m.ctxRelogin
 	url := ""
 	if m.client != nil {
 		url = m.client.BaseURL()
@@ -69,9 +67,11 @@ func (m *Model) startReloginCurrentContext() (tea.Cmd, bool) {
 		send = func(tea.Msg) {}
 	}
 	// Adapt the name-based relogin callback to the URL-based shape
-	// runContextLoginCmd expects. The name is closed over here.
+	// runContextLoginCmd expects. The name and relogin func are closed
+	// over by value here so a later mutation of the model can't change
+	// what the goroutine ends up calling.
 	loginByName := func(ctx context.Context, _ string, status func(string)) (string, error) {
-		return m.ctxRelogin(ctx, name, status)
+		return relogin(ctx, name, status)
 	}
 	return runContextLoginCmd(loginByName, lctx, name, send), true
 }
