@@ -1,0 +1,176 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  push:
+    branches:
+      - main
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOPROXY: "https://proxy.golang.org"
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-release:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
+      build_version: ${{ steps.version.outputs.build_version }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+      - name: Determine version
+        id: version
+        run: |
+          # Need tags reachable so `git describe` can find them.
+          git fetch --tags --depth=1 origin || true
+
+          # closest_tag is the nearest annotated/lightweight tag reachable
+          # from HEAD; empty if no tags exist.
+          closest_tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+
+          if [ "${{ github.event_name }}" = "release" ]; then
+            release_tag="${{ github.event.release.tag_name }}"
+            # version is the archive-name slug (no leading v).
+            version="${release_tag#v}"
+            # build_version is the literal release tag, stamped into the binary.
+            build_version="$release_tag"
+          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            release_tag="latest-commit-build"
+            version="$(git rev-parse --short HEAD)"
+            build_version="${closest_tag:-dev}+dev"
+          else
+            release_tag="release-archive-testing"
+            version="$(git rev-parse --short HEAD)"
+            build_version="${closest_tag:-dev}+dev"
+          fi
+
+          {
+            echo "version=$version"
+            echo "release_tag=$release_tag"
+            echo "build_version=$build_version"
+          } >> "$GITHUB_OUTPUT"
+      - name: Ensure rolling tag and release exist
+        if: ${{ github.event_name != 'release' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+        run: |
+          # Force-move the rolling tag to HEAD. For `release` events the tag
+          # already exists at the right commit, so we skip this step entirely.
+          git tag -f "$RELEASE_TAG"
+          git push origin "$RELEASE_TAG" --force
+
+          RELEASE_TITLE="Release archive testing"
+          RELEASE_NOTES="Automated testing release for workflow development."
+          if [ "$RELEASE_TAG" = "latest-commit-build" ]; then
+            RELEASE_TITLE="Latest commit build"
+            RELEASE_NOTES="Automated build from the latest commit on main branch. This release is updated automatically with every push to main."
+          fi
+
+          # Single-flight: this job is the only one that creates the release,
+          # so the build matrix never races on `gh release create`.
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --title "$RELEASE_TITLE" \
+              --notes "$RELEASE_NOTES" \
+              --prerelease
+          fi
+
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {goos: linux, goarch: amd64}
+          - {goos: linux, goarch: arm64}
+          - {goos: linux, goarch: "386"}
+          - {goos: darwin, goarch: amd64}
+          - {goos: darwin, goarch: arm64}
+          - {goos: windows, goarch: amd64}
+          - {goos: windows, goarch: arm64}
+          - {goos: windows, goarch: "386"}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: 1.26.x
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          BINARY_NAME="kargo-tui"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BINARY_NAME="kargo-tui.exe"
+          fi
+
+          go build -v \
+            -ldflags "
+              -X 'main.buildVersion=${{ needs.prepare-release.outputs.build_version }}'
+              -X 'main.buildDate=$(date -u '+%Y-%m-%d %I:%M:%S %Z')'
+              -X 'main.buildCommit=$(git rev-parse HEAD)'
+            " \
+            -trimpath -o "$BINARY_NAME" ./cmd/kargo-tui
+      - name: Create archives
+        run: |
+          mkdir -p dist
+          BINARY_NAME="kargo-tui"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BINARY_NAME="kargo-tui.exe"
+          fi
+
+          VERSION="${{ needs.prepare-release.outputs.version }}"
+          ARCHIVE_BASE="kargo-tui_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}"
+
+          zip "dist/${ARCHIVE_BASE}.zip" "$BINARY_NAME"
+
+          if [ "${{ matrix.goos }}" = "linux" ]; then
+            tar -czvf "dist/${ARCHIVE_BASE}.tar.gz" "$BINARY_NAME"
+          fi
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+        run: |
+          # Clean any existing assets for this os/arch so rebuilds replace
+          # rather than accumulate alongside.
+          PATTERN="_${{ matrix.goos }}_${{ matrix.goarch }}\."
+          gh release view "$RELEASE_TAG" --json assets --jq ".assets[].name" | grep "$PATTERN" | while read -r asset; do
+            gh release delete-asset "$RELEASE_TAG" "$asset" --yes || true
+          done
+
+          gh release upload "$RELEASE_TAG" dist/kargo-tui_*.zip --clobber
+          if [ "${{ matrix.goos }}" = "linux" ]; then
+            gh release upload "$RELEASE_TAG" dist/kargo-tui_*.tar.gz --clobber
+          fi
+
+  notify-failure:
+    name: Notify on failure
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: ${{ failure() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    steps:
+      - name: Send email on failure
+        uses: unknwon/send-email-on-failure@89339a1bc93f4ad1d30f3b7e4911fcba985c9adb # v1
+        with:
+          smtp_username: ${{ secrets.SMTP_USERNAME }}
+          smtp_password: ${{ secrets.SMTP_PASSWORD }}

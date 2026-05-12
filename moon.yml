@@ -15,7 +15,12 @@ fileGroups:
 
 tasks:
   install:
-    command: 'go install ./cmd/kargo-tui'
+    script: |
+      go install -trimpath -ldflags "
+        -X 'main.buildVersion=$(git describe --tags --abbrev=0 2>/dev/null || echo dev)+dev'
+        -X 'main.buildDate=$(date -u '+%Y-%m-%d %H:%M:%S %Z')'
+        -X 'main.buildCommit=$(git rev-parse HEAD)'
+      " ./cmd/kargo-tui
     inputs:
       - '@group(sources)'
       - '@group(configs)'
