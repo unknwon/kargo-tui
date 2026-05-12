@@ -30,9 +30,15 @@ const (
 // for promote-to-stage; verified at the source for promote-downstream).
 // Ineligible candidates are rendered with a marker and require an extra
 // "approve first?" confirmation before the promotion is dispatched.
+// Current is true when the freight is one of the stage's
+// currently-deployed freight (Stage.CurrentFreight): the target stage
+// for promote-to-stage, the source stage for promote-downstream.
+// Rendered with a distinct marker so the user can tell which row
+// they'd be re-promoting.
 type promoteCandidate struct {
 	Freight  kargo.Freight
 	Eligible bool
+	Current  bool
 }
 
 // promotePickerPage returns the number of rows pgup/pgdown moves the
@@ -94,48 +100,35 @@ func (m *Model) openPromoteDownstreamOverlay(stage *kargo.Stage) {
 	m.promoteResult = ""
 	m.promoteError = nil
 	m.promoteDownstream = true
-	m.promoteCandidates = downstreamCandidateFreight(m.freights, stage.Name)
-}
-
-// restrictPromoteCandidates narrows the candidate list to the freight
-// whose names are in keep, preserving the existing newest-first order.
-// Used by `>` on a multi-origin deploy stage to restrict the picker to
-// the freight actually currently deployed, since PromoteDownstream
-// targets one freight at a time. Resets the cursor to the top.
-func (m *Model) restrictPromoteCandidates(keep []string) {
-	if len(keep) == 0 {
-		return
-	}
-	want := make(map[string]struct{}, len(keep))
-	for _, n := range keep {
-		want[n] = struct{}{}
-	}
-	out := m.promoteCandidates[:0]
-	for _, c := range m.promoteCandidates {
-		if _, ok := want[c.Freight.Name]; ok {
-			out = append(out, c)
-		}
-	}
-	m.promoteCandidates = out
-	m.promoteCursor = 0
+	m.promoteCandidates = downstreamCandidateFreight(m.freights, stage)
 }
 
 // downstreamCandidateFreight returns every freight in the project sorted
 // newest-first, with Eligible set on the entries verified at the source
 // stage (the natural PromoteDownstream candidates). Non-eligible entries
 // are surfaced too so the user can opt them in by approving the freight
-// for each downstream stage before the promote fires.
-func downstreamCandidateFreight(all []kargo.Freight, sourceStage string) []promoteCandidate {
+// for each downstream stage before the promote fires. Current is set on
+// freight currently deployed at the source stage so the picker can mark
+// the "you'd be re-promoting this" row distinctly.
+func downstreamCandidateFreight(all []kargo.Freight, source *kargo.Stage) []promoteCandidate {
+	if source == nil {
+		return nil
+	}
+	current := make(map[string]struct{}, len(source.CurrentFreight))
+	for _, c := range source.CurrentFreight {
+		current[c] = struct{}{}
+	}
 	out := make([]promoteCandidate, 0, len(all))
 	for _, f := range all {
 		eligible := false
 		for _, vs := range f.VerifiedStages {
-			if vs == sourceStage {
+			if vs == source.Name {
 				eligible = true
 				break
 			}
 		}
-		out = append(out, promoteCandidate{Freight: f, Eligible: eligible})
+		_, isCurrent := current[f.Name]
+		out = append(out, promoteCandidate{Freight: f, Eligible: eligible, Current: isCurrent})
 	}
 	sortPromoteCandidates(out)
 	return out
@@ -163,6 +156,10 @@ func candidateFreight(all []kargo.Freight, target *kargo.Stage) []promoteCandida
 	for _, w := range target.DirectWarehouses {
 		directWH[w] = struct{}{}
 	}
+	current := make(map[string]struct{}, len(target.CurrentFreight))
+	for _, c := range target.CurrentFreight {
+		current[c] = struct{}{}
+	}
 	out := make([]promoteCandidate, 0, len(all))
 	for _, f := range all {
 		eligible := false
@@ -185,7 +182,8 @@ func candidateFreight(all []kargo.Freight, target *kargo.Stage) []promoteCandida
 				}
 			}
 		}
-		out = append(out, promoteCandidate{Freight: f, Eligible: eligible})
+		_, isCurrent := current[f.Name]
+		out = append(out, promoteCandidate{Freight: f, Eligible: eligible, Current: isCurrent})
 	}
 	sortPromoteCandidates(out)
 	return out
@@ -387,12 +385,16 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 			end = len(m.promoteCandidates)
 		}
 		mutedStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
+		currentStyle := lipgloss.NewStyle().Foreground(healthy).Background(bg).Bold(true)
 		rows := make([]string, 0, end-start)
 		for i := start; i < end; i++ {
 			c := m.promoteCandidates[i]
 			f := c.Freight
 			label := shortFreight(f.Name) + aliasSuffix(f.Alias)
 			meta := []string{}
+			if c.Current {
+				meta = append(meta, "current")
+			}
 			if !c.Eligible {
 				meta = append(meta, "needs approval")
 			}
@@ -407,20 +409,27 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 				label += "  " + strings.Join(meta, " · ")
 			}
 			label = clipToWidth(label, rowBudget)
+			// Off-cursor: current ●, needs-approval ?, else blank. On the
+			// cursor row the bar already signals focus and the meta strip
+			// ("current" / "needs approval") carries the state in words,
+			// so don't try to squeeze a state glyph next to the bar — it
+			// produces a glued-on look without a space separator.
 			marker := "  "
-			if !c.Eligible {
+			switch {
+			case c.Current:
+				marker = "● "
+			case !c.Eligible:
 				marker = "? "
 			}
 			if i == m.promoteCursor {
 				marker = "▌ "
-				if !c.Eligible {
-					marker = "▌?"
-				}
 			}
 			row := marker + label
 			switch {
 			case i == m.promoteCursor:
 				rows = append(rows, selStyle.Padding(0, 1).Render(row))
+			case c.Current:
+				rows = append(rows, currentStyle.Padding(0, 1).Render(row))
 			case !c.Eligible:
 				rows = append(rows, mutedStyle.Padding(0, 1).Render(row))
 			default:
@@ -527,6 +536,7 @@ func (m Model) promoteViewingContent(innerW int) string {
 	keyStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
 	valStyle := lipgloss.NewStyle().Foreground(normal).Background(bg)
 	warnStyle := lipgloss.NewStyle().Foreground(progressing).Background(bg)
+	currentStyle := lipgloss.NewStyle().Foreground(healthy).Background(bg).Bold(true)
 	row := func(k, v string) string {
 		return keyStyle.Render(padRight(k+":", 12)) + " " + valStyle.Render(wrap(v, innerW-13))
 	}
@@ -534,6 +544,9 @@ func (m Model) promoteViewingContent(innerW int) string {
 	lines = append(lines, titleStyle.Render(f.Name))
 	if f.Alias != "" {
 		lines = append(lines, keyStyle.Render(f.Alias))
+	}
+	if c.Current {
+		lines = append(lines, currentStyle.Render("● Currently deployed at "+m.promoteStage+"."))
 	}
 	if !c.Eligible {
 		if m.promoteDownstream {

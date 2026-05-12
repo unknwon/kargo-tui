@@ -593,9 +593,49 @@ func (c *canvas) renderRect(x0, y0, w, h int) string {
 	return b.String()
 }
 
-// renderGraph paints g onto a fresh canvas, then crops a viewport
-// (viewW × viewH) that keeps the cursor node visible.
-func renderGraph(g graphLayout, cursorIdx, viewW, viewH int) string {
+// graphRenderCache memoises the final rendered string for a given set
+// of inputs. The output of renderGraph is byte-identical for the same
+// (layoutVersion, cursorIdx, viewW, viewH, panX, panY) tuple, so a fast
+// wheel burst past the top or bottom of the layer (where the cursor
+// doesn't move) hits the cache and skips the full canvas paint.
+type graphRenderCache struct {
+	layoutVersion int
+	cursorIdx     int
+	viewW, viewH  int
+	panX, panY    int
+	out           string
+	valid         bool
+}
+
+// renderGraphCached is renderGraph with a single-slot cache keyed on
+// every input that affects the rendered output. The cache pointer comes
+// from the Model so it survives across value copies. Pass a nil cache to
+// bypass.
+func renderGraphCached(cache *graphRenderCache, layoutVersion int, g graphLayout, cursorIdx, viewW, viewH, panX, panY int) string {
+	if cache != nil && cache.valid &&
+		cache.layoutVersion == layoutVersion &&
+		cache.cursorIdx == cursorIdx &&
+		cache.viewW == viewW && cache.viewH == viewH &&
+		cache.panX == panX && cache.panY == panY {
+		return cache.out
+	}
+	out := renderGraph(g, cursorIdx, viewW, viewH, panX, panY)
+	if cache != nil {
+		cache.layoutVersion = layoutVersion
+		cache.cursorIdx = cursorIdx
+		cache.viewW, cache.viewH = viewW, viewH
+		cache.panX, cache.panY = panX, panY
+		cache.out = out
+		cache.valid = true
+	}
+	return out
+}
+
+// renderGraph paints g onto a fresh canvas, then crops a viewW × viewH
+// viewport anchored at (panX, panY). The caller (graphView via
+// recomputeGraphPan) is responsible for choosing a pan that keeps the
+// cursor node on screen; cursorIdx is used only for cursor highlighting.
+func renderGraph(g graphLayout, cursorIdx, viewW, viewH, panX, panY int) string {
 	cv := newCanvas(g.width, g.height)
 
 	edgeStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
@@ -680,30 +720,53 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH int) string {
 		drawNode(cv, n, border, bgStyle, i == cursorIdx, borderColor)
 	}
 
-	x0, y0 := graphPanOffsetFor(g, cursorIdx, viewW, viewH)
 	if viewW <= 0 {
 		viewW = g.width
 	}
 	if viewH <= 0 {
 		viewH = g.height
 	}
-	return cv.renderRect(x0, y0, viewW, viewH)
+	return cv.renderRect(panX, panY, viewW, viewH)
 }
 
-// graphPanOffsetFor computes the top-left canvas coordinate that the
-// renderer pans to so the cursor node stays fully on screen with a
-// small margin. Shared by the renderer and the mouse hit-tester so a
-// click on a visible node resolves back to its node index.
-func graphPanOffsetFor(g graphLayout, cursorIdx, viewW, viewH int) (int, int) {
-	x0, y0 := 0, 0
+// graphPanOffsetFor returns the top-left canvas coordinate the renderer
+// pans to. It keeps the cursor node fully on screen with a small margin
+// but otherwise preserves the incoming prevX/prevY so the viewport
+// doesn't shift when the cursor moves between already-visible nodes.
+// Called by recomputeGraphPan once per Update. The result is stored on
+// the Model and consumed by the renderer (graphView) and the click
+// hit-tester (hitTestGraphNode) so they agree on the visible region.
+func graphPanOffsetFor(g graphLayout, cursorIdx, viewW, viewH, prevX, prevY int) (int, int) {
 	if viewW <= 0 {
 		viewW = g.width
 	}
 	if viewH <= 0 {
 		viewH = g.height
 	}
-	if cursorIdx < 0 || cursorIdx >= len(g.nodes) {
+	maxX := g.width - viewW
+	if maxX < 0 {
+		maxX = 0
+	}
+	maxY := g.height - viewH
+	if maxY < 0 {
+		maxY = 0
+	}
+	clamp := func(x0, y0 int) (int, int) {
+		if x0 < 0 {
+			x0 = 0
+		} else if x0 > maxX {
+			x0 = maxX
+		}
+		if y0 < 0 {
+			y0 = 0
+		} else if y0 > maxY {
+			y0 = maxY
+		}
 		return x0, y0
+	}
+	x0, y0 := prevX, prevY
+	if cursorIdx < 0 || cursorIdx >= len(g.nodes) {
+		return clamp(x0, y0)
 	}
 	n := g.nodes[cursorIdx]
 	const margin = 2
@@ -733,9 +796,6 @@ func graphPanOffsetFor(g graphLayout, cursorIdx, viewW, viewH int) (int, int) {
 			}
 		}
 	}
-	if x0 < 0 {
-		x0 = 0
-	}
 	nodeBottom := n.Y + n.H
 	if n.Y-margin < y0 {
 		y0 = n.Y - margin
@@ -743,10 +803,12 @@ func graphPanOffsetFor(g graphLayout, cursorIdx, viewW, viewH int) (int, int) {
 	if nodeBottom+margin > y0+viewH {
 		y0 = nodeBottom + margin - viewH
 	}
-	if y0 < 0 {
-		y0 = 0
-	}
-	return x0, y0
+	// Clamp to the canvas so the viewport never extends past the edge.
+	// Without this, a cursor on the rightmost / bottommost node leaves
+	// x0+viewW > g.width (margin pushes past the edge); renderRect then
+	// crops, producing a body that's a few cells narrower / shorter than
+	// requested.
+	return clamp(x0, y0)
 }
 
 // drawNode paints a single node box. The first inner row is the stage
@@ -1038,7 +1100,7 @@ func (m Model) graphView() tea.View {
 		bodyH = 5
 	}
 	body := lipgloss.NewStyle().Background(bg).Padding(0, 1).
-		Render(renderGraph(g, cursorIdx, bodyW, bodyH))
+		Render(renderGraphCached(m.graphRender, m.graphLayoutVersion, g, cursorIdx, bodyW, bodyH, m.graphPanX, m.graphPanY))
 
 	// Compose the frame. Slot order: header, body, [banner|error|yank],
 	// [searchLine], statusLine, hint. searchLine is only emitted when it
@@ -1177,6 +1239,10 @@ func pickNeighbor(candidates []int, _ string) (int, bool) {
 // re-resolves any active name search since stage indices in the new
 // layout do not necessarily match the old ones.
 func (m *Model) rebuildGraph() {
+	// Bump the version up front so any cache check that runs against the
+	// new layout sees a fresh key (and so does the cache write after the
+	// next renderGraphCached call).
+	m.graphLayoutVersion++
 	// Snapshot the name of the currently-selected search match against
 	// the OLD layout before we overwrite it. Indices don't survive a
 	// rebuild — capturing prevName after the layout swap would look up
@@ -1249,6 +1315,24 @@ func (m *Model) rebuildGraph() {
 	}
 }
 
+// recomputeGraphPan updates m.graphPanX/Y so the cursor node stays
+// visible, otherwise preserving the existing offset. Called once at the
+// tail of Update so every key/mouse/resize/data-load message re-derives
+// the pan without per-handler instrumentation.
+func (m *Model) recomputeGraphPan() {
+	g := m.graphLayout
+	if len(g.nodes) == 0 {
+		m.graphPanX, m.graphPanY = 0, 0
+		return
+	}
+	cursorIdx := -1
+	if m.graphCursor >= 0 && m.graphCursor < len(g.nodes) {
+		cursorIdx = m.graphCursor
+	}
+	bodyW, bodyH := m.graphBodyDims()
+	m.graphPanX, m.graphPanY = graphPanOffsetFor(g, cursorIdx, bodyW, bodyH, m.graphPanX, m.graphPanY)
+}
+
 // selectedGraphStage returns the stage under the graph cursor, or nil
 // for dummy waypoints / out-of-range cursors.
 func (m Model) selectedGraphStage() *kargo.Stage {
@@ -1264,19 +1348,23 @@ func (m Model) selectedGraphStage() *kargo.Stage {
 
 // moveGraphCursor advances the graph cursor in a spatial direction. left
 // / right step to the closest neighbour by edge; up / down step within
-// the same layer to the previous / next slot.
-func (m *Model) moveGraphCursor(dir string) {
+// the same layer to the previous / next slot. Returns true when the
+// cursor actually moved so callers can skip selection-driven work (panel
+// reset, panel refresh) on a no-op step, which is the common case when
+// the wheel keeps firing past the top or bottom of the layer.
+func (m *Model) moveGraphCursor(dir string) bool {
 	g := m.graphLayout
 	if m.graphCursor < 0 || m.graphCursor >= len(g.nodes) {
-		return
+		return false
 	}
+	prev := m.graphCursor
 	cur := g.nodes[m.graphCursor]
 	switch dir {
 	case "right":
 		// Pick outgoing edge whose target is closest in slot.
 		_, out := graphNeighbors(g, m.graphCursor)
 		if len(out) == 0 {
-			return
+			return false
 		}
 		best := out[0]
 		bestDist := abs(g.nodes[best].Slot - cur.Slot)
@@ -1291,7 +1379,7 @@ func (m *Model) moveGraphCursor(dir string) {
 	case "left":
 		in, _ := graphNeighbors(g, m.graphCursor)
 		if len(in) == 0 {
-			return
+			return false
 		}
 		best := in[0]
 		bestDist := abs(g.nodes[best].Slot - cur.Slot)
@@ -1323,7 +1411,7 @@ func (m *Model) moveGraphCursor(dir string) {
 			}
 		}
 		if curPos < 0 {
-			return
+			return false
 		}
 		next := curPos
 		if dir == "up" && curPos > 0 {
@@ -1334,6 +1422,7 @@ func (m *Model) moveGraphCursor(dir string) {
 		}
 		m.graphCursor = sibs[next]
 	}
+	return m.graphCursor != prev
 }
 
 func abs(i int) int {

@@ -345,6 +345,39 @@ func (m *Model) renderLogs() {
 	m.overlayVP.SetContent(strings.Join(lines, "\n"))
 }
 
+// logsTabLabels is the ordered list of tab labels in the logs overlay.
+// Order must match the logsTab iota values.
+var logsTabLabels = []string{"Promotions", "Events"}
+
+// logsTabScreenRow is the absolute screen Y of the tab strip inside the
+// logs overlay box. The box is anchored at (0,0); its rendered layout is
+// border-top(1) + padding-top(1) + header(1) + spacer(1), so the strip
+// lands on row 4.
+const logsTabScreenRow = 4
+
+// logsTabScreenCol is the absolute screen X where the tab strip starts.
+// Box layout: border-left(1) + padding-left(2), so the strip starts at
+// col 3.
+const logsTabScreenCol = 3
+
+// logsTabHitTest maps a screen click to a tab index. Tab cells are
+// rendered with Padding(0, 2), so each tab occupies len(label) + 4 cells
+// laid out flush against each other starting at logsTabScreenCol.
+func logsTabHitTest(x, y int) (logsTab, bool) {
+	if y != logsTabScreenRow {
+		return 0, false
+	}
+	col := logsTabScreenCol
+	for i, label := range logsTabLabels {
+		w := lipgloss.Width(label) + 4
+		if x >= col && x < col+w {
+			return logsTab(i), true
+		}
+		col += w
+	}
+	return 0, false
+}
+
 // renderLogsTabs draws the flat rectangular tab strip shown above the logs
 // overlay body. Tabs sit flush against each other; the active tab uses a
 // bright background to mark the selection.
@@ -359,9 +392,8 @@ func (m Model) renderLogsTabs() string {
 		Background(bg).
 		Padding(0, 2)
 
-	labels := []string{"Promotions", "Events"}
-	tabs := make([]string, len(labels))
-	for i, label := range labels {
+	tabs := make([]string, len(logsTabLabels))
+	for i, label := range logsTabLabels {
 		if logsTab(i) == m.overlayLogsTab {
 			tabs[i] = active.Render(label)
 		} else {
