@@ -1349,8 +1349,9 @@ func (m Model) selectedGraphStage() *kargo.Stage {
 // moveGraphCursor advances the graph cursor in a spatial direction. left
 // / right step to the closest neighbour by edge; when the current node has
 // no edge in that direction, the cursor "flows" to the nearest non-dummy
-// node on the next existing layer in that direction, measured by pixel Y.
-// up / down step within the same layer to the previous / next slot.
+// node on the next existing layer in that direction, measured by terminal
+// row (cell Y). up / down step within the same layer to the previous /
+// next slot.
 // Returns true when the cursor actually moved so callers can skip
 // selection-driven work (panel reset, panel refresh) on a no-op step,
 // which is the common case when the wheel keeps firing past the top or
@@ -1449,10 +1450,10 @@ func abs(i int) int {
 // current node has no edge in the requested direction. step is +1 for
 // right, -1 for left. The search advances one layer at a time and returns
 // the candidate on the first layer that has any non-dummy nodes, picking
-// the one whose vertical centre sits closest (in pixel Y) to the current
-// node's centre. Tie-breaks pick the smaller Slot for stable behaviour.
-// Returns (-1, false) when no further layer in that direction holds a
-// real node.
+// the one whose vertical centre sits closest (in terminal rows, the cell
+// Y coordinate from graphNode) to the current node's centre. Tie-breaks
+// pick the smaller Slot for stable behaviour. Returns (-1, false) when
+// no further layer in that direction holds a real node.
 func nearestNodeInDir(g graphLayout, idx, step int) (int, bool) {
 	if idx < 0 || idx >= len(g.nodes) || (step != 1 && step != -1) {
 		return -1, false
