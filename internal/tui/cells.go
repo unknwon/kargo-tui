@@ -380,6 +380,27 @@ func wrapIndent(s string, w int, indent string) string {
 	return strings.Join(parts, "\n")
 }
 
+// centerPopup centers a popup box within a (termWidth × termHeight) frame.
+// If the box is wider or taller than the frame it falls back to the
+// top-left anchor so the unfit content keeps wrapping in place rather than
+// shifting off-screen.
+func centerPopup(box string, termWidth, termHeight int) string {
+	if termWidth <= 0 || termHeight <= 0 {
+		return box
+	}
+	boxW := lipgloss.Width(box)
+	boxH := lipgloss.Height(box)
+	hPos := lipgloss.Center
+	vPos := lipgloss.Center
+	if boxW >= termWidth {
+		hPos = lipgloss.Left
+	}
+	if boxH >= termHeight {
+		vPos = lipgloss.Top
+	}
+	return lipgloss.Place(termWidth, termHeight, hPos, vPos, box)
+}
+
 // popupInnerWidth returns the wrap target for popup body text given the
 // terminal width. Accounts for the rounded border (2 cells) and Padding(1,2)
 // (4 cells) used by every popup box, and caps at 100 cells so popups don't

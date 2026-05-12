@@ -326,6 +326,7 @@ func (m Model) promoteOverlayView() tea.View {
 		Padding(1, 2).
 		Width(innerW).
 		Render(body)
+	box = centerPopup(box, m.width, m.height)
 	box = paintFrame(box, m.width, m.height)
 
 	v := tea.NewView(box)
