@@ -14,8 +14,6 @@ https://github.com/user-attachments/assets/2be76079-b716-45ca-a4ab-a6c02d897359
 
 </details>
 
-The demo runs against a local mock Kargo API server that ships with this repository.
-
 ## Authentication
 
 `kargo-tui` authenticates against a Kargo API server using the same OIDC SSO (PKCE auth-code) flow as `kargo login --sso`. Credentials are saved as named "contexts" in the kargo-tui config file.
