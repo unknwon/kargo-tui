@@ -141,10 +141,10 @@ jobs:
           VERSION="${{ needs.prepare-release.outputs.version }}"
           ARCHIVE_BASE="kargo-tui_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}"
 
-          zip "dist/${ARCHIVE_BASE}.zip" "$BINARY_NAME"
-
           if [ "${{ matrix.goos }}" = "linux" ]; then
             tar -czvf "dist/${ARCHIVE_BASE}.tar.gz" "$BINARY_NAME"
+          else
+            zip "dist/${ARCHIVE_BASE}.zip" "$BINARY_NAME"
           fi
       - name: Upload to release
         env:
@@ -158,9 +158,10 @@ jobs:
             gh release delete-asset "$RELEASE_TAG" "$asset" --yes || true
           done
 
-          gh release upload "$RELEASE_TAG" dist/kargo-tui_*.zip --clobber
           if [ "${{ matrix.goos }}" = "linux" ]; then
             gh release upload "$RELEASE_TAG" dist/kargo-tui_*.tar.gz --clobber
+          else
+            gh release upload "$RELEASE_TAG" dist/kargo-tui_*.zip --clobber
           fi
 
   notify-failure:
