@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/table"
+	"github.com/cockroachdb/errors"
 
 	"unknwon.dev/kargo-tui/internal/kargo"
 )
@@ -157,13 +158,16 @@ func writeClipboard(s string) error {
 		} else if _, err := exec.LookPath("xsel"); err == nil {
 			cmd = exec.Command("xsel", "--clipboard", "--input")
 		} else {
-			return fmt.Errorf("no clipboard helper found (install wl-copy, xclip, or xsel)")
+			return errors.New("no clipboard helper found (install wl-copy, xclip, or xsel)")
 		}
 	default:
-		return fmt.Errorf("clipboard not supported on %s", runtime.GOOS)
+		return errors.Newf("clipboard not supported on %s", runtime.GOOS)
 	}
 	cmd.Stdin = strings.NewReader(s)
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return errors.Wrap(err, "run clipboard helper")
+	}
+	return nil
 }
 
 // openArgoCDForSelection launches the user's browser at the Argo CD app page
@@ -215,7 +219,10 @@ func openBrowser(url string) error {
 	case "windows":
 		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
 	default:
-		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+		return errors.Newf("unsupported platform: %s", runtime.GOOS)
 	}
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return errors.Wrap(err, "start browser")
+	}
+	return nil
 }

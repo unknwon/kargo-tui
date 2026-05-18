@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/cockroachdb/errors"
 	"google.golang.org/protobuf/proto"
 
 	svcv1alpha1 "unknwon.dev/kargo-tui/internal/kargoapi/svc"
@@ -81,11 +82,11 @@ func writeStreamFrame(w http.ResponseWriter, flags byte, payload []byte) error {
 	header[0] = flags
 	binary.BigEndian.PutUint32(header[1:5], uint32(len(payload)))
 	if _, err := w.Write(header); err != nil {
-		return err
+		return errors.Wrap(err, "write stream frame header")
 	}
 	if len(payload) > 0 {
 		if _, err := w.Write(payload); err != nil {
-			return err
+			return errors.Wrap(err, "write stream frame payload")
 		}
 	}
 	return nil

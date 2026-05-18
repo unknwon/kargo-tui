@@ -5,11 +5,10 @@
 package config
 
 import (
-	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/cockroachdb/errors"
 	"gopkg.in/yaml.v3"
 )
 
@@ -34,14 +33,19 @@ type Context struct {
 // $KARGO_TUI_CONFIG when set, otherwise falls back to
 // $XDG_CONFIG_HOME/kargo-tui/config.yaml or ~/.config/kargo-tui/config.yaml.
 func Path() (string, error) {
-	if p := os.Getenv("KARGO_TUI_CONFIG"); p != "" {
-		return p, nil
+	p := os.Getenv("KARGO_TUI_CONFIG")
+	if p != "" {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			return "", errors.Wrapf(err, "resolve config path %s", p)
+		}
+		return abs, nil
 	}
 	dir := os.Getenv("XDG_CONFIG_HOME")
 	if dir == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", fmt.Errorf("locate home dir: %w", err)
+			return "", errors.Wrap(err, "locate home dir")
 		}
 		dir = filepath.Join(home, ".config")
 	}
@@ -53,18 +57,18 @@ func Path() (string, error) {
 func Load() (*Config, error) {
 	p, err := Path()
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "get config path")
 	}
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return &Config{}, nil
 		}
-		return nil, fmt.Errorf("read %s: %w", p, err)
+		return nil, errors.Wrapf(err, "read %s", p)
 	}
 	var c Config
 	if err := yaml.Unmarshal(data, &c); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", p, err)
+		return nil, errors.Wrapf(err, "parse %s", p)
 	}
 	return &c, nil
 }
@@ -74,34 +78,34 @@ func Load() (*Config, error) {
 func Save(c *Config) error {
 	p, err := Path()
 	if err != nil {
-		return err
+		return errors.Wrap(err, "get config path")
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
+		return errors.Wrap(err, "create config dir")
 	}
 	data, err := yaml.Marshal(c)
 	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
+		return errors.Wrap(err, "marshal config")
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(p), ".config.*.tmp")
 	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
+		return errors.Wrap(err, "create temp file")
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 	if err := os.Chmod(tmpName, 0o600); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("chmod temp file: %w", err)
+		return errors.Wrap(err, "chmod temp file")
 	}
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("write temp file: %w", err)
+		return errors.Wrap(err, "write temp file")
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp file: %w", err)
+		return errors.Wrap(err, "close temp file")
 	}
 	if err := os.Rename(tmpName, p); err != nil {
-		return fmt.Errorf("rename to %s: %w", p, err)
+		return errors.Wrapf(err, "rename to %s", p)
 	}
 	return nil
 }
@@ -129,14 +133,14 @@ func (c *Config) Active(override string) (*Context, error) {
 			return c.Contexts[0], nil
 		}
 		if len(c.Contexts) == 0 {
-			return nil, fmt.Errorf("no Kargo contexts configured; run `kargo-tui auth login <url>`")
+			return nil, errors.New("no Kargo contexts configured. Run `kargo-tui auth login <url>`")
 		}
-		return nil, fmt.Errorf("no current context set; pass --context or run `kargo-tui contexts use <name>`")
+		return nil, errors.New("no current context set. Pass --context or run `kargo-tui contexts use <name>`")
 	}
 	if ctx := c.Find(name); ctx != nil {
 		return ctx, nil
 	}
-	return nil, fmt.Errorf("context %q not found", name)
+	return nil, errors.Newf("context %q not found", name)
 }
 
 // Upsert replaces an existing context with the same name or appends a new one.

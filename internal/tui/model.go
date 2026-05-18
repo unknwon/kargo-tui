@@ -58,6 +58,14 @@ const (
 	logsTabEvents
 )
 
+type helpTab int
+
+const (
+	helpTabKeybindings helpTab = iota
+	helpTabInfo
+	helpTabCount
+)
+
 // Model is the Bubble Tea model that drives the kargo-tui interface. It
 // holds every piece of state the UI needs: loaded Kargo data, table widgets,
 // per-view filter/sort state, the project picker, and any active overlay.
@@ -74,7 +82,7 @@ type Model struct {
 	// otherwise be hidden.
 	detailsOnly bool
 
-	// showHelp renders a full-screen help overlay listing key bindings.
+	// showHelp renders a full-screen help overlay.
 	showHelp bool
 
 	// panelVP holds the rendered panel content as a scrollable viewport.
@@ -118,9 +126,10 @@ type Model struct {
 	authExpired    bool
 	authExpiredMsg string
 
-	// helpVP renders the keybindings overlay body so it can scroll
+	// helpVP renders the help overlay body so it can scroll
 	// independently of the table/details viewports.
-	helpVP viewport.Model
+	helpVP  viewport.Model
+	helpTab helpTab
 
 	// Logs/Diff overlay state.
 	overlay          overlayMode

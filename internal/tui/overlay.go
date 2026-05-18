@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/cockroachdb/errors"
 
 	"unknwon.dev/kargo-tui/internal/kargo"
 )
@@ -44,7 +45,7 @@ func (m *Model) openDiffOverlayForStage(s *kargo.Stage) {
 	if len(s.CurrentFreight) == 0 {
 		m.overlay = overlayDiff
 		m.overlayTitle = "Diff · " + s.Name
-		m.overlayError = fmt.Errorf("stage has no current freight")
+		m.overlayError = errors.New("stage has no current freight")
 		m.renderDiffOverlay()
 		return
 	}

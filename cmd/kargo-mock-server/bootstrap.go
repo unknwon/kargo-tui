@@ -1,9 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"math/rand/v2"
 	"path/filepath"
+
+	"github.com/cockroachdb/errors"
 )
 
 // bootstrap loads every topology YAML under fixturesDir, then runs the
@@ -16,7 +17,7 @@ func bootstrap(fixturesDir string, seed int64) (*store, error) {
 		path := filepath.Join(fixturesDir, name)
 		topo, err := loadTopology(path)
 		if err != nil {
-			return nil, fmt.Errorf("load %s: %w", path, err)
+			return nil, errors.Wrapf(err, "load %s", path)
 		}
 		// Seed each project deterministically off the global seed plus an
 		// offset so a single --seed change reshuffles every project but the

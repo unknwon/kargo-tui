@@ -1,9 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
+	"github.com/cockroachdb/errors"
 	"gopkg.in/yaml.v3"
 )
 
@@ -49,53 +49,53 @@ type stageTopo struct {
 func loadTopology(path string) (*topology, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "read %s", path)
 	}
 	var t topology
 	if err := yaml.Unmarshal(raw, &t); err != nil {
-		return nil, fmt.Errorf("parse yaml: %w", err)
+		return nil, errors.Wrap(err, "parse yaml")
 	}
 	if t.Project == "" {
-		return nil, fmt.Errorf("topology missing project name")
+		return nil, errors.New("topology missing project name")
 	}
 	if len(t.Stages) == 0 {
-		return nil, fmt.Errorf("topology %q has no stages", t.Project)
+		return nil, errors.Newf("topology %q has no stages", t.Project)
 	}
 	if len(t.Warehouses) == 0 {
-		return nil, fmt.Errorf("topology %q has no warehouses", t.Project)
+		return nil, errors.Newf("topology %q has no warehouses", t.Project)
 	}
 
 	// Build a name index and validate every reference resolves.
 	stageNames := make(map[string]struct{}, len(t.Stages))
 	for _, s := range t.Stages {
 		if s.Name == "" {
-			return nil, fmt.Errorf("topology %q has unnamed stage", t.Project)
+			return nil, errors.Newf("topology %q has unnamed stage", t.Project)
 		}
 		if _, dup := stageNames[s.Name]; dup {
-			return nil, fmt.Errorf("topology %q has duplicate stage %q", t.Project, s.Name)
+			return nil, errors.Newf("topology %q has duplicate stage %q", t.Project, s.Name)
 		}
 		stageNames[s.Name] = struct{}{}
 	}
 	warehouseNames := make(map[string]struct{}, len(t.Warehouses))
 	for _, w := range t.Warehouses {
 		if w.Name == "" {
-			return nil, fmt.Errorf("topology %q has unnamed warehouse", t.Project)
+			return nil, errors.Newf("topology %q has unnamed warehouse", t.Project)
 		}
 		warehouseNames[w.Name] = struct{}{}
 	}
 	for _, s := range t.Stages {
 		for _, u := range s.Upstreams {
 			if _, ok := stageNames[u]; !ok {
-				return nil, fmt.Errorf("stage %q references unknown upstream %q", s.Name, u)
+				return nil, errors.Newf("stage %q references unknown upstream %q", s.Name, u)
 			}
 		}
 		for _, w := range s.Warehouses {
 			if _, ok := warehouseNames[w]; !ok {
-				return nil, fmt.Errorf("stage %q references unknown warehouse %q", s.Name, w)
+				return nil, errors.Newf("stage %q references unknown warehouse %q", s.Name, w)
 			}
 		}
 		if len(s.Upstreams) == 0 && len(s.Warehouses) == 0 {
-			return nil, fmt.Errorf("stage %q has neither upstreams nor warehouse subscriptions", s.Name)
+			return nil, errors.Newf("stage %q has neither upstreams nor warehouse subscriptions", s.Name)
 		}
 	}
 
@@ -114,14 +114,14 @@ func loadTopology(path string) (*topology, error) {
 	visit = func(name string) error {
 		switch colors[name] {
 		case gray:
-			return fmt.Errorf("cycle detected at stage %q", name)
+			return errors.Newf("cycle detected at stage %q", name)
 		case black:
 			return nil
 		}
 		colors[name] = gray
 		for _, u := range byName[name].Upstreams {
 			if err := visit(u); err != nil {
-				return err
+				return errors.Wrapf(err, "visit upstream %q", u)
 			}
 		}
 		colors[name] = black
@@ -129,7 +129,7 @@ func loadTopology(path string) (*topology, error) {
 	}
 	for _, s := range t.Stages {
 		if err := visit(s.Name); err != nil {
-			return nil, err
+			return nil, errors.Wrap(err, "validate topology cycles")
 		}
 	}
 

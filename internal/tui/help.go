@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"unknwon.dev/kargo-tui/internal/config"
 )
 
 // Build information surfaced in the bottom of the help overlay. Populated
@@ -52,11 +53,24 @@ func isHex(s string) bool {
 	return true
 }
 
-// helpBindings returns the static binding table rendered in the help
-// overlay. Lives outside helpView so prepareHelpViewport can format
-// it from Update.
-func helpBindings() []struct{ section, key, desc string } {
-	return []struct{ section, key, desc string }{
+func helpConfigPath() string {
+	p, err := config.Path()
+	if err != nil {
+		return "unavailable"
+	}
+	return p
+}
+
+type helpRow struct {
+	section string
+	key     string
+	desc    string
+}
+
+// helpBindings returns the binding table rendered in the help overlay.
+// Lives outside helpView so prepareHelpViewport can format it from Update.
+func helpBindings() []helpRow {
+	return []helpRow{
 		{"Views", "v", "details"},
 		{"", "d", "deploys"},
 		{"", "c", "controls"},
@@ -93,9 +107,38 @@ func helpBindings() []struct{ section, key, desc string } {
 	}
 }
 
+func helpInfoRows() []helpRow {
+	return []helpRow{
+		{"Config", "config file", helpConfigPath()},
+		{"Build", "version", buildVersion},
+		{"", "commit", shortCommit(buildCommit)},
+		{"", "built", buildDate},
+	}
+}
+
+func helpRows(tab helpTab) []helpRow {
+	if tab == helpTabInfo {
+		return helpInfoRows()
+	}
+	return helpBindings()
+}
+
+func (m *Model) switchHelpTab(delta int) {
+	next := int(m.helpTab) + delta
+	if next < 0 {
+		next = int(helpTabCount) - 1
+	}
+	if next >= int(helpTabCount) {
+		next = 0
+	}
+	m.helpTab = helpTab(next)
+	m.helpVP.GotoTop()
+	m.prepareHelpViewport()
+}
+
 // prepareHelpViewport sizes the help viewport and loads its content
 // into m.helpVP. Called from Update when the help overlay opens or the
-// terminal resizes — the mutation persists in the reducer so j/k scroll
+// terminal resizes. The mutation persists in the reducer so j/k scroll
 // keys can move past their no-op state.
 func (m *Model) prepareHelpViewport() {
 	keyStyle := lipgloss.NewStyle().Foreground(selected).Bold(true).Background(bg)
@@ -104,7 +147,7 @@ func (m *Model) prepareHelpViewport() {
 
 	keyW := 12
 	var lines []string
-	for _, b := range helpBindings() {
+	for _, b := range helpRows(m.helpTab) {
 		if b.section != "" {
 			lines = append(lines, "")
 			lines = append(lines, sectStyle.Render(b.section))
@@ -122,13 +165,12 @@ func (m *Model) prepareHelpViewport() {
 		h = 9
 	}
 	// Match the box chrome in helpView: border(2) + Padding(1, 2) -> 6 cols,
-	// 4 rows; body chrome: header(1) + spacer(1) + spacer(1) + hint(1) +
-	// build(1) -> 5 rows.
+	// 4 rows; body chrome: tabs(1) + spacer(1) + spacer(1) + hint(1) -> 4 rows.
 	innerW := w - 6
 	if innerW < 10 {
 		innerW = 10
 	}
-	innerH := h - 4 - 5
+	innerH := h - 4 - 4
 	if innerH < 1 {
 		innerH = 1
 	}
@@ -141,13 +183,21 @@ func (m *Model) prepareHelpViewport() {
 // loaded by prepareHelpViewport from Update; here we just compose the
 // frame around m.helpVP.View().
 func (m Model) helpView() tea.View {
-	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
 	hintStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
+	tabStyle := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1)
+	activeTabStyle := lipgloss.NewStyle().Foreground(darkFg).Background(selected).Bold(true).Padding(0, 1)
 
-	header := titleStyle.Render("Keybindings")
-	hint := hintStyle.Render("j/k scroll · home/end top/bottom · esc/? dismiss")
-	build := hintStyle.Render("kargo-tui " + buildVersion + " · " + shortCommit(buildCommit) + " · built " + buildDate)
-	body := lipgloss.JoinVertical(lipgloss.Left, header, "", m.helpVP.View(), "", hint, build)
+	keybindingsTab := tabStyle.Render("Keybindings")
+	infoTab := tabStyle.Render("Info")
+	if m.helpTab == helpTabKeybindings {
+		keybindingsTab = activeTabStyle.Render("Keybindings")
+	}
+	if m.helpTab == helpTabInfo {
+		infoTab = activeTabStyle.Render("Info")
+	}
+	header := lipgloss.JoinHorizontal(lipgloss.Left, keybindingsTab, " ", infoTab)
+	hint := hintStyle.Render("tab/shift+tab switch · j/k scroll · home/end top/bottom · esc/? dismiss")
+	body := lipgloss.JoinVertical(lipgloss.Left, header, "", m.helpVP.View(), "", hint)
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

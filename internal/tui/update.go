@@ -532,13 +532,19 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
-		// Help overlay: scroll & dismiss only.
+		// Help overlay: switch tabs, scroll, and dismiss only.
 		if m.showHelp {
 			switch key {
 			case "q", "ctrl+c":
 				return m, tea.Quit
 			case "esc", "?", "enter":
 				m.showHelp = false
+				return m, nil
+			case "tab", "]", "right":
+				m.switchHelpTab(1)
+				return m, nil
+			case "shift+tab", "[", "left":
+				m.switchHelpTab(-1)
 				return m, nil
 			case "up", "k":
 				m.helpVP.ScrollUp(1)
@@ -815,6 +821,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "?":
 			m.showHelp = true
+			m.helpTab = helpTabKeybindings
 			m.prepareHelpViewport()
 			return m, nil
 		case "M":

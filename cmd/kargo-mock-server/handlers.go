@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/cockroachdb/errors"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -12,12 +13,15 @@ import (
 func readJSON(r *http.Request, req any) error {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "read JSON request body")
 	}
 	if len(body) == 0 {
 		return nil
 	}
-	return json.Unmarshal(body, req)
+	if err := json.Unmarshal(body, req); err != nil {
+		return errors.Wrap(err, "decode JSON request body")
+	}
+	return nil
 }
 
 // writeJSON writes a JSON Connect-RPC success response.
@@ -30,12 +34,15 @@ func writeJSON(w http.ResponseWriter, resp any) {
 func readProto(r *http.Request, msg proto.Message) error {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "read protobuf request body")
 	}
 	if len(body) == 0 {
 		return nil
 	}
-	return proto.Unmarshal(body, msg)
+	if err := proto.Unmarshal(body, msg); err != nil {
+		return errors.Wrap(err, "decode protobuf request body")
+	}
+	return nil
 }
 
 // writeProto writes a binary-protobuf Connect-RPC success response.

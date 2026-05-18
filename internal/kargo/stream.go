@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 
+	"github.com/cockroachdb/errors"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -53,7 +53,7 @@ func (c *connectJSON) callServerStream(
 ) error {
 	body, err := proto.Marshal(reqMsg)
 	if err != nil {
-		return fmt.Errorf("marshal stream request for %s: %w", method, err)
+		return errors.Wrapf(err, "marshal stream request for %s", method)
 	}
 	envelope := makeEnvelope(0, body)
 
@@ -62,7 +62,7 @@ func (c *connectJSON) callServerStream(
 	dial := func() (*http.Response, error) {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(envelope))
 		if err != nil {
-			return nil, fmt.Errorf("build stream request for %s: %w", method, err)
+			return nil, errors.Wrapf(err, "build stream request for %s", method)
 		}
 		httpReq.Header.Set("Content-Type", "application/connect+proto")
 		httpReq.Header.Set("Accept", "application/connect+proto")
@@ -75,7 +75,7 @@ func (c *connectJSON) callServerStream(
 
 	resp, err := dial()
 	if err != nil {
-		return fmt.Errorf("call stream %s: %w", method, err)
+		return errors.Wrapf(err, "call stream %s", method)
 	}
 	if resp.StatusCode/100 != 2 {
 		raw, _ := io.ReadAll(resp.Body)
@@ -91,13 +91,13 @@ func (c *connectJSON) callServerStream(
 		// also got: <whatever>".
 		resp, err = dial()
 		if err != nil {
-			return fmt.Errorf("call stream %s after refresh (original: %w): %w", method, dialErr, err)
+			return errors.Wrapf(err, "call stream %s after refresh. Original error: %v", method, dialErr)
 		}
 		if resp.StatusCode/100 != 2 {
 			raw2, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
-			return fmt.Errorf("after refresh (original: %w): %w",
-				dialErr, parseConnectError(method, resp.StatusCode, raw2))
+			return errors.Wrapf(parseConnectError(method, resp.StatusCode, raw2),
+				"after refresh. Original error: %v", dialErr)
 		}
 	}
 	defer resp.Body.Close()
@@ -108,17 +108,17 @@ func (c *connectJSON) callServerStream(
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
 				return nil
 			}
-			return fmt.Errorf("read stream %s frame header: %w", method, err)
+			return errors.Wrapf(err, "read stream %s frame header", method)
 		}
 		flags := header[0]
 		length := binary.BigEndian.Uint32(header[1:5])
 		if length > 32*1024*1024 {
-			return fmt.Errorf("stream %s: implausibly large frame: %d bytes", method, length)
+			return errors.Newf("stream %s: implausibly large frame: %d bytes", method, length)
 		}
 		payload := make([]byte, length)
 		if length > 0 {
 			if _, err := io.ReadFull(resp.Body, payload); err != nil {
-				return fmt.Errorf("read stream %s frame payload: %w", method, err)
+				return errors.Wrapf(err, "read stream %s frame payload", method)
 			}
 		}
 		if flags&0x02 != 0 {
@@ -142,10 +142,10 @@ func (c *connectJSON) callServerStream(
 		}
 		msg := respFactory()
 		if err := proto.Unmarshal(payload, msg); err != nil {
-			return fmt.Errorf("decode stream %s frame: %w", method, err)
+			return errors.Wrapf(err, "decode stream %s frame", method)
 		}
 		if err := onMessage(msg); err != nil {
-			return err
+			return errors.Wrap(err, "handle stream message")
 		}
 	}
 }

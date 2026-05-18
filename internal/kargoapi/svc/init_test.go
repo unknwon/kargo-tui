@@ -3,6 +3,7 @@ package svcv1alpha1
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -13,10 +14,6 @@ import (
 func TestNoInitPanic(t *testing.T) {
 	req := &ListStagesRequest{Project: "test-project"}
 	b, err := proto.Marshal(req)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if len(b) == 0 {
-		t.Fatal("expected non-empty marshalled bytes")
-	}
+	require.NoError(t, err)
+	require.NotEmpty(t, b)
 }
