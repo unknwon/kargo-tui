@@ -3,24 +3,20 @@ package config
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestPath(t *testing.T) {
 	t.Run("relative config override returns absolute path", func(t *testing.T) {
 		rel := filepath.Join("relative", "config.yaml")
 		expected, err := filepath.Abs(rel)
-		if err != nil {
-			t.Fatalf("resolve expected path: %v", err)
-		}
+		require.NoError(t, err)
 
 		t.Setenv("KARGO_TUI_CONFIG", rel)
 
 		got, err := Path()
-		if err != nil {
-			t.Fatalf("path: %v", err)
-		}
-		if got != expected {
-			t.Fatalf("expected %q, got %q", expected, got)
-		}
+		require.NoError(t, err)
+		require.Equal(t, expected, got)
 	})
 }

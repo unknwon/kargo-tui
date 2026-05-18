@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cockroachdb/errors"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -77,14 +77,14 @@ func newConnectJSON(baseURL, token string, insecureSkipTLSVerify bool) *connectJ
 func (c *connectJSON) call(ctx context.Context, method string, req, out any) error {
 	body, err := json.Marshal(req)
 	if err != nil {
-		return fmt.Errorf("marshal request for %s: %w", method, err)
+		return errors.Wrapf(err, "marshal request for %s", method)
 	}
 	url := c.baseURL + kargoServicePath + method
 
 	doOnce := func() error {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
-			return fmt.Errorf("build request for %s: %w", method, err)
+			return errors.Wrapf(err, "build request for %s", method)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "application/json")
@@ -94,12 +94,12 @@ func (c *connectJSON) call(ctx context.Context, method string, req, out any) err
 		}
 		resp, err := c.http.Do(httpReq)
 		if err != nil {
-			return fmt.Errorf("call %s: %w", method, err)
+			return errors.Wrapf(err, "call %s", method)
 		}
 		defer resp.Body.Close()
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return fmt.Errorf("read %s response: %w", method, err)
+			return errors.Wrapf(err, "read %s response", method)
 		}
 		if resp.StatusCode/100 != 2 {
 			return parseConnectError(method, resp.StatusCode, respBody)
@@ -108,7 +108,7 @@ func (c *connectJSON) call(ctx context.Context, method string, req, out any) err
 			return nil
 		}
 		if err := json.Unmarshal(respBody, out); err != nil {
-			return fmt.Errorf("decode %s response: %w", method, err)
+			return errors.Wrapf(err, "decode %s response", method)
 		}
 		return nil
 	}
@@ -117,7 +117,10 @@ func (c *connectJSON) call(ctx context.Context, method string, req, out any) err
 	if isUnauthenticated(err) && c.tryRefresh(ctx) == nil {
 		err = doOnce()
 	}
-	return err
+	if err != nil {
+		return errors.Wrapf(err, "complete %s request", method)
+	}
+	return nil
 }
 
 // callProto is the binary-protobuf counterpart to call. The Kargo
@@ -132,14 +135,14 @@ func (c *connectJSON) call(ctx context.Context, method string, req, out any) err
 func (c *connectJSON) callProto(ctx context.Context, method string, reqMsg, respMsg proto.Message) error {
 	body, err := proto.Marshal(reqMsg)
 	if err != nil {
-		return fmt.Errorf("marshal proto request for %s: %w", method, err)
+		return errors.Wrapf(err, "marshal proto request for %s", method)
 	}
 	url := c.baseURL + kargoServicePath + method
 
 	doOnce := func() error {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
-			return fmt.Errorf("build proto request for %s: %w", method, err)
+			return errors.Wrapf(err, "build proto request for %s", method)
 		}
 		httpReq.Header.Set("Content-Type", "application/proto")
 		httpReq.Header.Set("Accept", "application/proto")
@@ -149,12 +152,12 @@ func (c *connectJSON) callProto(ctx context.Context, method string, reqMsg, resp
 		}
 		resp, err := c.http.Do(httpReq)
 		if err != nil {
-			return fmt.Errorf("proto call %s: %w", method, err)
+			return errors.Wrapf(err, "proto call %s", method)
 		}
 		defer resp.Body.Close()
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return fmt.Errorf("read proto %s response: %w", method, err)
+			return errors.Wrapf(err, "read proto %s response", method)
 		}
 		if resp.StatusCode/100 != 2 {
 			// Connect's error envelope is JSON even on a proto request, so
@@ -165,7 +168,7 @@ func (c *connectJSON) callProto(ctx context.Context, method string, reqMsg, resp
 			return nil
 		}
 		if err := proto.Unmarshal(respBody, respMsg); err != nil {
-			return fmt.Errorf("decode proto %s response: %w", method, err)
+			return errors.Wrapf(err, "decode proto %s response", method)
 		}
 		return nil
 	}
@@ -174,7 +177,10 @@ func (c *connectJSON) callProto(ctx context.Context, method string, reqMsg, resp
 	if isUnauthenticated(err) && c.tryRefresh(ctx) == nil {
 		err = doOnce()
 	}
-	return err
+	if err != nil {
+		return errors.Wrapf(err, "complete %s proto request", method)
+	}
+	return nil
 }
 
 // bearer returns the current token under a read lock so refresh() callers
@@ -196,7 +202,7 @@ func (c *connectJSON) tryRefresh(ctx context.Context) error {
 	}
 	tok, err := c.refresh(ctx)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "refresh token")
 	}
 	c.tokenMu.Lock()
 	c.token = tok

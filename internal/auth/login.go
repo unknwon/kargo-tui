@@ -11,7 +11,6 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -22,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cockroachdb/errors"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/pkg/browser"
 	"golang.org/x/oauth2"
@@ -70,14 +70,14 @@ func SSOLogin(ctx context.Context, opts LoginOptions, status func(string)) (*con
 	rpc := kargo.NewUnauthenticatedRPC(opts.APIAddress, opts.InsecureSkipTLSVerify)
 	pub, err := rpc.GetPublicConfig(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("retrieve public config: %w", err)
+		return nil, errors.Wrap(err, "retrieve public config")
 	}
 	if pub != nil && pub.SkipAuth {
 		// Server is auth-less (e.g. kargo-mock-server). Persist a context
 		// with no token so subsequent RPCs go out with an empty Bearer.
 		cfg, err := config.Load()
 		if err != nil {
-			return nil, err
+			return nil, errors.Wrap(err, "load config")
 		}
 		saved := &config.Context{
 			Name:                  opts.ContextName,
@@ -90,7 +90,7 @@ func SSOLogin(ctx context.Context, opts LoginOptions, status func(string)) (*con
 			cfg.CurrentContext = opts.ContextName
 		}
 		if err := config.Save(cfg); err != nil {
-			return nil, err
+			return nil, errors.Wrap(err, "save config")
 		}
 		return saved, nil
 	}
@@ -101,12 +101,12 @@ func SSOLogin(ctx context.Context, opts LoginOptions, status func(string)) (*con
 
 	idToken, refreshToken, err := runPKCEFlow(ctx, oidcCfg, opts, status)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "run PKCE flow")
 	}
 
 	cfg, err := config.Load()
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "load config")
 	}
 	saved := &config.Context{
 		Name:                  opts.ContextName,
@@ -121,7 +121,7 @@ func SSOLogin(ctx context.Context, opts LoginOptions, status func(string)) (*con
 		cfg.CurrentContext = opts.ContextName
 	}
 	if err := config.Save(cfg); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "save config")
 	}
 	return saved, nil
 }
@@ -143,7 +143,7 @@ func runPKCEFlow(ctx context.Context, cfg *kargo.OIDCConfig, opts LoginOptions, 
 	provider, err := oidc.NewProvider(discoveryCtx, cfg.IssuerURL)
 	cancelDiscovery()
 	if err != nil {
-		return "", "", fmt.Errorf("init OIDC provider %s: %w", cfg.IssuerURL, err)
+		return "", "", errors.Wrapf(err, "init OIDC provider %s", cfg.IssuerURL)
 	}
 
 	scopes := append([]string{}, cfg.Scopes...)
@@ -161,7 +161,7 @@ func runPKCEFlow(ctx context.Context, cfg *kargo.OIDCConfig, opts LoginOptions, 
 
 	listener, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", opts.CallbackPort))
 	if err != nil {
-		return "", "", fmt.Errorf("start callback listener: %w", err)
+		return "", "", errors.Wrap(err, "start callback listener")
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 
@@ -178,11 +178,11 @@ func runPKCEFlow(ctx context.Context, cfg *kargo.OIDCConfig, opts LoginOptions, 
 
 	state, err := randString(24)
 	if err != nil {
-		return "", "", err
+		return "", "", errors.Wrap(err, "generate OAuth state")
 	}
 	verifier, challenge, err := pkceVerifierAndChallenge()
 	if err != nil {
-		return "", "", err
+		return "", "", errors.Wrap(err, "generate PKCE verifier")
 	}
 
 	codeCh := make(chan string, 1)
@@ -209,11 +209,11 @@ func runPKCEFlow(ctx context.Context, cfg *kargo.OIDCConfig, opts LoginOptions, 
 	select {
 	case code = <-codeCh:
 	case err := <-errCh:
-		return "", "", fmt.Errorf("callback handler: %w", err)
+		return "", "", errors.Wrap(err, "callback handler")
 	case <-time.After(5 * time.Minute):
 		return "", "", errors.New("timed out waiting for SSO sign-in")
 	case <-ctx.Done():
-		return "", "", ctx.Err()
+		return "", "", errors.Wrap(ctx.Err(), "wait for SSO sign-in")
 	}
 
 	token, err := oauthCfg.Exchange(
@@ -222,7 +222,7 @@ func runPKCEFlow(ctx context.Context, cfg *kargo.OIDCConfig, opts LoginOptions, 
 		oauth2.SetAuthURLParam("code_verifier", verifier),
 	)
 	if err != nil {
-		return "", "", fmt.Errorf("exchange auth code: %w", err)
+		return "", "", errors.Wrap(err, "exchange auth code")
 	}
 	idToken, _ := token.Extra("id_token").(string)
 	if idToken == "" {
@@ -253,7 +253,7 @@ func startCallbackServer(listener net.Listener, state string, codeCh chan<- stri
 			desc := q.Get("error_description")
 			http.Error(w, errStr+": "+desc, http.StatusBadRequest)
 			select {
-			case errCh <- fmt.Errorf("%s: %s", errStr, desc):
+			case errCh <- errors.Newf("%s: %s", errStr, desc):
 			default:
 			}
 			return
@@ -290,7 +290,7 @@ func pkceVerifierAndChallenge() (string, string, error) {
 	verifier, err := randStringFromCharset(128,
 		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 	if err != nil {
-		return "", "", err
+		return "", "", errors.Wrap(err, "generate PKCE verifier")
 	}
 	sum := sha256.Sum256([]byte(verifier))
 	return verifier, base64.RawURLEncoding.EncodeToString(sum[:]), nil
@@ -309,7 +309,7 @@ func randStringFromCharset(n int, charset string) (string, error) {
 	for i := 0; i < n; i++ {
 		idx, err := rand.Int(rand.Reader, max)
 		if err != nil {
-			return "", err
+			return "", errors.Wrap(err, "generate random character")
 		}
 		b[i] = charset[idx.Int64()]
 	}

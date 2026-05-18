@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/cockroachdb/errors"
 	"github.com/urfave/cli/v3"
 
 	"unknwon.dev/kargo-tui/internal/auth"
@@ -61,16 +62,16 @@ func main() {
 func runTUI(ctx context.Context, cmd *cli.Command) error {
 	cfg, err := config.Load()
 	if err != nil {
-		return err
+		return errors.Wrap(err, "load config")
 	}
 	active, err := resolveContext(ctx, cfg, cmd.String("context"))
 	if err != nil {
-		return err
+		return errors.Wrap(err, "resolve context")
 	}
 
 	client, err := kargo.NewClient(active)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "create Kargo client")
 	}
 	attachRefresher(client, active)
 	authExpired := primeToken(client, active)
@@ -125,7 +126,7 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 	go p.Send(tui.SetSendMsg{Send: p.Send})
 
 	if _, err := p.Run(); err != nil {
-		return err
+		return errors.Wrap(err, "run TUI")
 	}
 	return nil
 }
@@ -197,11 +198,11 @@ func contextSwitcher(cfg *config.Config) (
 	build := func(name string) (*kargo.Client, string, error) {
 		c := cfg.Find(name)
 		if c == nil {
-			return nil, "", fmt.Errorf("context %q not found", name)
+			return nil, "", errors.Newf("context %q not found", name)
 		}
 		client, err := kargo.NewClient(c)
 		if err != nil {
-			return nil, "", err
+			return nil, "", errors.Wrap(err, "create Kargo client")
 		}
 		attachRefresher(client, c)
 		cfg.CurrentContext = name
@@ -215,7 +216,7 @@ func contextSwitcher(cfg *config.Config) (
 			Quiet:       true, // TUI is in alt-screen; stderr writes corrupt the view
 		}, status)
 		if err != nil {
-			return "", err
+			return "", errors.Wrap(err, "log in to context")
 		}
 		// Refresh the in-memory config from disk so subsequent build()
 		// calls see the new context.
@@ -234,7 +235,7 @@ func contextSwitcher(cfg *config.Config) (
 		}
 		c := cfg.Find(name)
 		if c == nil {
-			return "", fmt.Errorf("context %q not found", name)
+			return "", errors.Newf("context %q not found", name)
 		}
 		saved, err := auth.SSOLogin(ctx, auth.LoginOptions{
 			APIAddress:            c.APIAddress,
@@ -245,7 +246,7 @@ func contextSwitcher(cfg *config.Config) (
 			Quiet:                 true,
 		}, status)
 		if err != nil {
-			return "", err
+			return "", errors.Wrap(err, "re-login to context")
 		}
 		// Reload again so the in-memory cfg reflects the rotated tokens.
 		if fresh, err := config.Load(); err == nil {
@@ -291,7 +292,7 @@ func authCommand() *cli.Command {
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					if cmd.NArg() < 1 {
-						return fmt.Errorf("usage: kargo-tui auth login <url>")
+						return errors.New("usage: kargo-tui auth login <url>")
 					}
 					saved, err := auth.SSOLogin(ctx, auth.LoginOptions{
 						APIAddress:            cmd.Args().First(),
@@ -302,7 +303,7 @@ func authCommand() *cli.Command {
 						MakeCurrent:           !cmd.Bool("no-make-current"),
 					}, nil)
 					if err != nil {
-						return err
+						return errors.Wrap(err, "log in")
 					}
 					fmt.Printf("logged in to %s as context %q\n", saved.APIAddress, saved.Name)
 					return nil
@@ -315,17 +316,17 @@ func authCommand() *cli.Command {
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					name := cmd.Args().First()
 					if name == "" {
-						return fmt.Errorf("usage: kargo-tui auth logout <context-name>")
+						return errors.New("usage: kargo-tui auth logout <context-name>")
 					}
 					cfg, err := config.Load()
 					if err != nil {
-						return err
+						return errors.Wrap(err, "load config")
 					}
 					if !cfg.Remove(name) {
-						return fmt.Errorf("context %q not found", name)
+						return errors.Newf("context %q not found", name)
 					}
 					if err := config.Save(cfg); err != nil {
-						return err
+						return errors.Wrap(err, "save config")
 					}
 					fmt.Printf("removed context %q\n", name)
 					return nil
@@ -348,7 +349,7 @@ func contextsCommand() *cli.Command {
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					cfg, err := config.Load()
 					if err != nil {
-						return err
+						return errors.Wrap(err, "load config")
 					}
 					if len(cfg.Contexts) == 0 {
 						fmt.Println("no contexts configured; run `kargo-tui auth login <url>`")
@@ -371,18 +372,18 @@ func contextsCommand() *cli.Command {
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					name := cmd.Args().First()
 					if name == "" {
-						return fmt.Errorf("usage: kargo-tui contexts use <context-name>")
+						return errors.New("usage: kargo-tui contexts use <context-name>")
 					}
 					cfg, err := config.Load()
 					if err != nil {
-						return err
+						return errors.Wrap(err, "load config")
 					}
 					if cfg.Find(name) == nil {
-						return fmt.Errorf("context %q not found", name)
+						return errors.Newf("context %q not found", name)
 					}
 					cfg.CurrentContext = name
 					if err := config.Save(cfg); err != nil {
-						return err
+						return errors.Wrap(err, "save config")
 					}
 					fmt.Printf("switched to context %q\n", name)
 					return nil

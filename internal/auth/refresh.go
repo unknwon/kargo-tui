@@ -5,13 +5,12 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/cockroachdb/errors"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
@@ -105,11 +104,11 @@ func (r *Refresher) Refresh(ctx context.Context) (string, error) {
 
 	cfg, err := config.Load()
 	if err != nil {
-		return "", fmt.Errorf("load config for refresh: %w", err)
+		return "", errors.Wrap(err, "load config for refresh")
 	}
 	cctx := cfg.Find(r.contextName)
 	if cctx == nil {
-		return "", fmt.Errorf("context %q not found", r.contextName)
+		return "", errors.Newf("context %q not found", r.contextName)
 	}
 	if cctx.RefreshToken == "" {
 		return "", errors.New("no refresh token saved; re-run `kargo-tui auth login`")
@@ -127,7 +126,7 @@ func (r *Refresher) Refresh(ctx context.Context) (string, error) {
 		rpc := kargo.NewUnauthenticatedRPC(cctx.APIAddress, r.insecure)
 		pub, err := rpc.GetPublicConfig(ctx)
 		if err != nil {
-			return "", fmt.Errorf("retrieve public config for refresh: %w", err)
+			return "", errors.Wrap(err, "retrieve public config for refresh")
 		}
 		if pub == nil || pub.OIDC == nil {
 			return "", errors.New("server no longer advertises OIDC config")
@@ -136,7 +135,7 @@ func (r *Refresher) Refresh(ctx context.Context) (string, error) {
 		provider, err := oidc.NewProvider(discoveryCtx, pub.OIDC.IssuerURL)
 		cancel()
 		if err != nil {
-			return "", fmt.Errorf("init OIDC provider for refresh: %w", err)
+			return "", errors.Wrap(err, "init OIDC provider for refresh")
 		}
 		r.provider = provider
 		r.clientID = pub.OIDC.ClientID
@@ -152,7 +151,7 @@ func (r *Refresher) Refresh(ctx context.Context) (string, error) {
 	tokSource := oauthCfg.TokenSource(oidcCtx, &oauth2.Token{RefreshToken: cctx.RefreshToken})
 	newTok, err := tokSource.Token()
 	if err != nil {
-		return "", fmt.Errorf("refresh token exchange: %w", err)
+		return "", errors.Wrap(err, "refresh token exchange")
 	}
 	idToken, _ := newTok.Extra("id_token").(string)
 	if idToken == "" {
@@ -165,7 +164,7 @@ func (r *Refresher) Refresh(ctx context.Context) (string, error) {
 		cctx.RefreshToken = newTok.RefreshToken
 	}
 	if err := config.Save(cfg); err != nil {
-		return "", fmt.Errorf("persist refreshed tokens: %w", err)
+		return "", errors.Wrap(err, "persist refreshed tokens")
 	}
 	r.lastToken = idToken
 	r.lastAt = time.Now()

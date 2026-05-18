@@ -6,6 +6,7 @@ import (
 	"time"
 
 	kargoapi "github.com/akuity/kargo/api/v1alpha1"
+	"github.com/cockroachdb/errors"
 
 	svcv1alpha1 "unknwon.dev/kargo-tui/internal/kargoapi/svc"
 )
@@ -64,7 +65,7 @@ func (c *Client) ListFreight(ctx context.Context, project string) ([]Freight, er
 	req := &svcv1alpha1.QueryFreightRequest{Project: project}
 	resp := &svcv1alpha1.QueryFreightResponse{}
 	if err := c.rpc.callProto(ctx, "QueryFreight", req, resp); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "query freight")
 	}
 
 	out := make([]Freight, 0)

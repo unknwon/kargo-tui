@@ -3,6 +3,8 @@ package kargo
 import (
 	"context"
 	"sort"
+
+	"github.com/cockroachdb/errors"
 )
 
 // ListProjects returns the names of Kargo projects accessible to the
@@ -16,7 +18,7 @@ func (c *Client) ListProjects(ctx context.Context) ([]string, error) {
 		} `json:"projects"`
 	}
 	if err := c.rpc.call(ctx, "ListProjects", struct{}{}, &resp); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "list projects")
 	}
 	out := make([]string, 0, len(resp.Projects))
 	for _, p := range resp.Projects {

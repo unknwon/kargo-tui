@@ -2,7 +2,8 @@ package kargo
 
 import (
 	"context"
-	"errors"
+
+	"github.com/cockroachdb/errors"
 
 	svcv1alpha1 "unknwon.dev/kargo-tui/internal/kargoapi/svc"
 )
@@ -27,7 +28,7 @@ func (c *Client) PromoteToStage(ctx context.Context, project, stage, freight str
 	}
 	resp := &svcv1alpha1.PromoteToStageResponse{}
 	if err := c.rpc.callProto(ctx, "PromoteToStage", req, resp); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "promote to stage")
 	}
 	if resp.Promotion == nil {
 		return nil, nil
@@ -56,7 +57,10 @@ func (c *Client) ApproveFreight(ctx context.Context, project, freight, stage str
 		Stage:   stage,
 	}
 	resp := &svcv1alpha1.ApproveFreightResponse{}
-	return c.rpc.callProto(ctx, "ApproveFreight", req, resp)
+	if err := c.rpc.callProto(ctx, "ApproveFreight", req, resp); err != nil {
+		return errors.Wrap(err, "approve freight")
+	}
+	return nil
 }
 
 // PromoteDownstream promotes the given source stage's freight to every
@@ -80,7 +84,7 @@ func (c *Client) PromoteDownstream(ctx context.Context, project, sourceStage, fr
 	}
 	resp := &svcv1alpha1.PromoteDownstreamResponse{}
 	if err := c.rpc.callProto(ctx, "PromoteDownstream", req, resp); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "promote downstream")
 	}
 	out := make([]PromotionEntry, 0, len(resp.Promotions))
 	for _, p := range resp.Promotions {

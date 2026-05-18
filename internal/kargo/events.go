@@ -8,6 +8,7 @@ import (
 	"time"
 
 	kargoapi "github.com/akuity/kargo/api/v1alpha1"
+	"github.com/cockroachdb/errors"
 
 	svcv1alpha1 "unknwon.dev/kargo-tui/internal/kargoapi/svc"
 )
@@ -95,7 +96,7 @@ func (c *Client) ListPromotionsForStage(ctx context.Context, project, stage stri
 	req := &svcv1alpha1.ListPromotionsRequest{Project: project, Stage: stagePtr}
 	resp := &svcv1alpha1.ListPromotionsResponse{}
 	if err := c.rpc.callProto(ctx, "ListPromotions", req, resp); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "list promotions")
 	}
 	out := make([]PromotionEntry, 0, len(resp.Promotions))
 	for _, p := range resp.Promotions {
@@ -191,7 +192,7 @@ func (c *Client) ListEventsForStage(ctx context.Context, project, stage string) 
 		Events []rawEvent `json:"events"`
 	}
 	if err := c.rpc.call(ctx, "ListProjectEvents", req, &resp); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "list project events")
 	}
 	out := make([]EventEntry, 0, len(resp.Events))
 	stageLower := strings.ToLower(stage)
@@ -246,7 +247,7 @@ func (t *jsonTimeString) UnmarshalJSON(data []byte) error {
 	if data[0] == '"' {
 		var s string
 		if err := json.Unmarshal(data, &s); err != nil {
-			return err
+			return errors.Wrap(err, "decode JSON time string")
 		}
 		if s == "" {
 			t.Time = time.Time{}

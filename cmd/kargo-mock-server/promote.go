@@ -5,6 +5,7 @@ import (
 	"time"
 
 	kargoapi "github.com/akuity/kargo/api/v1alpha1"
+	"github.com/cockroachdb/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -17,12 +18,12 @@ func (h *handlers) runPromote(p *projectState, stageName, freightName, actor str
 	stage, ok := p.stages[stageName]
 	if !ok {
 		h.store.mu.Unlock()
-		return nil, fmt.Errorf("stage %q not found", stageName)
+		return nil, errors.Newf("stage %q not found", stageName)
 	}
 	freight, ok := p.freight[freightName]
 	if !ok {
 		h.store.mu.Unlock()
-		return nil, fmt.Errorf("freight %q not found", freightName)
+		return nil, errors.Newf("freight %q not found", freightName)
 	}
 
 	now := time.Now().UTC()
@@ -144,10 +145,10 @@ func (h *handlers) runApprove(p *projectState, freightName, stageName string) er
 	defer h.store.mu.Unlock()
 	freight, ok := p.freight[freightName]
 	if !ok {
-		return fmt.Errorf("freight %q not found", freightName)
+		return errors.Newf("freight %q not found", freightName)
 	}
 	if _, ok := p.stages[stageName]; !ok {
-		return fmt.Errorf("stage %q not found", stageName)
+		return errors.Newf("stage %q not found", stageName)
 	}
 	freight.Status.AddApprovedStage(stageName, time.Now().UTC())
 	p.events = append(p.events, newEvent("Freight", freightName, "FreightApproved",

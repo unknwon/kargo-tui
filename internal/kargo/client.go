@@ -20,6 +20,8 @@ import (
 	"context"
 	"strings"
 
+	"github.com/cockroachdb/errors"
+
 	"unknwon.dev/kargo-tui/internal/config"
 )
 
@@ -63,7 +65,10 @@ func (c *Client) SetTokenRefresher(refresh func(context.Context) (string, error)
 // attached. Returns the refresher's error so the caller can decide
 // whether to fall back to interactive re-login.
 func (c *Client) ForceRefresh(ctx context.Context) error {
-	return c.rpc.tryRefresh(ctx)
+	if err := c.rpc.tryRefresh(ctx); err != nil {
+		return errors.Wrap(err, "force token refresh")
+	}
+	return nil
 }
 
 // NewUnauthenticatedRPC is used by `auth login` to call AdminLogin and
@@ -96,7 +101,7 @@ type OIDCConfig struct {
 func (w *connectJSONWrapper) GetPublicConfig(ctx context.Context) (*PublicConfig, error) {
 	var out PublicConfig
 	if err := w.rpc.call(ctx, "GetPublicConfig", struct{}{}, &out); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "get public config")
 	}
 	return &out, nil
 }
@@ -111,7 +116,7 @@ func (w *connectJSONWrapper) AdminLogin(ctx context.Context, password string) (s
 		IDToken string `json:"idToken"`
 	}
 	if err := w.rpc.call(ctx, "AdminLogin", req, &resp); err != nil {
-		return "", err
+		return "", errors.Wrap(err, "admin login")
 	}
 	return resp.IDToken, nil
 }

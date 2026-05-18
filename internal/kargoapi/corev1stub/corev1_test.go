@@ -3,6 +3,8 @@ package corev1stub
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
@@ -14,21 +16,20 @@ import (
 // panic that vendored Kargo stubs would hit on *v1.ConfigMap is averted.
 func TestStubLoadsAsV2(t *testing.T) {
 	cm := &ConfigMap{}
-	if _, err := proto.Marshal(cm); err != nil {
-		t.Fatalf("marshal ConfigMap: %v", err)
-	}
+	_, err := proto.Marshal(cm)
+	require.NoError(t, err)
+
 	se := &Secret{}
-	if _, err := proto.Marshal(se); err != nil {
-		t.Fatalf("marshal Secret: %v", err)
-	}
+	_, err = proto.Marshal(se)
+	require.NoError(t, err)
+
 	for _, name := range []string{
 		"k8s.io.api.core.v1.ConfigMap",
 		"k8s.io.api.core.v1.Secret",
 	} {
-		if _, err := protoregistry.GlobalTypes.FindMessageByName(
+		_, err := protoregistry.GlobalTypes.FindMessageByName(
 			protoreflect.FullName(name),
-		); err != nil {
-			t.Errorf("lookup %s: %v", name, err)
-		}
+		)
+		assert.NoError(t, err)
 	}
 }

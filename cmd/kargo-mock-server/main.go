@@ -11,7 +11,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -19,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cockroachdb/errors"
 	"github.com/urfave/cli/v3"
 )
 
@@ -64,7 +64,7 @@ func run(ctx context.Context, cmd *cli.Command) error {
 
 	store, err := bootstrap(fixturesDir, seed)
 	if err != nil {
-		return fmt.Errorf("bootstrap state: %w", err)
+		return errors.Wrap(err, "bootstrap state")
 	}
 
 	startMotion(ctx, store, speed)
@@ -95,10 +95,13 @@ func run(ctx context.Context, cmd *cli.Command) error {
 		fmt.Println("\nshutting down")
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return srv.Shutdown(ctx)
+		if err := srv.Shutdown(ctx); err != nil {
+			return errors.Wrap(err, "shut down server")
+		}
+		return nil
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return err
+			return errors.Wrap(err, "serve HTTP")
 		}
 		return nil
 	}

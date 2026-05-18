@@ -3,11 +3,12 @@ package main
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/cockroachdb/errors"
 
 	"unknwon.dev/kargo-tui/internal/auth"
 	"unknwon.dev/kargo-tui/internal/config"
@@ -25,7 +26,7 @@ func resolveContext(ctx context.Context, cfg *config.Config, override string) (*
 	if override != "" {
 		c := cfg.Find(override)
 		if c == nil {
-			return nil, fmt.Errorf("context %q not found; configured: %s",
+			return nil, errors.Newf("context %q not found. Configured: %s",
 				override, contextNames(cfg))
 		}
 		return c, nil
@@ -56,7 +57,7 @@ func promptFirstLogin(ctx context.Context, _ *config.Config) (*config.Context, e
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadString('\n')
 	if err != nil {
-		return nil, fmt.Errorf("read URL: %w", err)
+		return nil, errors.Wrap(err, "read URL")
 	}
 	apiURL := strings.TrimSpace(line)
 	if apiURL == "" {
@@ -68,7 +69,7 @@ func promptFirstLogin(ctx context.Context, _ *config.Config) (*config.Context, e
 		MakeCurrent: true,
 	}, nil)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "log in")
 	}
 	fmt.Fprintf(os.Stderr, "Saved context %q.\n", saved.Name)
 	return saved, nil
@@ -92,7 +93,7 @@ func pickContext(cfg *config.Config) (*config.Context, error) {
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadString('\n')
 	if err != nil {
-		return nil, fmt.Errorf("read choice: %w", err)
+		return nil, errors.Wrap(err, "read choice")
 	}
 	choice := strings.TrimSpace(line)
 	if choice == "" {
@@ -107,7 +108,7 @@ func pickContext(cfg *config.Config) (*config.Context, error) {
 		persistCurrent(cfg, c.Name)
 		return c, nil
 	}
-	return nil, fmt.Errorf("unknown context %q", choice)
+	return nil, errors.Newf("unknown context %q", choice)
 }
 
 // persistCurrent updates CurrentContext and writes the config back. Failures

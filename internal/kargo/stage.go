@@ -6,6 +6,7 @@ import (
 	"time"
 
 	kargoapi "github.com/akuity/kargo/api/v1alpha1"
+	"github.com/cockroachdb/errors"
 
 	svcv1alpha1 "unknwon.dev/kargo-tui/internal/kargoapi/svc"
 )
@@ -52,7 +53,7 @@ func (c *Client) ListStages(ctx context.Context, project string) ([]Stage, error
 	req := &svcv1alpha1.ListStagesRequest{Project: project}
 	resp := &svcv1alpha1.ListStagesResponse{}
 	if err := c.rpc.callProto(ctx, "ListStages", req, resp); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "list stages")
 	}
 
 	out := make([]Stage, 0, len(resp.Stages))
