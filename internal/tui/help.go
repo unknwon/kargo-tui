@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"unknwon.dev/kargo-tui/internal/config"
 )
 
 // Build information surfaced in the bottom of the help overlay. Populated
@@ -50,6 +51,14 @@ func isHex(s string) bool {
 		}
 	}
 	return true
+}
+
+func helpConfigPath() string {
+	p, err := config.Path()
+	if err != nil {
+		return "unavailable"
+	}
+	return p
 }
 
 // helpBindings returns the static binding table rendered in the help
@@ -123,7 +132,7 @@ func (m *Model) prepareHelpViewport() {
 	}
 	// Match the box chrome in helpView: border(2) + Padding(1, 2) -> 6 cols,
 	// 4 rows; body chrome: header(1) + spacer(1) + spacer(1) + hint(1) +
-	// build(1) -> 5 rows.
+	// config path(1) + build(1) -> 6 rows.
 	innerW := w - 6
 	if innerW < 10 {
 		innerW = 10
@@ -146,8 +155,9 @@ func (m Model) helpView() tea.View {
 
 	header := titleStyle.Render("Keybindings")
 	hint := hintStyle.Render("j/k scroll · home/end top/bottom · esc/? dismiss")
+	configPath := hintStyle.Render("Config file: " + helpConfigPath())
 	build := hintStyle.Render("kargo-tui " + buildVersion + " · " + shortCommit(buildCommit) + " · built " + buildDate)
-	body := lipgloss.JoinVertical(lipgloss.Left, header, "", m.helpVP.View(), "", hint, build)
+	body := lipgloss.JoinVertical(lipgloss.Left, header, "", m.helpVP.View(), "", hint, configPath, build)
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
