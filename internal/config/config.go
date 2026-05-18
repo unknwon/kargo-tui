@@ -34,8 +34,13 @@ type Context struct {
 // $KARGO_TUI_CONFIG when set, otherwise falls back to
 // $XDG_CONFIG_HOME/kargo-tui/config.yaml or ~/.config/kargo-tui/config.yaml.
 func Path() (string, error) {
-	if p := os.Getenv("KARGO_TUI_CONFIG"); p != "" {
-		return p, nil
+	p := os.Getenv("KARGO_TUI_CONFIG")
+	if p != "" {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			return "", fmt.Errorf("resolve config path %s: %w", p, err)
+		}
+		return abs, nil
 	}
 	dir := os.Getenv("XDG_CONFIG_HOME")
 	if dir == "" {
