@@ -166,7 +166,6 @@ func (m Model) startWithProject(p string) (Model, tea.Cmd) {
 	)
 }
 
-// pickerView renders the project picker (used during phasePickingProject).
 // nsBodyHeight returns the row budget the project picker uses for its
 // scrollable list. Mirrors the chrome-line math in pickerView so the
 // scroll recompute in Update agrees with the renderer. The renderer
@@ -180,6 +179,7 @@ func (m Model) nsBodyHeight() int {
 	return maxItems
 }
 
+// pickerView renders the project picker (used during phasePickingProject).
 func (m Model) pickerView() tea.View {
 	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
 	hintStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)

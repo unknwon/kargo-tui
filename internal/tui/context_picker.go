@@ -212,7 +212,6 @@ func (m Model) switchContext(name string) (Model, tea.Cmd) {
 	return m, tea.Batch(loadProjectsCmd(client), discoverArgoURLCmd(client), textinput.Blink)
 }
 
-// contextPickerView renders the context picker overlay (phasePickingContext).
 // ctxBodyHeight returns the row budget the context picker uses for its
 // scrollable list. Mirrors the chrome-line math in contextPickerView so
 // the scroll recompute in Update agrees with the renderer. The "Switch"
@@ -230,6 +229,7 @@ func (m Model) ctxBodyHeight() int {
 	return maxItems
 }
 
+// contextPickerView renders the context picker overlay (phasePickingContext).
 func (m Model) contextPickerView() tea.View {
 	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
 	hintStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
