@@ -151,6 +151,7 @@ type Model struct {
 	projectsError error
 	nsFilter      textinput.Model
 	nsCursor      int
+	nsScroll      int
 	nsLoading     bool
 	nsExplicit    bool
 
@@ -162,6 +163,7 @@ type Model struct {
 	// kicks off an SSO login when the user presses `+` in the picker.
 	ctxNames   []string
 	ctxCursor  int
+	ctxScroll  int
 	ctxFilter  textinput.Model
 	ctxError   error
 	ctxBuilder func(name string) (*kargo.Client, string, error)
@@ -184,6 +186,10 @@ type Model struct {
 	treeNodes    []treeNode
 	treeCursor   int
 	treeExpanded map[string]bool
+	// treeScroll is the row index at the top of the visible tree window.
+	// Sticky across renders so the viewport only shifts when the cursor
+	// would otherwise leave it, mirroring the graph view's pan behavior.
+	treeScroll int
 
 	// Graph view state. graphLayout is recomputed on each data refresh
 	// (Sugiyama layered DAG); graphCursor indexes into graphLayout.nodes.
@@ -220,6 +226,7 @@ type Model struct {
 	promoteStage      string // target stage name (also: source stage when promoteDownstream is true)
 	promoteCandidates []promoteCandidate
 	promoteCursor     int
+	promoteScroll     int
 	promoteStep       promoteStep
 	promoteResult     string // promotion name on success
 	promoteError      error

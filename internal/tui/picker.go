@@ -167,6 +167,19 @@ func (m Model) startWithProject(p string) (Model, tea.Cmd) {
 }
 
 // pickerView renders the project picker (used during phasePickingProject).
+// nsBodyHeight returns the row budget the project picker uses for its
+// scrollable list. Mirrors the chrome-line math in pickerView so the
+// scroll recompute in Update agrees with the renderer. The renderer
+// uses len(lines) for the chrome row count, which is always 5 lines
+// (title, hint, blank, filter, blank) before any list items append.
+func (m Model) nsBodyHeight() int {
+	maxItems := m.height - 5 - 4
+	if maxItems < 5 {
+		maxItems = 5
+	}
+	return maxItems
+}
+
 func (m Model) pickerView() tea.View {
 	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
 	hintStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
@@ -197,10 +210,7 @@ func (m Model) pickerView() tea.View {
 			if maxItems < 5 {
 				maxItems = 5
 			}
-			start := 0
-			if m.nsCursor >= maxItems {
-				start = m.nsCursor - maxItems + 1
-			}
+			start := clampListScroll(m.nsScroll, m.nsCursor, maxItems, len(filtered))
 			end := start + maxItems
 			if end > len(filtered) {
 				end = len(filtered)

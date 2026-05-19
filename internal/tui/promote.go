@@ -333,6 +333,17 @@ func (m Model) promoteOverlayView() tea.View {
 	return v
 }
 
+// promoteBodyHeight returns the row budget the freight-candidate picker
+// uses for the visible window. Mirrors the math in promotePickingView so
+// the scroll recompute in Update agrees with the renderer.
+func (m Model) promoteBodyHeight() int {
+	bodyH := m.height - 2
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	return bodyH
+}
+
 // promotePickingView renders the freight-candidate picker as a
 // full-screen frame: 1-row header, N-row body, 1-row hint. Because the
 // chrome is a fixed 2 rows the body height is unambiguous (`m.height -
@@ -363,21 +374,16 @@ func (m Model) promotePickingView(titleStyle, hintStyle, itemStyle, selStyle lip
 	header := titleStyle.Padding(0, 1).Render(clipToWidth(m.overlayTitle, headHintBudget))
 	hint := hintStyle.Padding(0, 1).Render(clipToWidth("↑/↓ select · pgup/pgdn/space/home/end jump · enter pick · v details · esc cancel", headHintBudget))
 
-	bodyH := m.height - 2
-	if bodyH < 1 {
-		bodyH = 1
-	}
+	bodyH := m.promoteBodyHeight()
 
 	var body string
 	if len(m.promoteCandidates) == 0 {
 		body = hintStyle.Padding(0, 1).Render("no candidate freight found for this stage")
 	} else {
 		// Window the candidate slice so the cursor row stays inside
-		// the visible body.
-		start := 0
-		if m.promoteCursor >= bodyH {
-			start = m.promoteCursor - bodyH + 1
-		}
+		// the visible body. Sticky scroll: only shifts when the cursor
+		// would otherwise leave the visible window.
+		start := clampListScroll(m.promoteScroll, m.promoteCursor, bodyH, len(m.promoteCandidates))
 		end := start + bodyH
 		if end > len(m.promoteCandidates) {
 			end = len(m.promoteCandidates)
