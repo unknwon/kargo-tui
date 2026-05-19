@@ -258,6 +258,13 @@ func (m *Model) refreshRows() {
 // to enumerate them. Don't replace this with a struct-field equality check:
 // the previous incarnation silently missed age ticks and freight-alias
 // changes for stages because those inputs don't live on the stage struct.
+//
+// Column 0 is the cursor marker, mutated in place by applyCursorMarker
+// after this comparison runs. The stored snapshot aliases the table's
+// backing slices, so the marker glyph would otherwise leak into the next
+// equality check on the cursor row and force a rebuild every refresh.
+// Skip it: the marker carries no user-meaningful data and is reapplied
+// unconditionally on every refresh.
 func sameRows(a, b []table.Row) bool {
 	if len(a) != len(b) {
 		return false
@@ -266,7 +273,7 @@ func sameRows(a, b []table.Row) bool {
 		if len(a[i]) != len(b[i]) {
 			return false
 		}
-		for j := range a[i] {
+		for j := 1; j < len(a[i]); j++ {
 			if a[i][j] != b[i][j] {
 				return false
 			}
