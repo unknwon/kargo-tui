@@ -958,8 +958,14 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 // mirroring the recomputeGraphPan pattern so the scroll math doesn't
 // have to be sprinkled across every cursor / resize / data-load handler.
 func (m *Model) recomputeListScrolls() {
-	m.treeScroll = clampListScroll(m.treeScroll, m.treeCursor, m.treeBodyHeight(), len(m.treeNodes))
-	m.nsScroll = clampListScroll(m.nsScroll, m.nsCursor, m.nsBodyHeight(), len(m.filteredProjects()))
-	m.ctxScroll = clampListScroll(m.ctxScroll, m.ctxCursor, m.ctxBodyHeight(), len(m.filteredContexts()))
-	m.promoteScroll = clampListScroll(m.promoteScroll, m.promoteCursor, m.promoteBodyHeight(), len(m.promoteCandidates))
+	switch {
+	case m.phase == phasePickingProject:
+		m.nsScroll = clampListScroll(m.nsScroll, m.nsCursor, m.nsBodyHeight(), len(m.filteredProjects()))
+	case m.phase == phasePickingContext:
+		m.ctxScroll = clampListScroll(m.ctxScroll, m.ctxCursor, m.ctxBodyHeight(), len(m.filteredContexts()))
+	case m.overlay == overlayPromote:
+		m.promoteScroll = clampListScroll(m.promoteScroll, m.promoteCursor, m.promoteBodyHeight(), len(m.promoteCandidates))
+	case m.view == viewTree:
+		m.treeScroll = clampListScroll(m.treeScroll, m.treeCursor, m.treeBodyHeight(), len(m.treeNodes))
+	}
 }
