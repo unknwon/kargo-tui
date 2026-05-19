@@ -165,19 +165,21 @@ func (m *Model) refreshRows() {
 		for i, r := range rows {
 			slicedRows[i] = sliceRow(r, idx)
 		}
-		// Skip the rebuild entirely when the visible rows are unchanged.
+		// Skip the rebuild entirely when the rendered rows are unchanged.
 		// SetRows + SetColumns reset the table's internal viewport offset
-		// (no public accessor for YOffset) which causes the visible window
-		// to "jump" on every auto-refresh even though nothing the user can
-		// see has actually changed.
-		if !sameStageRows(m.visibleDeploys, visible) || !sameColumnSlice(m.deploysTable.Columns(), slicedCols) {
+		// (no public accessor for YOffset), which causes the visible window
+		// to "jump" on every auto-refresh even when nothing the user can see
+		// has actually changed. The equality check compares the rendered
+		// cells, not the source structs — anything the user sees in the
+		// table participates by construction.
+		if !sameRows(m.lastDeployRows, slicedRows) ||
+			!sameColumnSlice(m.deploysTable.Columns(), slicedCols) {
 			// Order matters: clear rows BEFORE changing columns. The bubbles
 			// table re-renders on SetColumns, and panics if any row has more
 			// cells than the new column count.
 			m.deploysTable.SetRows(nil)
 			m.deploysTable.SetColumns(slicedCols)
 			m.deploysTable.SetRows(slicedRows)
-			m.visibleDeploys = visible
 			want := -1
 			if prevName != "" {
 				for i, s := range visible {
@@ -188,9 +190,9 @@ func (m *Model) refreshRows() {
 				}
 			}
 			clampCursor(&m.deploysTable, want)
-		} else {
-			m.visibleDeploys = visible
 		}
+		m.visibleDeploys = visible
+		m.lastDeployRows = slicedRows
 		applyCursorMarker(&m.deploysTable)
 
 	case viewFreights:
@@ -227,11 +229,11 @@ func (m *Model) refreshRows() {
 		}
 		// See the deploys branch above for why we skip the rebuild on
 		// equal-row refreshes — preserves the table's internal scroll.
-		if !sameFreightRows(m.visibleFreights, visible) || !sameColumnSlice(m.freightsTable.Columns(), slicedCols) {
+		if !sameRows(m.lastFreightRows, slicedRows) ||
+			!sameColumnSlice(m.freightsTable.Columns(), slicedCols) {
 			m.freightsTable.SetRows(nil)
 			m.freightsTable.SetColumns(slicedCols)
 			m.freightsTable.SetRows(slicedRows)
-			m.visibleFreights = visible
 			want := -1
 			if prevName != "" {
 				for i, f := range visible {
@@ -242,66 +244,32 @@ func (m *Model) refreshRows() {
 				}
 			}
 			clampCursor(&m.freightsTable, want)
-		} else {
-			m.visibleFreights = visible
 		}
+		m.visibleFreights = visible
+		m.lastFreightRows = slicedRows
 		applyCursorMarker(&m.freightsTable)
 	}
 }
 
-// sameStageRows returns true when two stage slices would render identically
-// in the table — same length, same names in the same order, same health,
-// freight summary, last-promo phase, shard, and Argo CD state (the visible
-// columns). When this is true, the auto-refresh can skip SetRows entirely
-// and preserve the table's scroll offset.
-func sameStageRows(a, b []kargo.Stage) bool {
+// sameRows returns true when two row slices would render identically. The
+// comparison is over the rendered cells themselves, so every input that
+// affects what the user sees (struct fields, time-dependent age strings,
+// cross-list lookups like aliasOf) participates without any helper having
+// to enumerate them. Don't replace this with a struct-field equality check:
+// the previous incarnation silently missed age ticks and freight-alias
+// changes for stages because those inputs don't live on the stage struct.
+func sameRows(a, b []table.Row) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
-		if a[i].Name != b[i].Name ||
-			a[i].Health != b[i].Health ||
-			a[i].FreightSummary != b[i].FreightSummary ||
-			a[i].LastPromo != b[i].LastPromo ||
-			a[i].Shard != b[i].Shard ||
-			!sameArgoApps(a[i].ArgoCDApps, b[i].ArgoCDApps) {
+		if len(a[i]) != len(b[i]) {
 			return false
 		}
-	}
-	return true
-}
-
-// sameArgoApps returns true when two Argo app slices render identically in
-// the deploy list's "Argo" cell — same set of apps in the same order with
-// the same health and sync state. Cell rendering only consumes Health and
-// Sync, so other ArgoCDAppRef fields don't affect equality.
-func sameArgoApps(a, b []kargo.ArgoCDAppRef) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].Namespace != b[i].Namespace ||
-			a[i].Name != b[i].Name ||
-			a[i].Health != b[i].Health ||
-			a[i].Sync != b[i].Sync {
-			return false
-		}
-	}
-	return true
-}
-
-// sameFreightRows is the freight-side counterpart to sameStageRows.
-func sameFreightRows(a, b []kargo.Freight) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].Name != b[i].Name ||
-			a[i].Alias != b[i].Alias ||
-			a[i].Warehouse != b[i].Warehouse ||
-			a[i].VerifiedIn != b[i].VerifiedIn ||
-			a[i].ApprovedFor != b[i].ApprovedFor {
-			return false
+		for j := range a[i] {
+			if a[i][j] != b[i][j] {
+				return false
+			}
 		}
 	}
 	return true

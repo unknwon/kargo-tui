@@ -144,6 +144,8 @@ func (m Model) startWithProject(p string) (Model, tea.Cmd) {
 	m.freights = nil
 	m.visibleDeploys = nil
 	m.visibleFreights = nil
+	m.lastDeployRows = nil
+	m.lastFreightRows = nil
 	m.refreshRows()
 	// Re-fit tables in case window size message already arrived.
 	if m.width > 0 {
