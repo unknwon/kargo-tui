@@ -110,10 +110,6 @@ func (m *Model) openPromoteDownstreamOverlay(stage *kargo.Stage) {
 // for each downstream stage before the promote fires. Current is set on
 // freight currently deployed at the source stage so the picker can mark
 // the "you'd be re-promoting this" row distinctly.
-//
-// Unlike candidateFreight, the rows are not grouped by eligibility:
-// the source stage is the user's reference point and they expect the
-// list to flow in age order regardless of approval state.
 func downstreamCandidateFreight(all []kargo.Freight, source *kargo.Stage) []promoteCandidate {
 	if source == nil {
 		return nil
@@ -134,7 +130,7 @@ func downstreamCandidateFreight(all []kargo.Freight, source *kargo.Stage) []prom
 		_, isCurrent := current[f.Name]
 		out = append(out, promoteCandidate{Freight: f, Eligible: eligible, Current: isCurrent})
 	}
-	sortCandidatesByAge(out)
+	sortPromoteCandidates(out)
 	return out
 }
 
@@ -193,26 +189,10 @@ func candidateFreight(all []kargo.Freight, target *kargo.Stage) []promoteCandida
 	return out
 }
 
-// sortPromoteCandidates orders the picker rows so eligible freight comes
-// first (the common path), then ineligible freight, each group ordered
-// newest-first with name as tiebreaker.
+// sortPromoteCandidates orders the picker rows newest-first with name
+// as tiebreaker. Eligibility is surfaced per row via the marker / meta
+// strip, not by grouping.
 func sortPromoteCandidates(cs []promoteCandidate) {
-	sort.Slice(cs, func(i, j int) bool {
-		if cs[i].Eligible != cs[j].Eligible {
-			return cs[i].Eligible
-		}
-		ai, aj := cs[i].Freight, cs[j].Freight
-		if !ai.Created.Equal(aj.Created) {
-			return ai.Created.After(aj.Created)
-		}
-		return ai.Name < aj.Name
-	})
-}
-
-// sortCandidatesByAge orders the picker rows newest-first with name as
-// tiebreaker, ignoring eligibility. Used by the downstream picker where
-// the user expects a flat age-ordered list.
-func sortCandidatesByAge(cs []promoteCandidate) {
 	sort.Slice(cs, func(i, j int) bool {
 		ai, aj := cs[i].Freight, cs[j].Freight
 		if !ai.Created.Equal(aj.Created) {
