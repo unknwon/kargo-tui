@@ -104,6 +104,15 @@ type Model struct {
 	visibleDeploys  []kargo.Stage
 	visibleFreights []kargo.Freight
 
+	// Snapshot of the cells last pushed to each table, indexed the same as
+	// visibleDeploys/visibleFreights. The rebuild-skip check compares the
+	// freshly built rows against these — a render-faithful equality check, so
+	// any cell that's actually shown to the user participates in the
+	// comparison. Don't reintroduce a struct-field equality function: it
+	// drifts out of sync the moment a cell renderer reads anything new.
+	lastDeployRows  []table.Row
+	lastFreightRows []table.Row
+
 	// Horizontal scroll offset (in column count) per table view.
 	deploysColOffset  int
 	freightsColOffset int

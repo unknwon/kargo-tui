@@ -24,6 +24,10 @@ This applies to all texts, including but not limited to UI, documentation, code 
     - Logger scoping (`logger.Scoped(...)`) is done at the call site, not inside the callee's constructor. The constructor stores the logger as-is.
     - Log scope and attribute names use camelCase while respecting Go idioms, e.g., `"userID"`, `"messageLength"`.
 
+## TUI render correctness
+
+- Any "skip rebuild when nothing changed" check (the table refresh in `internal/tui/table.go`, similar caches elsewhere) must compare the rendered output, not source structs. Struct-field equality drifts the moment a cell renderer reads anything new: time-dependent values like `ageString(Created)`, cross-list lookups like `aliasOf` against `m.freights`, or a newly added column will all silently bypass an enumerated field check while still affecting what the user sees. Compare `[]table.Row` against the previous `[]table.Row`, or invalidate a cache via a monotonically bumped version that fires on every data load. If you must compare structs, prove that every input to every cell on the row is covered, and add a regression case before merging.
+
 ## UX consistency
 
 - All popup overlays (project picker, context picker, promote confirm, freight picker, etc.) must share the same placement behavior: centered when the terminal is large enough to fit the box, anchored to the top-left when it isn't. Use the `centerPopup` and `centerPopupOffsets` helpers in `internal/tui/cells.go`. Top-left fallback keeps content readable on tiny terminals instead of pushing it off-screen.

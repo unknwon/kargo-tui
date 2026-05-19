@@ -184,6 +184,8 @@ func (m Model) switchContext(name string) (Model, tea.Cmd) {
 	m.freights = nil
 	m.visibleDeploys = nil
 	m.visibleFreights = nil
+	m.lastDeployRows = nil
+	m.lastFreightRows = nil
 	m.deploysError = nil
 	m.freightsError = nil
 	m.argoBaseURL = ""
