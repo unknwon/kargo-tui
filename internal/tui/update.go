@@ -97,6 +97,7 @@ func (m Model) Update(msg tea.Msg) (out tea.Model, cmd tea.Cmd) {
 	// across every cursor / resize / data-load handler.
 	if mm, ok := out.(Model); ok {
 		mm.recomputeGraphPan()
+		mm.recomputeListScrolls()
 		out = mm
 	}
 	return out, cmd
@@ -948,4 +949,23 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, cmd
+}
+
+// recomputeListScrolls refreshes the sticky scroll offsets for every
+// custom list view (tree, project picker, context picker, freight
+// picker) so the cursor row stays visible without snapping the viewport
+// when the cursor is already in view. Called once at the tail of Update,
+// mirroring the recomputeGraphPan pattern so the scroll math doesn't
+// have to be sprinkled across every cursor / resize / data-load handler.
+func (m *Model) recomputeListScrolls() {
+	switch {
+	case m.phase == phasePickingProject:
+		m.nsScroll = clampListScroll(m.nsScroll, m.nsCursor, m.nsBodyHeight(), len(m.filteredProjects()))
+	case m.phase == phasePickingContext:
+		m.ctxScroll = clampListScroll(m.ctxScroll, m.ctxCursor, m.ctxBodyHeight(), len(m.filteredContexts()))
+	case m.overlay == overlayPromote:
+		m.promoteScroll = clampListScroll(m.promoteScroll, m.promoteCursor, m.promoteBodyHeight(), len(m.promoteCandidates))
+	case m.view == viewTree:
+		m.treeScroll = clampListScroll(m.treeScroll, m.treeCursor, m.treeBodyHeight(), len(m.treeNodes))
+	}
 }

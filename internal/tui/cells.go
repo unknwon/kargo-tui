@@ -449,3 +449,32 @@ func sortedKeys(m map[string]string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// clampListScroll returns the viewport start index for a vertical list of
+// total rows displayed at height rows on screen, given a cursor row and a
+// previous start. The previous start is preserved whenever the cursor is
+// already inside the visible window, so navigating between already-visible
+// rows never shifts the list. Mirrors the sticky-pan behavior the graph
+// view uses for its 2D viewport.
+func clampListScroll(prev, cursor, height, total int) int {
+	if height <= 0 || total <= 0 {
+		return 0
+	}
+	start := prev
+	if start < 0 {
+		start = 0
+	}
+	if cursor < start {
+		start = cursor
+	}
+	if cursor >= start+height {
+		start = cursor - height + 1
+	}
+	if start+height > total {
+		start = total - height
+	}
+	if start < 0 {
+		start = 0
+	}
+	return start
+}

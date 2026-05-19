@@ -212,6 +212,23 @@ func (m Model) switchContext(name string) (Model, tea.Cmd) {
 	return m, tea.Batch(loadProjectsCmd(client), discoverArgoURLCmd(client), textinput.Blink)
 }
 
+// ctxBodyHeight returns the row budget the context picker uses for its
+// scrollable list. Mirrors the chrome-line math in contextPickerView so
+// the scroll recompute in Update agrees with the renderer. The "Switch"
+// branch always reserves 5 lines (title, hint, blank, filter, blank)
+// before any list items, plus 2 if an error is shown.
+func (m Model) ctxBodyHeight() int {
+	chrome := 5
+	if m.ctxError != nil {
+		chrome += 2
+	}
+	maxItems := m.height - chrome - 4
+	if maxItems < 5 {
+		maxItems = 5
+	}
+	return maxItems
+}
+
 // contextPickerView renders the context picker overlay (phasePickingContext).
 func (m Model) contextPickerView() tea.View {
 	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
@@ -263,7 +280,17 @@ func (m Model) contextPickerView() tea.View {
 				lines = append(lines, hintStyle.Render("no contexts match this filter"))
 			}
 		} else {
-			for i, name := range filtered {
+			maxItems := m.height - len(lines) - 4
+			if maxItems < 5 {
+				maxItems = 5
+			}
+			start := clampListScroll(m.ctxScroll, m.ctxCursor, maxItems, len(filtered))
+			end := start + maxItems
+			if end > len(filtered) {
+				end = len(filtered)
+			}
+			for i := start; i < end; i++ {
+				name := filtered[i]
 				marker := "  "
 				label := name
 				if name == m.contextName {

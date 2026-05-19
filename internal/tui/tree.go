@@ -229,6 +229,17 @@ func (m *Model) rebuildTree() {
 	}
 }
 
+// treeBodyHeight returns the row budget the tree renderer uses for the
+// visible window. Mirrors the math in treeView so the scroll recompute in
+// Update agrees with the renderer.
+func (m Model) treeBodyHeight() int {
+	bodyH := m.height - 4
+	if bodyH < 5 {
+		bodyH = 5
+	}
+	return bodyH
+}
+
 // renderTreeBody returns the visible window of the tree as a single string.
 func (m Model) renderTreeBody(width, height int) string {
 	mutedStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
@@ -240,10 +251,7 @@ func (m Model) renderTreeBody(width, height int) string {
 		return mutedStyle.Render("no stages — try the deploys view (d)")
 	}
 
-	start := 0
-	if height > 0 && m.treeCursor >= height {
-		start = m.treeCursor - height + 1
-	}
+	start := clampListScroll(m.treeScroll, m.treeCursor, height, len(m.treeNodes))
 	end := start + height
 	if height <= 0 || end > len(m.treeNodes) {
 		end = len(m.treeNodes)
@@ -403,10 +411,7 @@ func (m Model) treeView() tea.View {
 		Padding(0, 1).
 		Render(headerText)
 
-	bodyH := m.height - 4
-	if bodyH < 5 {
-		bodyH = 5
-	}
+	bodyH := m.treeBodyHeight()
 	body := lipgloss.NewStyle().Background(bg).Padding(0, 1).Render(
 		m.renderTreeBody(m.width-2, bodyH))
 
