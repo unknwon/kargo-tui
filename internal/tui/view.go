@@ -150,9 +150,9 @@ func (m Model) View() (v tea.View) {
 // while m.authExpired is set. Bright red so it's hard to miss; the inline
 // re-login affordance (`R`) is documented in the line.
 func (m Model) renderAuthBanner() string {
-	msg := "session expired — press R to re-login (or C to switch context)"
+	msg := "session expired. Press R to re-login (or C to switch context)"
 	if m.authExpiredMsg != "" {
-		msg = "session expired (" + m.authExpiredMsg + ") — press R to re-login (or C to switch context)"
+		msg = "session expired (" + m.authExpiredMsg + "). Press R to re-login (or C to switch context)"
 	}
 	return lipgloss.NewStyle().
 		Foreground(normal).Background(degraded).Bold(true).

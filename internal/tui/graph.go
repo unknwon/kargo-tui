@@ -385,6 +385,29 @@ func layoutGraph(stages []kargo.Stage, cfg graphCfg, m Model) graphLayout {
 		rowsForNode[s.Name] = buildNodeRows(stage, m)
 	}
 
+	// Grow NodeW to fit the widest line across all real nodes so values
+	// like full freight aliases (e.g. "fallacious-stingray-...") render
+	// without an ellipsis. Box layout stays uniform: every column uses
+	// the same width, derived from the widest content in the graph.
+	//
+	// Required inner width per row = keyColumnWidth(rows) + 1 (separator)
+	// + value width. Required box width = inner + 2 (borders). The stage
+	// name (rendered on row 0) only needs name + 2.
+	required := cfg.NodeW
+	for _, s := range stages {
+		rows := rowsForNode[s.Name]
+		keyW := keyColumnWidth(rows)
+		for _, r := range rows {
+			if w := keyW + 1 + ansi.StringWidth(r.Value) + 2; w > required {
+				required = w
+			}
+		}
+		if nameW := ansi.StringWidth(s.Name) + 2; nameW > required {
+			required = nameW
+		}
+	}
+	cfg.NodeW = required
+
 	// Per-slot row height = max box height across all layers for that
 	// slot. Keeps boxes in the same row visually aligned.
 	maxSlot := 0
