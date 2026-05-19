@@ -265,7 +265,17 @@ func (m *Model) refreshRows() {
 // equality check on the cursor row and force a rebuild every refresh.
 // Skip it: the marker carries no user-meaningful data and is reapplied
 // unconditionally on every refresh.
+//
+// A nil snapshot is treated as unequal to any non-nil slice (including an
+// empty one). Picker reset paths set lastDeployRows/lastFreightRows to nil
+// specifically to invalidate the cache. Without this distinction, a
+// refresh that builds zero rows while the new project's data is in flight
+// would compare nil to []table.Row{} as equal and leave the previous
+// project's rows on screen.
 func sameRows(a, b []table.Row) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
 	if len(a) != len(b) {
 		return false
 	}
