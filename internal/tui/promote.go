@@ -189,14 +189,11 @@ func candidateFreight(all []kargo.Freight, target *kargo.Stage) []promoteCandida
 	return out
 }
 
-// sortPromoteCandidates orders the picker rows so eligible freight comes
-// first (the common path), then ineligible freight, each group ordered
-// newest-first with name as tiebreaker.
+// sortPromoteCandidates orders the picker rows newest-first with name
+// as tiebreaker. Eligibility is surfaced per row via the marker / meta
+// strip, not by grouping.
 func sortPromoteCandidates(cs []promoteCandidate) {
 	sort.Slice(cs, func(i, j int) bool {
-		if cs[i].Eligible != cs[j].Eligible {
-			return cs[i].Eligible
-		}
 		ai, aj := cs[i].Freight, cs[j].Freight
 		if !ai.Created.Equal(aj.Created) {
 			return ai.Created.After(aj.Created)
