@@ -171,9 +171,9 @@ func sortIndicatorFor(mode sortMode) (column, arrow string) {
 	case sortByLastPromo:
 		return "Last Promo", "↓"
 	case sortByVerifiedIn:
-		return "VerifiedIn", "↓"
+		return "Verified", "↓"
 	case sortByApprovedFor:
-		return "ApprovedFor", "↓"
+		return "Approved", "↓"
 	}
 	return "", ""
 }
