@@ -20,6 +20,8 @@ const (
 	sortByName
 	sortByHealth
 	sortByLastPromo
+	sortByVerifiedIn
+	sortByApprovedFor
 )
 
 // String returns a short label for the bottom-bar sort indicator.
@@ -31,6 +33,10 @@ func (s sortMode) String() string {
 		return "health"
 	case sortByLastPromo:
 		return "last-promo"
+	case sortByVerifiedIn:
+		return "verified-in"
+	case sortByApprovedFor:
+		return "approved-for"
 	default:
 		return "age"
 	}
@@ -59,7 +65,7 @@ func (m *Model) cycleSort() {
 // alternative because the rest are stage-specific.
 func sortModesForView(v view) []sortMode {
 	if v == viewFreights {
-		return []sortMode{sortDefault, sortByName}
+		return []sortMode{sortDefault, sortByName, sortByVerifiedIn, sortByApprovedFor}
 	}
 	return []sortMode{sortDefault, sortByName, sortByHealth, sortByLastPromo}
 }
@@ -94,16 +100,35 @@ func (m *Model) sortDeploys(in []kargo.Stage) []kargo.Stage {
 }
 
 // sortFreights returns a copy of the input slice ordered by the current
-// view's sort mode. Only sortByName changes anything here. Default and
-// the stage-only modes fall through to the client's newest-first ordering.
+// view's sort mode. Default and the stage-only modes fall through to the
+// client's newest-first ordering. Count-based modes (verified-in,
+// approved-for) sort descending so freight that has reached the most
+// stages floats to the top, with name as a stable tiebreaker.
 func (m *Model) sortFreights(in []kargo.Freight) []kargo.Freight {
-	if m.sort[m.view] != sortByName {
+	mode := m.sort[m.view]
+	switch mode {
+	case sortByName, sortByVerifiedIn, sortByApprovedFor:
+	default:
 		return in
 	}
 	out := make([]kargo.Freight, len(in))
 	copy(out, in)
 	sort.SliceStable(out, func(i, j int) bool {
-		return out[i].Name < out[j].Name
+		switch mode {
+		case sortByName:
+			return out[i].Name < out[j].Name
+		case sortByVerifiedIn:
+			if out[i].VerifiedIn != out[j].VerifiedIn {
+				return out[i].VerifiedIn > out[j].VerifiedIn
+			}
+			return out[i].Name < out[j].Name
+		case sortByApprovedFor:
+			if out[i].ApprovedFor != out[j].ApprovedFor {
+				return out[i].ApprovedFor > out[j].ApprovedFor
+			}
+			return out[i].Name < out[j].Name
+		}
+		return false
 	})
 	return out
 }
@@ -145,6 +170,10 @@ func sortIndicatorFor(mode sortMode) (column, arrow string) {
 		return "Health", "↓"
 	case sortByLastPromo:
 		return "Last Promo", "↓"
+	case sortByVerifiedIn:
+		return "VerifiedIn", "↓"
+	case sortByApprovedFor:
+		return "ApprovedFor", "↓"
 	}
 	return "", ""
 }
