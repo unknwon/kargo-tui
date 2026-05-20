@@ -170,6 +170,9 @@ func freightDetailLines(
 			if im.Digest != "" {
 				lines = append(lines, valStyle.Render("    "+wrap(im.Digest, innerW-4)))
 			}
+			if src := imageSourceLink(im.Annotations); src != "" {
+				lines = append(lines, keyStyle.Render("    source: "+wrap(src, innerW-12)))
+			}
 		}
 	}
 	if len(f.Charts) > 0 {
@@ -279,6 +282,48 @@ func (m *Model) renderPanel(width, height int) string {
 		content += "\n" + keyStyle.Render("↓ more")
 	}
 	return border.Render(content)
+}
+
+// imageSourceLink builds the "source code" link Kargo's web UI shows for an
+// OCI image, by combining the standard OCI image annotations into a single
+// URL. Returns empty when the image carries no source annotation.
+//
+// Prefers org.opencontainers.image.source (defined by the OCI spec as the URL
+// of the source repository) and falls back to .url for older images that only
+// set the project landing page. When org.opencontainers.image.revision is
+// present and the host is a known git provider, builds a /commit/<sha> URL so
+// the link points at the exact build's source. Unknown hosts fall back to the
+// repo URL plus a trailing "@<short-sha>" so the revision isn't lost.
+func imageSourceLink(ann map[string]string) string {
+	if len(ann) == 0 {
+		return ""
+	}
+	repo := ann["org.opencontainers.image.source"]
+	if repo == "" {
+		repo = ann["org.opencontainers.image.url"]
+	}
+	if repo == "" {
+		return ""
+	}
+	rev := ann["org.opencontainers.image.revision"]
+	if rev == "" {
+		return repo
+	}
+	clean := strings.TrimSuffix(repo, "/")
+	clean = strings.TrimSuffix(clean, ".git")
+	switch {
+	case strings.Contains(clean, "github.com/"),
+		strings.Contains(clean, "gitlab.com/"),
+		strings.Contains(clean, "codeberg.org/"):
+		return clean + "/commit/" + rev
+	case strings.Contains(clean, "bitbucket.org/"):
+		return clean + "/commits/" + rev
+	}
+	short := rev
+	if len(short) > 7 {
+		short = short[:7]
+	}
+	return clean + "@" + short
 }
 
 func (m Model) selectedStage() *kargo.Stage {
