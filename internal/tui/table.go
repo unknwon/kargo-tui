@@ -160,7 +160,7 @@ func (m *Model) refreshRows() {
 			visible = append(visible, s)
 		}
 		idx := horizontalSlice(len(allStageColumns), m.deploysColOffset)
-		slicedCols := sliceColumns(allStageColumns, idx)
+		slicedCols := decorateColumnsWithSort(sliceColumns(allStageColumns, idx), m.sort[m.view])
 		slicedRows := make([]table.Row, len(rows))
 		for i, r := range rows {
 			slicedRows[i] = sliceRow(r, idx)
@@ -222,7 +222,7 @@ func (m *Model) refreshRows() {
 			visible = append(visible, f)
 		}
 		idx := horizontalSlice(len(allFreightColumns), m.freightsColOffset)
-		slicedCols := sliceColumns(allFreightColumns, idx)
+		slicedCols := decorateColumnsWithSort(sliceColumns(allFreightColumns, idx), m.sort[m.view])
 		slicedRows := make([]table.Row, len(rows))
 		for i, r := range rows {
 			slicedRows[i] = sliceRow(r, idx)

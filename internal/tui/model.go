@@ -305,8 +305,8 @@ var allFreightColumns = []table.Column{
 	{Title: " ", Width: 2},
 	{Title: "Name", Width: 30},
 	{Title: "Age", Width: 8},
-	{Title: "VerifiedIn", Width: 12},
-	{Title: "ApprovedFor", Width: 12},
+	{Title: "Verified", Width: 10},
+	{Title: "Approved", Width: 10},
 	{Title: "Warehouse", Width: 20},
 }
 
