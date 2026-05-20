@@ -36,15 +36,32 @@ func (s sortMode) String() string {
 	}
 }
 
-// cycleSort advances the sort mode for the current view, wrapping back to
-// sortDefault after the last entry.
+// cycleSort advances the sort mode for the current view through the modes
+// that actually do something there, wrapping back to sortDefault after the
+// last entry. Skipping inapplicable modes (e.g., sortByHealth on freights)
+// keeps the bottom-bar hint and column-header arrow in sync with what the
+// data is actually doing.
 func (m *Model) cycleSort() {
+	modes := sortModesForView(m.view)
 	cur := m.sort[m.view]
-	next := cur + 1
-	if next > sortByLastPromo {
-		next = sortDefault
+	for i, mode := range modes {
+		if mode == cur {
+			m.sort[m.view] = modes[(i+1)%len(modes)]
+			return
+		}
 	}
-	m.sort[m.view] = next
+	m.sort[m.view] = modes[0]
+}
+
+// sortModesForView returns the sort modes that are meaningful in the given
+// view, in cycle order. The deploys/control-flow views have all stage-level
+// fields to sort on; the freights view only has name as a non-default
+// alternative because the rest are stage-specific.
+func sortModesForView(v view) []sortMode {
+	if v == viewFreights {
+		return []sortMode{sortDefault, sortByName}
+	}
+	return []sortMode{sortDefault, sortByName, sortByHealth, sortByLastPromo}
 }
 
 // sortDeploys returns a copy of the input slice ordered by the current
