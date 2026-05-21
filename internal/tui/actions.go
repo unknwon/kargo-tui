@@ -85,11 +85,10 @@ func (m *Model) setTableCursorAtScreen(idx, screenRow int) {
 		idx = rows - 1
 	}
 	t.SetCursor(idx)
-	start := idx - t.Height()
-	if start < 0 {
-		start = 0
+	yOffset := idx - screenRow
+	if maxOffset := rows - t.Height(); yOffset > maxOffset {
+		yOffset = maxOffset
 	}
-	yOffset := idx - start - screenRow
 	if yOffset < 0 {
 		yOffset = 0
 	}
