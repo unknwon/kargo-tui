@@ -80,8 +80,8 @@ func (m *Model) handleLeftClick(x, y int) (Model, tea.Cmd) {
 			m.refreshPanel()
 		}
 	case m.activeTable() != nil:
-		if row, ok := m.hitTestTableRow(y); ok {
-			m.setTableCursor(row)
+		if row, visibleRow, ok := m.hitTestTableRowDetailed(y); ok {
+			m.setTableCursorAtScreen(row, visibleRow)
 		}
 	}
 	return *m, nil
@@ -104,11 +104,11 @@ func (m *Model) handleRightClick(x, y int) (Model, tea.Cmd) {
 			m.openMenuForStage(x, y, s)
 		}
 	case m.activeTable() != nil:
-		row, ok := m.hitTestTableRow(y)
+		row, visibleRow, ok := m.hitTestTableRowDetailed(y)
 		if !ok {
 			return *m, nil
 		}
-		m.setTableCursor(row)
+		m.setTableCursorAtScreen(row, visibleRow)
 		switch m.view {
 		case viewDeploys, viewControlFlow:
 			if s := m.selectedStage(); s != nil {
@@ -123,38 +123,43 @@ func (m *Model) handleRightClick(x, y int) (Model, tea.Cmd) {
 	return *m, nil
 }
 
-// hitTestTableRow maps a screen Y to a 0-based row index within the
-// active table's rows slice. Returns ok=false when y is outside the
-// table body (header bar, filter line, help line, etc.).
+// hitTestTableRowDetailed maps a screen Y to a 0-based row index within
+// the active table's rows slice, and also returns the row's screen
+// position within the table body (0-based, table column header excluded).
+// Returns ok=false when y is outside the table body (app header, filter
+// line, help line, etc.).
 //
 // The bubbles table doesn't expose its internal viewport offset, so we
 // locate the cursor's drawn row in the rendered table output (it carries
 // the cursor marker glyph applyCursorMarker writes into column 0) and
-// translate the click's delta from that screen row back into a row
-// index.
-func (m *Model) hitTestTableRow(y int) (int, bool) {
+// translate the click's delta from that screen row back into a row index.
+// The returned screen position lets the click handler pin the post-click
+// viewport via setTableCursorAtScreen so the clicked row stays at the same
+// Y, working around the bubbles table's stale-content YOffset clamp in
+// MoveUp.
+func (m *Model) hitTestTableRowDetailed(y int) (int, int, bool) {
 	t := m.activeTable()
 	if t == nil {
-		return 0, false
+		return 0, 0, false
 	}
 	const headerRows = 2 // app header + table column header
 	if y < headerRows {
-		return 0, false
+		return 0, 0, false
 	}
 	visibleRow := y - headerRows
 	if visibleRow >= t.Height() {
-		return 0, false
+		return 0, 0, false
 	}
 	cursorScreen, ok := tableCursorScreenRow(t)
 	if !ok {
-		return 0, false
+		return 0, 0, false
 	}
 	idx := t.Cursor() + (visibleRow - cursorScreen)
 	rows := len(t.Rows())
 	if idx < 0 || idx >= rows {
-		return 0, false
+		return 0, 0, false
 	}
-	return idx, true
+	return idx, visibleRow, true
 }
 
 // tableCursorScreenRow returns the cursor row's Y within the table's

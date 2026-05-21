@@ -154,6 +154,7 @@ func freightDetailLines(
 	lines = append(lines, "")
 	lines = append(lines, row("Warehouse", emptyDash(f.Warehouse)))
 	lines = append(lines, row("Created", whenString(f.Created)))
+	lines = append(lines, row("Current", fmt.Sprintf("%d", len(f.CurrentlyIn))))
 	lines = append(lines, row("Verified", fmt.Sprintf("%d", f.VerifiedIn)))
 	lines = append(lines, row("Approved", fmt.Sprintf("%d", f.ApprovedFor)))
 	// Artifact contents (Images / Charts / Commits) come before membership

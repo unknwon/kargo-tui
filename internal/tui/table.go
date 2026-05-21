@@ -215,6 +215,7 @@ func (m *Model) refreshRows() {
 				" ",
 				freightNameCell(f.Name, f.Alias),
 				ageString(f.Created),
+				countCell(len(f.CurrentlyIn)),
 				countCell(f.VerifiedIn),
 				countCell(f.ApprovedFor),
 				stringOrDash(f.Warehouse),
