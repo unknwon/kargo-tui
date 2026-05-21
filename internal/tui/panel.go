@@ -16,20 +16,22 @@ func (m *Model) resetPanelScroll() {
 	m.panelVP.GotoTop()
 }
 
-// refreshPanel recomputes panel content and pushes it into the viewport.
-// Must be called from Update so the mutation persists in the model. View()
-// also re-syncs width/height/content based on the latest layout, but the
-// initial content load needs to happen here so scroll commands have lines
-// to work with.
+// refreshPanel recomputes panel content and pushes it into the viewport,
+// but only when the panel is actually visible. The panel is only rendered
+// by detailsOnlyView, so on every other view (lists, tree, graph) the
+// recomputed content is discarded. composePanelLines runs a fair amount
+// of lipgloss styling, and mouse-wheel scroll fires this on every tick,
+// so skipping invisible work makes scroll responsive.
+//
+// renderPanel re-syncs content on each frame it draws anyway, so the
+// detailsOnly view does not depend on this function pre-populating the
+// viewport; we still keep the eager refresh when detailsOnly is on so
+// scroll commands have lines to work with between frames.
 func (m *Model) refreshPanel() {
-	_, pw := m.layoutDims()
-	if m.detailsOnly {
-		pw = m.width
+	if !m.detailsOnly {
+		return
 	}
-	innerW := pw - 4
-	if innerW < 8 {
-		innerW = 8
-	}
+	innerW := max(m.width-4, 8)
 	lines := m.composePanelLines(innerW)
 	m.panelVP.SetContent(strings.Join(lines, "\n"))
 }

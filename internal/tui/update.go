@@ -11,29 +11,6 @@ import (
 	"unknwon.dev/kargo-tui/internal/kargo"
 )
 
-// layoutDims returns (tableWidth, panelWidth). Panel is shown only when
-// terminal is wide enough; otherwise it gets 0 width and is hidden.
-func (m Model) layoutDims() (int, int) {
-	const minPanel = 32
-	const gap = 1
-	if m.width < 80 {
-		return m.width, 0
-	}
-	panel := m.width / 3
-	if panel < minPanel {
-		panel = minPanel
-	}
-	if panel > 60 {
-		panel = 60
-	}
-	tw := m.width - panel - gap
-	if tw < 40 {
-		tw = m.width
-		panel = 0
-	}
-	return tw, panel
-}
-
 // startReloginCurrentContext launches the SSO re-login flow against the
 // model's current context and returns the dispatch command. Returns
 // (nil, false) when re-login isn't possible: ctxRelogin wasn't wired by
