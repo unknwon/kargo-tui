@@ -20,6 +20,7 @@ const (
 	sortByName
 	sortByHealth
 	sortByLastPromo
+	sortByCurrentlyIn
 	sortByVerifiedIn
 	sortByApprovedFor
 )
@@ -33,6 +34,8 @@ func (s sortMode) String() string {
 		return "health"
 	case sortByLastPromo:
 		return "last-promo"
+	case sortByCurrentlyIn:
+		return "currently-in"
 	case sortByVerifiedIn:
 		return "verified-in"
 	case sortByApprovedFor:
@@ -65,7 +68,7 @@ func (m *Model) cycleSort() {
 // alternative because the rest are stage-specific.
 func sortModesForView(v view) []sortMode {
 	if v == viewFreights {
-		return []sortMode{sortDefault, sortByName, sortByVerifiedIn, sortByApprovedFor}
+		return []sortMode{sortDefault, sortByName, sortByCurrentlyIn, sortByVerifiedIn, sortByApprovedFor}
 	}
 	return []sortMode{sortDefault, sortByName, sortByHealth, sortByLastPromo}
 }
@@ -107,7 +110,7 @@ func (m *Model) sortDeploys(in []kargo.Stage) []kargo.Stage {
 func (m *Model) sortFreights(in []kargo.Freight) []kargo.Freight {
 	mode := m.sort[m.view]
 	switch mode {
-	case sortByName, sortByVerifiedIn, sortByApprovedFor:
+	case sortByName, sortByCurrentlyIn, sortByVerifiedIn, sortByApprovedFor:
 	default:
 		return in
 	}
@@ -116,6 +119,11 @@ func (m *Model) sortFreights(in []kargo.Freight) []kargo.Freight {
 	sort.SliceStable(out, func(i, j int) bool {
 		switch mode {
 		case sortByName:
+			return out[i].Name < out[j].Name
+		case sortByCurrentlyIn:
+			if ci, cj := len(out[i].CurrentlyIn), len(out[j].CurrentlyIn); ci != cj {
+				return ci > cj
+			}
 			return out[i].Name < out[j].Name
 		case sortByVerifiedIn:
 			if out[i].VerifiedIn != out[j].VerifiedIn {
@@ -170,6 +178,8 @@ func sortIndicatorFor(mode sortMode) (column, arrow string) {
 		return "Health", "↓"
 	case sortByLastPromo:
 		return "Last Promo", "↓"
+	case sortByCurrentlyIn:
+		return "Current", "↓"
 	case sortByVerifiedIn:
 		return "Verified", "↓"
 	case sortByApprovedFor:

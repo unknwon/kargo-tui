@@ -3,11 +3,14 @@ package tui
 import (
 	"fmt"
 	"os/exec"
+	"reflect"
 	"runtime"
 	"strings"
 	"time"
+	"unsafe"
 
 	"charm.land/bubbles/v2/table"
+	"charm.land/bubbles/v2/viewport"
 	"github.com/cockroachdb/errors"
 
 	"unknwon.dev/kargo-tui/internal/kargo"
@@ -60,11 +63,13 @@ func (m *Model) moveCursor(delta int) {
 	m.refreshPanel()
 }
 
-// setTableCursor moves the active table's cursor by the delta needed to
-// land on row idx, clamped to the row range. Used by left-click row
-// selection; relies on MoveUp/MoveDown so the bubbles table's internal
-// viewport scroll stays consistent with the cursor.
-func (m *Model) setTableCursor(idx int) {
+// setTableCursorAtScreen moves the cursor to row idx and pins the viewport
+// so the row stays at screenRow within the table body. Mouse clicks use
+// this so the clicked row keeps its on-screen position, instead of relying
+// on the bubbles table's MoveUp heuristic, which clamps the new YOffset
+// against the pre-move content size and silently jumps when the move would
+// grow the rendered window.
+func (m *Model) setTableCursorAtScreen(idx, screenRow int) {
 	t := m.activeTable()
 	if t == nil {
 		return
@@ -79,16 +84,46 @@ func (m *Model) setTableCursor(idx int) {
 	if idx >= rows {
 		idx = rows - 1
 	}
-	delta := idx - t.Cursor()
-	switch {
-	case delta < 0:
-		t.MoveUp(-delta)
-	case delta > 0:
-		t.MoveDown(delta)
+	t.SetCursor(idx)
+	yOffset := idx - screenRow
+	if maxOffset := rows - t.Height(); yOffset > maxOffset {
+		yOffset = maxOffset
+	}
+	if yOffset < 0 {
+		yOffset = 0
+	}
+	if vp := tableViewport(t); vp != nil {
+		vp.SetYOffset(yOffset)
 	}
 	applyCursorMarker(t)
 	m.resetPanelScroll()
 	m.refreshPanel()
+}
+
+// tableViewport returns a pointer to the bubbles table's embedded viewport.
+// The field is unexported, so we reach it through reflection. Used by
+// click handling to pin YOffset directly, which the table's MoveUp path
+// cannot do reliably (it clamps against stale content; see
+// setTableCursorAtScreen).
+//
+// The field name and type are verified at startup by init() so an upstream
+// rename fails loudly instead of silently falling back to the buggy click
+// path.
+func tableViewport(t *table.Model) *viewport.Model {
+	v := reflect.ValueOf(t).Elem().FieldByName(tableViewportFieldName)
+	return (*viewport.Model)(unsafe.Pointer(v.UnsafeAddr()))
+}
+
+const tableViewportFieldName = "viewport"
+
+func init() {
+	f, ok := reflect.TypeFor[table.Model]().FieldByName(tableViewportFieldName)
+	if !ok {
+		panic("tui: bubbles table.Model no longer has a `viewport` field. Update tableViewport.")
+	}
+	if f.Type != reflect.TypeFor[viewport.Model]() {
+		panic("tui: bubbles table.Model.viewport is no longer a viewport.Model. Update tableViewport.")
+	}
 }
 
 // activeTable returns a pointer to the table backing the current list
