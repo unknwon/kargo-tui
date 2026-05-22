@@ -844,6 +844,23 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// panel viewport owns scroll keys (pgup/pgdn/home/end) so let
 		// them fall through to the panel scroll handler below.
 		if m.view == viewGraph && !m.detailsOnly {
+			var moved bool
+			switch key {
+			case "pgup":
+				moved = m.moveGraphCursorWithin(-10)
+			case "pgdown", "pgdn", " ":
+				moved = m.moveGraphCursorWithin(10)
+			case "home":
+				moved = m.moveGraphCursorWithin(-len(m.graphLayout.nodes))
+			case "end":
+				moved = m.moveGraphCursorWithin(len(m.graphLayout.nodes))
+			default:
+				return m, nil
+			}
+			if moved {
+				m.resetPanelScroll()
+				m.refreshPanel()
+			}
 			return m, nil
 		}
 
