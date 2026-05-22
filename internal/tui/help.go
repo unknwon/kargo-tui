@@ -95,7 +95,7 @@ func helpBindings() []helpRow {
 		{"", "+/-", "expand / collapse tree node"},
 		{"", "enter", "apply filter / toggle tree node"},
 		{"", "pgup/pgdn", "page details panel (full-screen mode) / tree / graph"},
-		{"", "home/end", "jump to top / bottom"},
+		{"", "home/end", "jump to top / bottom (within layer in graph)"},
 		{"Filtering", "/", "start filtering (per list) / name search (graph)"},
 		{"", "n / N", "next / previous match (graph search)"},
 		{"", "esc", "dismiss details/overlay, then clear filter"},

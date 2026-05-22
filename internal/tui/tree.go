@@ -176,6 +176,22 @@ func (m *Model) rebuildTree() {
 		}
 	}
 
+	// Prune children[] to only entries that render under each parent (i.e.
+	// primaryParent[c] == parent). The filter visibility walk below and
+	// the render walk both consume children[] recursively. Non-primary
+	// edges left over from Upstreams would otherwise inflate the visible
+	// subtree of unrelated ancestors when a downstream join happens to
+	// match the filter.
+	for name, kids := range children {
+		filtered := kids[:0]
+		for _, c := range kids {
+			if primaryParent[c] == name {
+				filtered = append(filtered, c)
+			}
+		}
+		children[name] = filtered
+	}
+
 	if m.treeExpanded == nil {
 		m.treeExpanded = make(map[string]bool)
 	}
