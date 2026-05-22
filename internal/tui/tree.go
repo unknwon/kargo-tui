@@ -106,11 +106,9 @@ func (m *Model) rebuildTree() {
 	// join. In graph view, a join sits in its own column downstream of
 	// the fan-out it merges. The tree analogue: find the deepest single
 	// tree-node X whose primary subtree contains every one of S's real
-	// upstreams — that node is the "block" S merges. Attach S as a
+	// upstreams. That node is the "block" S merges. Attach S as a
 	// sibling of X (i.e. as a child of X's primary parent) so it renders
-	// after the whole fan-out instead of inside it. The original parents
-	// still show as `↗` stubs so the real upstream edges remain
-	// discoverable.
+	// after the whole fan-out instead of inside it.
 	ancestorChain := func(name string) []string {
 		var chain []string
 		for cur := name; cur != ""; cur = primaryParent[cur] {
