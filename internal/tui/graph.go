@@ -1462,6 +1462,49 @@ func (m *Model) moveGraphCursor(dir string) bool {
 	return m.graphCursor != prev
 }
 
+// moveGraphCursorWithin shifts the cursor by delta non-dummy siblings inside
+// the current layer. Used by pgup/pgdown/home/end. Positive delta moves
+// down, negative up; the value is clamped to the layer bounds so a big
+// delta (e.g. len(nodes) for home/end) lands on the first or last slot.
+func (m *Model) moveGraphCursorWithin(delta int) bool {
+	g := m.graphLayout
+	if m.graphCursor < 0 || m.graphCursor >= len(g.nodes) {
+		return false
+	}
+	cur := g.nodes[m.graphCursor]
+	var sibs []int
+	for i, n := range g.nodes {
+		if n.Layer == cur.Layer && !n.Dummy {
+			sibs = append(sibs, i)
+		}
+	}
+	sort.Slice(sibs, func(i, j int) bool {
+		return g.nodes[sibs[i]].Slot < g.nodes[sibs[j]].Slot
+	})
+	curPos := -1
+	for i, idx := range sibs {
+		if idx == m.graphCursor {
+			curPos = i
+			break
+		}
+	}
+	if curPos < 0 || len(sibs) == 0 {
+		return false
+	}
+	next := curPos + delta
+	if next < 0 {
+		next = 0
+	}
+	if next > len(sibs)-1 {
+		next = len(sibs) - 1
+	}
+	if sibs[next] == m.graphCursor {
+		return false
+	}
+	m.graphCursor = sibs[next]
+	return true
+}
+
 func abs(i int) int {
 	if i < 0 {
 		return -i

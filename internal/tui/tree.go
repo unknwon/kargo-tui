@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -12,18 +13,15 @@ import (
 	"unknwon.dev/kargo-tui/internal/kargo"
 )
 
-// treeNode is one entry in the rendered tree. Stages with multiple parents
-// (DAG fan-in) appear as a primary subtree under their first parent
-// (alphabetical) and as one-line stubs under each other parent so the user
-// still sees the relationship.
+// treeNode is one entry in the rendered tree. Each stage appears exactly
+// once, attached to its primary parent (BFS-first, with a flow-correctness
+// lift that re-anchors joins as siblings of the fan-out block they merge).
 type treeNode struct {
-	Stage         *kargo.Stage
-	Prefix        string // pre-built indent + branch glyphs (├─ / └─ / spaces)
-	HasKids       bool
-	Expanded      bool
-	IsPrimary     bool
-	OtherUpstream string // set on stub occurrences; references the primary parent
-	IsMatch       bool   // true when filter is active and this row's name matches
+	Stage    *kargo.Stage
+	Prefix   string // pre-built indent + branch glyphs (├─ / └─ / spaces)
+	HasKids  bool
+	Expanded bool
+	IsMatch  bool // true when filter is active and this row's name matches
 }
 
 // rebuildTree produces the flat ordered list of visible nodes for the
@@ -63,6 +61,24 @@ func (m *Model) rebuildTree() {
 	}
 	sort.Strings(roots)
 
+	// parents[child] = every upstream stage we have data for. Used both
+	// for primaryParent selection and the "is this parent really a sibling
+	// in disguise?" check below.
+	parents := make(map[string][]string)
+	parentSet := make(map[string]map[string]bool)
+	for _, s := range stages {
+		for _, up := range s.Upstreams {
+			if _, ok := byName[up]; !ok {
+				continue
+			}
+			parents[s.Name] = append(parents[s.Name], up)
+			if parentSet[s.Name] == nil {
+				parentSet[s.Name] = make(map[string]bool)
+			}
+			parentSet[s.Name][up] = true
+		}
+	}
+
 	// primaryParent[child] = the parent under which this stage owns its
 	// real subtree. Resolved breadth-first from roots so the alphabetically
 	// first reachable parent wins.
@@ -84,6 +100,96 @@ func (m *Model) rebuildTree() {
 				queue = append(queue, c)
 			}
 		}
+	}
+
+	// Flow-correctness lift: a stage S with multiple upstream parents is a
+	// join. In graph view, a join sits in its own column downstream of
+	// the fan-out it merges. The tree analogue: find the deepest single
+	// tree-node X whose primary subtree contains every one of S's real
+	// upstreams. That node is the "block" S merges. Attach S as a
+	// sibling of X (i.e. as a child of X's primary parent) so it renders
+	// after the whole fan-out instead of inside it.
+	ancestorChain := func(name string) []string {
+		var chain []string
+		for cur := name; cur != ""; cur = primaryParent[cur] {
+			chain = append(chain, cur)
+		}
+		return chain
+	}
+	for _, s := range stages {
+		ps := parents[s.Name]
+		if len(ps) < 2 {
+			continue
+		}
+		original := primaryParent[s.Name]
+		// Compute the deepest ancestor common to every parent's chain.
+		// depthOf is taken from the first parent's chain; identical
+		// ancestor positions yield identical depths across parents because
+		// primaryParent forms a tree.
+		common := make(map[string]int)
+		depthOf := make(map[string]int)
+		firstChain := ancestorChain(ps[0])
+		for i, a := range firstChain {
+			common[a] = 1
+			depthOf[a] = len(firstChain) - i
+		}
+		for _, p := range ps[1:] {
+			seen := make(map[string]bool)
+			for _, a := range ancestorChain(p) {
+				if seen[a] {
+					continue
+				}
+				seen[a] = true
+				if _, ok := common[a]; ok {
+					common[a]++
+				}
+			}
+		}
+		lca, lcaDepth := "", -1
+		for a, c := range common {
+			if c == len(ps) && depthOf[a] > lcaDepth {
+				lca = a
+				lcaDepth = depthOf[a]
+			}
+		}
+		if lca == "" {
+			continue
+		}
+		// X = deepest node whose subtree contains all of S's parents.
+		// When every parent shares X as their primary parent (the typical
+		// fan-out join), X is the fan-out source itself. Lift S one step
+		// further so it renders alongside X. When parents already share
+		// the LCA as one of themselves (e.g. one parent IS the ancestor
+		// of the others), keep the BFS pick — that handles the
+		// "parent + descendant of that parent" shape elsewhere.
+		if parentSet[s.Name][lca] {
+			continue
+		}
+		newPrimary := primaryParent[lca]
+		if newPrimary == "" || newPrimary == original {
+			continue
+		}
+		primaryParent[s.Name] = newPrimary
+		if !slices.Contains(children[newPrimary], s.Name) {
+			children[newPrimary] = append(children[newPrimary], s.Name)
+			sort.Strings(children[newPrimary])
+		}
+	}
+
+	// Prune children[] to only entries that render under each parent (i.e.
+	// primaryParent[c] == parent). The filter visibility walk below and
+	// the render walk both consume children[] recursively. Non-primary
+	// edges left over from Upstreams would otherwise inflate the visible
+	// subtree of unrelated ancestors when a downstream join happens to
+	// match the filter.
+	for name, kids := range children {
+		filtered := kids[:0]
+		for _, c := range kids {
+			if primaryParent[c] == name {
+				filtered = append(filtered, c)
+			}
+		}
+		children[name] = filtered
 	}
 
 	if m.treeExpanded == nil {
@@ -163,19 +269,23 @@ func (m *Model) rebuildTree() {
 			childPrefix = prefix + "│  "
 		}
 
-		kids := children[name]
-		var primaryKids, secondaryKids []string
-		for _, c := range kids {
+		// Only primary children render here. Non-primary upstreams used to
+		// be shown as `↗ name` stubs so the cross-edge stayed
+		// discoverable, but in projects with wide fan-in/fan-out (e.g. a
+		// shared control-flow stage downstream of every tenant) the same
+		// stub repeated under every sibling drowned out the actual flow.
+		// The graph view is the authoritative full-DAG visualisation; the
+		// tree shows the primary spine only.
+		var primaryKids []string
+		for _, c := range children[name] {
 			if !isVisible(c) {
 				continue
 			}
 			if primaryParent[c] == name {
 				primaryKids = append(primaryKids, c)
-			} else {
-				secondaryKids = append(secondaryKids, c)
 			}
 		}
-		hasKids := len(primaryKids)+len(secondaryKids) > 0
+		hasKids := len(primaryKids) > 0
 		expanded := m.treeExpanded[name]
 		// While filtering, force-expand: collapsing would defeat the
 		// point of "show me where this name lives in the tree."
@@ -184,34 +294,17 @@ func (m *Model) rebuildTree() {
 		}
 
 		out = append(out, treeNode{
-			Stage:     s,
-			Prefix:    branch,
-			HasKids:   hasKids,
-			Expanded:  expanded,
-			IsPrimary: true,
-			IsMatch:   matches[name],
+			Stage:    s,
+			Prefix:   branch,
+			HasKids:  hasKids,
+			Expanded: expanded,
+			IsMatch:  matches[name],
 		})
 		if !expanded {
 			return
 		}
-		all := append(append([]string(nil), primaryKids...), secondaryKids...)
-		for i, c := range all {
-			cIsLast := i == len(all)-1
-			if primaryParent[c] != name {
-				stubBranch := childPrefix + "├─ "
-				if cIsLast {
-					stubBranch = childPrefix + "└─ "
-				}
-				out = append(out, treeNode{
-					Stage:         byName[c],
-					Prefix:        stubBranch,
-					IsPrimary:     false,
-					OtherUpstream: primaryParent[c],
-					IsMatch:       matches[c],
-				})
-				continue
-			}
-			walk(c, childPrefix, cIsLast, false)
+		for i, c := range primaryKids {
+			walk(c, childPrefix, i == len(primaryKids)-1, false)
 		}
 	}
 	for i, r := range roots {
@@ -262,8 +355,6 @@ func (m Model) renderTreeBody(width, height int) string {
 		n := m.treeNodes[i]
 		var toggle string
 		switch {
-		case !n.IsPrimary:
-			toggle = mutedStyle.Render("↗ ")
 		case n.HasKids && n.Expanded:
 			toggle = mutedStyle.Render("[-] ")
 		case n.HasKids && !n.Expanded:
@@ -310,13 +401,8 @@ func (m Model) renderTreeBody(width, height int) string {
 		default:
 			age = mutedStyle.Render("—")
 		}
-		extras := ""
-		if !n.IsPrimary {
-			extras = dimStyle.Render("(also under " + n.OtherUpstream + ")")
-		}
-
-		body := fmt.Sprintf("%s%s%s  %s  %s  %s  %s",
-			n.Prefix, toggle, name, health, freight, age, extras)
+		body := fmt.Sprintf("%s%s%s  %s  %s  %s",
+			n.Prefix, toggle, name, health, freight, age)
 		body = clipToWidth(body, width)
 		if i == m.treeCursor {
 			lines = append(lines, cursorStyle.Render(padToWidth(body, width)))
@@ -373,13 +459,13 @@ func (m *Model) moveTreeCursor(delta int) {
 }
 
 // toggleTreeNode flips the expand/collapse state on the cursor row.
-// No-op for leaves or stub occurrences.
+// No-op for leaves.
 func (m *Model) toggleTreeNode() {
 	if m.treeCursor < 0 || m.treeCursor >= len(m.treeNodes) {
 		return
 	}
 	n := m.treeNodes[m.treeCursor]
-	if !n.HasKids || !n.IsPrimary {
+	if !n.HasKids {
 		return
 	}
 	m.treeExpanded[n.Stage.Name] = !m.treeExpanded[n.Stage.Name]
@@ -392,7 +478,7 @@ func (m *Model) setTreeNodeExpansion(expand bool) {
 		return
 	}
 	n := m.treeNodes[m.treeCursor]
-	if !n.HasKids || !n.IsPrimary {
+	if !n.HasKids {
 		return
 	}
 	m.treeExpanded[n.Stage.Name] = expand
