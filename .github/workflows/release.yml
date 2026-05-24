@@ -23,6 +23,7 @@ permissions:
 jobs:
   prepare-release:
     name: Prepare release
+    if: ${{ github.repository == 'unknwon/kargo-tui' }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -145,7 +146,7 @@ jobs:
           CERTIFICATE_PATH="$RUNNER_TEMP/developer_id_application.p12"
           KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
 
-          printf '%s' "$APPLE_DEVELOPER_ID_CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          printf '%s' "$APPLE_DEVELOPER_ID_CERTIFICATE_BASE64" | base64 -d > "$CERTIFICATE_PATH"
           security create-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
@@ -198,7 +199,7 @@ jobs:
           ARCHIVE_PATH="dist/kargo-tui_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.zip"
           NOTARY_KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
 
-          printf '%s' "$APPLE_NOTARY_KEY_BASE64" | base64 --decode > "$NOTARY_KEY_PATH"
+          printf '%s' "$APPLE_NOTARY_KEY_BASE64" | base64 -d > "$NOTARY_KEY_PATH"
           xcrun notarytool submit "$ARCHIVE_PATH" \
             --key "$NOTARY_KEY_PATH" \
             --key-id "$APPLE_NOTARY_KEY_ID" \
