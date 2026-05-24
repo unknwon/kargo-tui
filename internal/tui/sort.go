@@ -116,12 +116,20 @@ func (m *Model) sortFreights(in []kargo.Freight) []kargo.Freight {
 	}
 	out := make([]kargo.Freight, len(in))
 	copy(out, in)
+	currentStagesByFreight := map[string][]string{}
+	if mode == sortByCurrentlyIn {
+		currentStagesByFreight = m.currentStagesByFreight()
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		switch mode {
 		case sortByName:
 			return out[i].Name < out[j].Name
 		case sortByCurrentlyIn:
-			if ci, cj := len(out[i].CurrentlyIn), len(out[j].CurrentlyIn); ci != cj {
+			currentI := mergeStageNames(out[i].CurrentlyIn, currentStagesByFreight[out[i].Name])
+			currentJ := mergeStageNames(out[j].CurrentlyIn, currentStagesByFreight[out[j].Name])
+			ci := len(currentI)
+			cj := len(currentJ)
+			if ci != cj {
 				return ci > cj
 			}
 			return out[i].Name < out[j].Name
