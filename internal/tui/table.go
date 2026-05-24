@@ -212,12 +212,11 @@ func (m *Model) refreshRows() {
 					continue
 				}
 			}
-			currentStages := currentStageNames(f, controlFlowStages)
 			rows = append(rows, table.Row{
 				" ",
 				freightNameCell(f.Name, f.Alias),
 				ageString(f.Created),
-				stageSplitCountCell(currentStages, len(currentStages), controlFlowStages),
+				stageSplitCountCell(f.CurrentlyIn, len(f.CurrentlyIn), controlFlowStages),
 				stageSplitCountCell(f.VerifiedStages, f.VerifiedIn, controlFlowStages),
 				stageSplitCountCell(f.ApprovedStages, f.ApprovedFor, controlFlowStages),
 				stringOrDash(f.Warehouse),

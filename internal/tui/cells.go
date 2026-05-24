@@ -269,30 +269,6 @@ func (m *Model) controlFlowStages() map[string]bool {
 	return stages
 }
 
-func currentStageNames(f kargo.Freight, controlFlowStages map[string]bool) []string {
-	current := make([]string, 0, len(f.CurrentlyIn)+len(f.VerifiedStages))
-	current = append(current, f.CurrentlyIn...)
-	for _, name := range f.VerifiedStages {
-		if controlFlowStages[name] {
-			current = append(current, name)
-		}
-	}
-	return uniqueStageNames(current)
-}
-
-func uniqueStageNames(names []string) []string {
-	seen := make(map[string]struct{}, len(names))
-	out := make([]string, 0, len(names))
-	for _, name := range names {
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		out = append(out, name)
-	}
-	return out
-}
-
 // stringOrDash renders a string, or a muted em-dash when the input is empty.
 func stringOrDash(s string) string {
 	if s == "" {
