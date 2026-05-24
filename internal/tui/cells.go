@@ -259,16 +259,6 @@ func freightNameCell(name, alias string) string {
 	return out + fgCell(muted, " "+alias)
 }
 
-func currentFreightNames(s kargo.Stage) []string {
-	if len(s.CurrentFreight) > 0 {
-		return s.CurrentFreight
-	}
-	if isFreightName(s.FreightSummary) {
-		return []string{s.FreightSummary}
-	}
-	return nil
-}
-
 func (m *Model) controlFlowStages() map[string]bool {
 	stages := make(map[string]bool, len(m.deploys))
 	for _, s := range m.deploys {
@@ -279,33 +269,21 @@ func (m *Model) controlFlowStages() map[string]bool {
 	return stages
 }
 
-func (m *Model) currentStagesByFreight() map[string][]string {
-	stagesByFreight := make(map[string][]string)
-	for _, s := range m.deploys {
-		for _, freightName := range currentFreightNames(s) {
-			stagesByFreight[freightName] = append(stagesByFreight[freightName], s.Name)
+func currentStageNames(f kargo.Freight, controlFlowStages map[string]bool) []string {
+	current := make([]string, 0, len(f.CurrentlyIn)+len(f.VerifiedStages))
+	current = append(current, f.CurrentlyIn...)
+	for _, name := range f.VerifiedStages {
+		if controlFlowStages[name] {
+			current = append(current, name)
 		}
 	}
-	return stagesByFreight
+	return uniqueStageNames(current)
 }
 
-func mergeStageNames(primary, secondary []string) []string {
-	if len(primary) == 0 {
-		return secondary
-	}
-	if len(secondary) == 0 {
-		return primary
-	}
-	seen := make(map[string]struct{}, len(primary)+len(secondary))
-	out := make([]string, 0, len(primary)+len(secondary))
-	for _, name := range primary {
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		out = append(out, name)
-	}
-	for _, name := range secondary {
+func uniqueStageNames(names []string) []string {
+	seen := make(map[string]struct{}, len(names))
+	out := make([]string, 0, len(names))
+	for _, name := range names {
 		if _, ok := seen[name]; ok {
 			continue
 		}

@@ -202,7 +202,6 @@ func (m *Model) refreshRows() {
 			prevName = m.visibleFreights[cur].Name
 		}
 		controlFlowStages := m.controlFlowStages()
-		currentStagesByFreight := m.currentStagesByFreight()
 		sorted := m.sortFreights(m.freights)
 		rows := make([]table.Row, 0, len(sorted))
 		visible := make([]kargo.Freight, 0, len(sorted))
@@ -213,7 +212,7 @@ func (m *Model) refreshRows() {
 					continue
 				}
 			}
-			currentStages := mergeStageNames(f.CurrentlyIn, currentStagesByFreight[f.Name])
+			currentStages := currentStageNames(f, controlFlowStages)
 			rows = append(rows, table.Row{
 				" ",
 				freightNameCell(f.Name, f.Alias),
