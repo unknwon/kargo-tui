@@ -92,19 +92,19 @@ jobs:
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
     needs: prepare-release
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {goos: linux, goarch: amd64}
-          - {goos: linux, goarch: arm64}
-          - {goos: linux, goarch: "386"}
-          - {goos: darwin, goarch: amd64}
-          - {goos: darwin, goarch: arm64}
-          - {goos: windows, goarch: amd64}
-          - {goos: windows, goarch: arm64}
-          - {goos: windows, goarch: "386"}
+          - {goos: linux, goarch: amd64, runner: ubuntu-latest}
+          - {goos: linux, goarch: arm64, runner: ubuntu-latest}
+          - {goos: linux, goarch: "386", runner: ubuntu-latest}
+          - {goos: darwin, goarch: amd64, runner: macos-latest}
+          - {goos: darwin, goarch: arm64, runner: macos-latest}
+          - {goos: windows, goarch: amd64, runner: ubuntu-latest}
+          - {goos: windows, goarch: arm64, runner: ubuntu-latest}
+          - {goos: windows, goarch: "386", runner: ubuntu-latest}
     steps:
       - name: Check out code
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
@@ -130,6 +130,42 @@ jobs:
               -X 'main.buildCommit=$(git rev-parse HEAD)'
             " \
             -trimpath -o "$BINARY_NAME" ./cmd/kargo-tui
+      - name: Import Apple signing certificate
+        if: ${{ matrix.goos == 'darwin' }}
+        env:
+          APPLE_DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+        run: |
+          if [ -z "$APPLE_DEVELOPER_ID_CERTIFICATE_BASE64" ] || [ -z "$APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD" ] || [ -z "$APPLE_KEYCHAIN_PASSWORD" ]; then
+            echo "Missing required Apple signing secrets." >&2
+            exit 1
+          fi
+
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer_id_application.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+
+          printf '%s' "$APPLE_DEVELOPER_ID_CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$APPLE_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+      - name: Sign macOS binary
+        if: ${{ matrix.goos == 'darwin' }}
+        env:
+          APPLE_DEVELOPER_IDENTITY: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
+        run: |
+          if [ -z "$APPLE_DEVELOPER_IDENTITY" ]; then
+            echo "Missing required Apple signing identity secret." >&2
+            exit 1
+          fi
+
+          security find-identity -v -p codesigning
+          codesign --force --options runtime --timestamp --sign "$APPLE_DEVELOPER_IDENTITY" "kargo-tui"
+          codesign --verify --verbose=2 "kargo-tui"
       - name: Create archives
         run: |
           mkdir -p dist
@@ -146,6 +182,28 @@ jobs:
           else
             zip "dist/${ARCHIVE_BASE}.zip" "$BINARY_NAME"
           fi
+      - name: Notarize macOS archive
+        if: ${{ matrix.goos == 'darwin' }}
+        env:
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+        run: |
+          if [ -z "$APPLE_NOTARY_ISSUER_ID" ] || [ -z "$APPLE_NOTARY_KEY_BASE64" ] || [ -z "$APPLE_NOTARY_KEY_ID" ]; then
+            echo "Missing required Apple notarization secrets." >&2
+            exit 1
+          fi
+
+          VERSION="${{ needs.prepare-release.outputs.version }}"
+          ARCHIVE_PATH="dist/kargo-tui_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.zip"
+          NOTARY_KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
+
+          printf '%s' "$APPLE_NOTARY_KEY_BASE64" | base64 --decode > "$NOTARY_KEY_PATH"
+          xcrun notarytool submit "$ARCHIVE_PATH" \
+            --key "$NOTARY_KEY_PATH" \
+            --key-id "$APPLE_NOTARY_KEY_ID" \
+            --issuer "$APPLE_NOTARY_ISSUER_ID" \
+            --wait
       - name: Upload to release
         env:
           GH_TOKEN: ${{ github.token }}
