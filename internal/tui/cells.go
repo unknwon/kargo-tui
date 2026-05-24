@@ -267,14 +267,22 @@ func stringOrDash(s string) string {
 	return fgCell(normal, s)
 }
 
-// countCell renders a non-negative count, colored green when positive and
-// red when zero (used for verified/approved counts on freight).
-func countCell(n int) string {
+func stageSplitCountCell(stageNames []string, total int, controlFlowStages map[string]bool) string {
+	controlFlows := 0
+	for _, name := range stageNames {
+		if controlFlowStages[name] {
+			controlFlows++
+		}
+	}
+	deploys := total - controlFlows
+	if deploys < 0 {
+		deploys = 0
+	}
 	fg := degraded
-	if n > 0 {
+	if total > 0 {
 		fg = healthy
 	}
-	return fgCell(fg, fmt.Sprintf("%d", n))
+	return fgCell(fg, fmt.Sprintf("%d/%d", deploys, controlFlows))
 }
 
 // emptyDash returns "—" for empty input, otherwise the input unchanged.
