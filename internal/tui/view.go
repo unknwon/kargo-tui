@@ -108,6 +108,9 @@ func (m Model) View() (v tea.View) {
 		filterLine = lipgloss.NewStyle().Foreground(degraded).Background(bg).Padding(0, 1).Render(errLine)
 	} else {
 		hint := "press / to filter"
+		if m.view == viewFreights {
+			hint += " · counts: deploy/control-flow stages"
+		}
 		if mode := m.sort[m.view]; mode != sortDefault {
 			hint += " · sort: " + mode.String()
 		}

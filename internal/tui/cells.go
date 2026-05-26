@@ -288,7 +288,7 @@ func stageSplitCountCell(stageNames []string, total int, controlFlowStages map[s
 	if deploys < 0 {
 		deploys = 0
 	}
-	fg := degraded
+	fg := muted
 	if total > 0 {
 		fg = healthy
 	}
