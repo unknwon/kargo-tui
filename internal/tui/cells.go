@@ -259,6 +259,16 @@ func freightNameCell(name, alias string) string {
 	return out + fgCell(muted, " "+alias)
 }
 
+func (m *Model) controlFlowStages() map[string]bool {
+	stages := make(map[string]bool, len(m.deploys))
+	for _, s := range m.deploys {
+		if s.IsControlFlow {
+			stages[s.Name] = true
+		}
+	}
+	return stages
+}
+
 // stringOrDash renders a string, or a muted em-dash when the input is empty.
 func stringOrDash(s string) string {
 	if s == "" {
@@ -267,14 +277,22 @@ func stringOrDash(s string) string {
 	return fgCell(normal, s)
 }
 
-// countCell renders a non-negative count, colored green when positive and
-// red when zero (used for verified/approved counts on freight).
-func countCell(n int) string {
-	fg := degraded
-	if n > 0 {
+func stageSplitCountCell(stageNames []string, total int, controlFlowStages map[string]bool) string {
+	controlFlows := 0
+	for _, name := range stageNames {
+		if controlFlowStages[name] {
+			controlFlows++
+		}
+	}
+	deploys := total - controlFlows
+	if deploys < 0 {
+		deploys = 0
+	}
+	fg := muted
+	if total > 0 {
 		fg = healthy
 	}
-	return fgCell(fg, fmt.Sprintf("%d", n))
+	return fgCell(fg, fmt.Sprintf("%d/%d", deploys, controlFlows))
 }
 
 // emptyDash returns "—" for empty input, otherwise the input unchanged.

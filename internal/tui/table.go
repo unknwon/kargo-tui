@@ -201,6 +201,7 @@ func (m *Model) refreshRows() {
 		if cur := m.freightsTable.Cursor(); cur >= 0 && cur < len(m.visibleFreights) {
 			prevName = m.visibleFreights[cur].Name
 		}
+		controlFlowStages := m.controlFlowStages()
 		sorted := m.sortFreights(m.freights)
 		rows := make([]table.Row, 0, len(sorted))
 		visible := make([]kargo.Freight, 0, len(sorted))
@@ -215,9 +216,9 @@ func (m *Model) refreshRows() {
 				" ",
 				freightNameCell(f.Name, f.Alias),
 				ageString(f.Created),
-				countCell(len(f.CurrentlyIn)),
-				countCell(f.VerifiedIn),
-				countCell(f.ApprovedFor),
+				stageSplitCountCell(f.CurrentlyIn, len(f.CurrentlyIn), controlFlowStages),
+				stageSplitCountCell(f.VerifiedStages, f.VerifiedIn, controlFlowStages),
+				stageSplitCountCell(f.ApprovedStages, f.ApprovedFor, controlFlowStages),
 				stringOrDash(f.Warehouse),
 			})
 			visible = append(visible, f)
