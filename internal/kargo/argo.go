@@ -17,10 +17,49 @@ type ArgoCDAppRef struct {
 	Sync      string
 }
 
-// DiscoverArgoCDBaseURL queries the Kargo server's GetConfig endpoint for
-// the URL of any configured Argo CD shard. Returns "" when nothing is
-// configured so callers can degrade gracefully.
-func (c *Client) DiscoverArgoCDBaseURL(ctx context.Context) string {
+// ArgoCDShard captures one ArgoCD shard's UI base URL and the Kubernetes
+// namespace where its controller runs. The shard name (the map key in
+// ArgoCDShards) is whatever the Kargo admin configured. Kargo does not
+// require it to be "default".
+type ArgoCDShard struct {
+	URL       string
+	Namespace string
+}
+
+// ArgoCDShards is the discovered shard table keyed by shard name. Empty when
+// the server has no shards configured or GetConfig failed.
+type ArgoCDShards map[string]ArgoCDShard
+
+// BaseURLFor returns the UI base URL that hosts the given app, or "" when
+// no shard matches. Resolution order:
+//  1. Exact namespace match: any shard whose controller runs in app.Namespace
+//     (works for the common case where one Argo controller manages apps in
+//     its own namespace).
+//  2. Single-shard fallback: if exactly one shard exists, use it.
+//  3. Empty: the caller must hide the link rather than guess.
+//
+// We deliberately do not fall through to "first shard alphabetically" — that
+// previous behaviour produced confidently-wrong URLs on multi-shard servers.
+func (s ArgoCDShards) BaseURLFor(app ArgoCDAppRef) string {
+	for _, sh := range s {
+		if sh.Namespace != "" && sh.Namespace == app.Namespace && sh.URL != "" {
+			return strings.TrimRight(sh.URL, "/")
+		}
+	}
+	if len(s) == 1 {
+		for _, sh := range s {
+			if sh.URL != "" {
+				return strings.TrimRight(sh.URL, "/")
+			}
+		}
+	}
+	return ""
+}
+
+// DiscoverArgoCDShards queries the Kargo server's GetConfig endpoint and
+// returns every configured ArgoCD shard. Returns an empty map when nothing
+// is configured or the RPC fails, so callers can degrade gracefully.
+func (c *Client) DiscoverArgoCDShards(ctx context.Context) ArgoCDShards {
 	var resp struct {
 		ArgoCDShards map[string]struct {
 			URL       string `json:"url"`
@@ -28,22 +67,16 @@ func (c *Client) DiscoverArgoCDBaseURL(ctx context.Context) string {
 		} `json:"argocdShards"`
 	}
 	if err := c.rpc.call(ctx, "GetConfig", struct{}{}, &resp); err != nil {
-		return ""
+		return ArgoCDShards{}
 	}
-	if shard, ok := resp.ArgoCDShards["default"]; ok && shard.URL != "" {
-		return strings.TrimRight(shard.URL, "/")
-	}
-	names := make([]string, 0, len(resp.ArgoCDShards))
-	for name := range resp.ArgoCDShards {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		if shard := resp.ArgoCDShards[name]; shard.URL != "" {
-			return strings.TrimRight(shard.URL, "/")
+	out := make(ArgoCDShards, len(resp.ArgoCDShards))
+	for name, sh := range resp.ArgoCDShards {
+		out[name] = ArgoCDShard{
+			URL:       strings.TrimRight(sh.URL, "/"),
+			Namespace: sh.Namespace,
 		}
 	}
-	return ""
+	return out
 }
 
 // parseArgoApps extracts Argo CD Application references from a Stage's

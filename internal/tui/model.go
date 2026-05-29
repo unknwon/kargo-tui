@@ -123,7 +123,7 @@ type Model struct {
 	filtering     bool
 	filterValues  map[view]string
 	sort          map[view]sortMode
-	argoBaseURL   string
+	argoShards    kargo.ArgoCDShards
 	yankedMessage string
 	yankedAt      time.Time
 
@@ -295,7 +295,7 @@ var allStageColumns = []table.Column{
 	{Title: "Name", Width: 30},
 	{Title: "Health", Width: 14},
 	{Title: "Argo", Width: 22},
-	{Title: "Last Promo", Width: 12},
+	{Title: "Last Promo", Width: 16},
 	{Title: "Freight", Width: 32},
 	{Title: "Age", Width: 8},
 	{Title: "Shard", Width: 10},
@@ -503,10 +503,10 @@ func newTable(cols []table.Column) table.Model {
 
 // Init is the Bubble Tea entry point. It dispatches the initial commands —
 // either loading projects for the picker, or starting the refresh ticker
-// for an already-selected project — and kicks off Argo CD URL discovery.
+// for an already-selected project, and kicks off Argo CD shard discovery.
 func (m Model) Init() tea.Cmd {
 	if m.phase == phasePickingProject {
-		return tea.Batch(loadProjectsCmd(m.client), textinput.Blink, discoverArgoURLCmd(m.client))
+		return tea.Batch(loadProjectsCmd(m.client), textinput.Blink, discoverArgoShardsCmd(m.client))
 	}
-	return tea.Batch(tickCmd(), discoverArgoURLCmd(m.client))
+	return tea.Batch(tickCmd(), discoverArgoShardsCmd(m.client))
 }

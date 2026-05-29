@@ -101,8 +101,8 @@ func (m Model) composePanelLines(innerW int) []string {
 				if app.Health != "" || app.Sync != "" {
 					lines = append(lines, "    "+argoHealthCell(app.Health)+keyStyle.Render(" / ")+argoSyncCell(app.Sync))
 				}
-				if m.argoBaseURL != "" {
-					lines = append(lines, keyStyle.Render("    "+wrap(argoAppURL(m.argoBaseURL, app), innerW-4)))
+				if base := m.argoShards.BaseURLFor(app); base != "" {
+					lines = append(lines, keyStyle.Render("    "+wrap(argoAppURL(base, app), innerW-4)))
 				}
 			}
 		}

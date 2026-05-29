@@ -192,6 +192,20 @@ func promoCell(s string) string {
 	}
 }
 
+// promoCellWithAge renders the Last Promo column for the deploys list: the
+// colored phase followed by a muted "/age" suffix so the user can see how
+// stale the last promotion is without scrolling to the Age column. Falls back
+// to the plain phase cell when the timestamp is zero.
+func promoCellWithAge(phase string, at time.Time) string {
+	if phase == "" {
+		return promoCell(phase)
+	}
+	if at.IsZero() {
+		return promoCell(phase)
+	}
+	return promoCell(phase) + fgCell(muted, "/") + fgCell(normal, ageString(at))
+}
+
 // stageFreightSummary renders a Stage's FreightSummary cell. For control-flow
 // stages with no summary it shows a passes-through hint; for single-freight
 // summaries (a 40-char hex name) it shortens to 8 chars + alias.
