@@ -503,7 +503,7 @@ func newTable(cols []table.Column) table.Model {
 
 // Init is the Bubble Tea entry point. It dispatches the initial commands —
 // either loading projects for the picker, or starting the refresh ticker
-// for an already-selected project — and kicks off Argo CD URL discovery.
+// for an already-selected project, and kicks off Argo CD shard discovery.
 func (m Model) Init() tea.Cmd {
 	if m.phase == phasePickingProject {
 		return tea.Batch(loadProjectsCmd(m.client), textinput.Blink, discoverArgoShardsCmd(m.client))
