@@ -219,18 +219,19 @@ func (m *Model) openArgoCDForSelection() {
 // context menu so the action always targets the clicked stage even if
 // selection shifts before the menu item fires.
 func (m *Model) openArgoCDForStage(s *kargo.Stage) {
-	if m.argoBaseURL == "" {
-		m.yankedMessage = "no Argo CD URL discovered"
-		m.yankedAt = time.Now()
-		return
-	}
 	if s == nil || len(s.ArgoCDApps) == 0 {
 		m.yankedMessage = "no Argo CD app linked to this stage"
 		m.yankedAt = time.Now()
 		return
 	}
 	app := s.ArgoCDApps[0]
-	url := argoAppURL(m.argoBaseURL, app)
+	base := m.argoShards.BaseURLFor(app)
+	if base == "" {
+		m.yankedMessage = "no Argo CD shard URL for " + app.Namespace + "/" + app.Name
+		m.yankedAt = time.Now()
+		return
+	}
+	url := argoAppURL(base, app)
 	if err := openBrowser(url); err != nil {
 		m.yankedMessage = fmt.Sprintf("open failed: %v", err)
 	} else {

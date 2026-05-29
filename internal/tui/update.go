@@ -253,8 +253,8 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderLogs()
 		return m, nil
 
-	case argoURLMsg:
-		m.argoBaseURL = string(msg)
+	case argoShardsMsg:
+		m.argoShards = kargo.ArgoCDShards(msg)
 		m.refreshPanel()
 		return m, nil
 

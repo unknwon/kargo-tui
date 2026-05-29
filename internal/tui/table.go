@@ -152,7 +152,7 @@ func (m *Model) refreshRows() {
 				stageNameCell(s.Name, s.Health),
 				healthCell(s.Health),
 				stageArgoCell(s.ArgoCDApps),
-				promoCell(s.LastPromo),
+				promoCellWithAge(s.LastPromo, s.LastPromoAt),
 				stageFreightSummary(s.FreightSummary, s.IsControlFlow, m.aliasOf(s.FreightSummary)),
 				ageString(s.Created),
 				stringOrDash(s.Shard),

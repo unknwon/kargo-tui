@@ -33,8 +33,9 @@ type freightsLoadedMsg struct {
 // tickMsg fires on the periodic refresh timer.
 type tickMsg time.Time
 
-// argoURLMsg carries the discovered Argo CD UI base URL ("" if none found).
-type argoURLMsg string
+// argoShardsMsg carries the discovered Argo CD shard table (empty when none
+// are configured or discovery failed).
+type argoShardsMsg kargo.ArgoCDShards
 
 // logsLoadedMsg carries the result of fetching Promotions and Events for a
 // given stage.
@@ -75,11 +76,11 @@ func tickCmd() tea.Cmd {
 	return tea.Tick(refreshInterval, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
-// discoverArgoURLCmd dispatches Argo CD UI URL discovery via the Kargo
+// discoverArgoShardsCmd dispatches Argo CD shard discovery via the Kargo
 // server's GetConfig RPC.
-func discoverArgoURLCmd(c *kargo.Client) tea.Cmd {
+func discoverArgoShardsCmd(c *kargo.Client) tea.Cmd {
 	return func() tea.Msg {
-		return argoURLMsg(c.DiscoverArgoCDBaseURL(context.Background()))
+		return argoShardsMsg(c.DiscoverArgoCDShards(context.Background()))
 	}
 }
 
