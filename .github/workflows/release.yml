@@ -92,6 +92,7 @@ jobs:
 
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    if: ${{ github.repository == 'unknwon/kargo-tui' }}
     needs: prepare-release
     runs-on: ${{ matrix.runner }}
     strategy:
