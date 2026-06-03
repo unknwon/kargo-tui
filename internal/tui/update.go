@@ -803,11 +803,11 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prepareHelpViewport()
 			return m, nil
 		case "M":
-			m.mouseDisabled = !m.mouseDisabled
-			if m.mouseDisabled {
-				m.yankedMessage = "mouse capture off (terminal selection enabled)"
-			} else {
+			m.mouseEnabled = !m.mouseEnabled
+			if m.mouseEnabled {
 				m.yankedMessage = "mouse capture on"
+			} else {
+				m.yankedMessage = "mouse capture off (terminal selection enabled)"
 			}
 			m.yankedAt = time.Now()
 			return m, nil
