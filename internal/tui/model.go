@@ -275,9 +275,10 @@ type Model struct {
 	menuItems  []menuItem
 	menuCursor int
 
-	// mouseDisabled toggles mouse capture off so the terminal regains
-	// native text selection and scrollback. Bound to "M" globally.
-	mouseDisabled bool
+	// mouseEnabled toggles mouse capture on. Off by default so the
+	// terminal keeps native text selection and scrollback. Bound to "M"
+	// globally.
+	mouseEnabled bool
 }
 
 // menuItem is one row in the right-click context menu. Label is shown;
