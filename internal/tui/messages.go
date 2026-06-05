@@ -124,8 +124,6 @@ type contextSwitchedMsg struct {
 	defaultProject string
 	shards         kargo.ArgoCDShards
 	projectList    []string
-	deploys        []kargo.Stage
-	freights       []kargo.Freight
 	err            error
 }
 
@@ -178,24 +176,20 @@ func contextSwitchCmd(
 			}
 		}
 
-		var deploys []kargo.Stage
-		var freights []kargo.Freight
 		if defaultProject != "" {
 			report("Loading project " + defaultProject + "…")
 			client.SetProject(defaultProject)
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			deploys, _ = client.ListStages(ctx, defaultProject)
-			freights, _ = client.ListFreight(ctx, defaultProject)
-			cancel()
 		}
+		// Don't preload deploys/freights here — let the reducer fire
+		// the regular loadDeploysCmd / loadFreightsCmd path so error
+		// handling (auth banner, error line) matches the rest of the
+		// app instead of silently arriving as empty slices on failure.
 		return contextSwitchedMsg{
 			name:           name,
 			client:         client,
 			defaultProject: defaultProject,
 			shards:         shards,
 			projectList:    projects,
-			deploys:        deploys,
-			freights:       freights,
 		}
 	}
 }

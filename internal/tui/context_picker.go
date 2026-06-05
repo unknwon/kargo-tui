@@ -58,8 +58,8 @@ func (m Model) updateContextPicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.client = msg.client
 		m.contextName = msg.name
 		m.project = msg.defaultProject
-		m.deploys = msg.deploys
-		m.freights = msg.freights
+		m.deploys = nil
+		m.freights = nil
 		m.visibleDeploys = nil
 		m.visibleFreights = nil
 		m.lastDeployRows = nil
@@ -78,7 +78,12 @@ func (m Model) updateContextPicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshRows()
 			m.refreshPanel()
 			m.restartStageWatch()
-			return m, tickCmd()
+			m.loading = true
+			return m, tea.Batch(
+				loadDeploysCmd(msg.client, msg.defaultProject),
+				loadFreightsCmd(msg.client, msg.defaultProject),
+				tickCmd(),
+			)
 		}
 		// Multiple (or zero) projects: drop the user into the project
 		// picker so they can choose. projectList from the cmd is
