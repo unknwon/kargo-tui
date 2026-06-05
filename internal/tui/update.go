@@ -349,7 +349,6 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case warehousesRefreshedMsg:
-		m.refreshingWarehouses = false
 		// Stale callback after the user switched projects. Ignore so we
 		// don't show a "refreshed N warehouses" toast that refers to a
 		// project that's no longer on screen.
@@ -778,13 +777,10 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// so freight discovery runs without waiting for the next
 			// poll interval. Reconcile is asynchronous server-side; the
 			// 5s tick picks up any new freight on a subsequent
-			// QueryFreight. m.refreshingWarehouses gates re-entry so
-			// mashing R doesn't fan out concurrent List+Refresh
-			// goroutines against the server.
-			if m.project == "" || m.client == nil || m.refreshingWarehouses {
+			// QueryFreight.
+			if m.project == "" || m.client == nil {
 				return m, nil
 			}
-			m.refreshingWarehouses = true
 			m.yankedMessage = "refreshing warehouses in " + m.project + "…"
 			m.yankedAt = time.Now()
 			return m, refreshWarehousesCmd(m.client, m.project)
