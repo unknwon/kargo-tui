@@ -45,13 +45,7 @@ type ArgoCDShards map[string]ArgoCDShard
 // silently hid the link whenever a multi-shard server's shard namespaces
 // didn't line up with the app's, and that's the case the user hit.
 func (s ArgoCDShards) BaseURLFor(app ArgoCDAppRef) string {
-	keys := make([]string, 0, len(s))
-	for k := range s {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		sh := s[k]
+	for _, sh := range s {
 		if sh.Namespace != "" && sh.Namespace == app.Namespace && sh.URL != "" {
 			return strings.TrimRight(sh.URL, "/")
 		}
@@ -59,30 +53,47 @@ func (s ArgoCDShards) BaseURLFor(app ArgoCDAppRef) string {
 	if sh, ok := s["default"]; ok && sh.URL != "" {
 		return strings.TrimRight(sh.URL, "/")
 	}
-	for _, k := range keys {
-		if s[k].URL != "" {
-			return strings.TrimRight(s[k].URL, "/")
+	keys := make([]string, 0, len(s))
+	for k, sh := range s {
+		if sh.URL != "" {
+			keys = append(keys, k)
 		}
 	}
-	return ""
+	if len(keys) == 0 {
+		return ""
+	}
+	sort.Strings(keys)
+	return strings.TrimRight(s[keys[0]].URL, "/")
 }
 
 // DiscoverArgoCDShards queries the Kargo server's GetConfig endpoint and
 // returns every configured ArgoCD shard. The error is surfaced (rather
 // than swallowed into an empty map) so the TUI can show why links are
 // missing instead of silently dropping them.
+//
+// The Kargo Web UI uses the same GetConfig RPC. Different Kargo server
+// versions have shipped the shard table under both camelCase and
+// snake_case JSON keys, so we accept either to stay robust.
 func (c *Client) DiscoverArgoCDShards(ctx context.Context) (ArgoCDShards, error) {
 	var resp struct {
-		ArgoCDShards map[string]struct {
+		ArgoCDShardsCamel map[string]struct {
 			URL       string `json:"url"`
 			Namespace string `json:"namespace"`
 		} `json:"argocdShards"`
+		ArgoCDShardsSnake map[string]struct {
+			URL       string `json:"url"`
+			Namespace string `json:"namespace"`
+		} `json:"argocd_shards"`
 	}
 	if err := c.rpc.call(ctx, "GetConfig", struct{}{}, &resp); err != nil {
 		return ArgoCDShards{}, err
 	}
-	out := make(ArgoCDShards, len(resp.ArgoCDShards))
-	for name, sh := range resp.ArgoCDShards {
+	shards := resp.ArgoCDShardsCamel
+	if len(shards) == 0 {
+		shards = resp.ArgoCDShardsSnake
+	}
+	out := make(ArgoCDShards, len(shards))
+	for name, sh := range shards {
 		out[name] = ArgoCDShard{
 			URL:       strings.TrimRight(sh.URL, "/"),
 			Namespace: sh.Namespace,

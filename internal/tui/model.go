@@ -275,12 +275,6 @@ type Model struct {
 	menuItems  []menuItem
 	menuCursor int
 
-	// refreshingWarehouses gates the R warehouse-reconcile shortcut so
-	// rapid presses don't fan out concurrent List+Refresh goroutines.
-	// Cleared in the warehousesRefreshedMsg handler regardless of
-	// success or error.
-	refreshingWarehouses bool
-
 	// mouseEnabled toggles mouse capture on. Off by default so the
 	// terminal keeps native text selection and scrollback. Bound to "M"
 	// globally.
