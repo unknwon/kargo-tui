@@ -67,26 +67,39 @@ func (s ArgoCDShards) BaseURLFor(app ArgoCDAppRef) string {
 }
 
 // DiscoverArgoCDShards queries the Kargo server's GetConfig endpoint and
-// returns every configured ArgoCD shard. Returns an empty map when nothing
-// is configured or the RPC fails, so callers can degrade gracefully.
-func (c *Client) DiscoverArgoCDShards(ctx context.Context) ArgoCDShards {
+// returns every configured ArgoCD shard. The error is surfaced (rather
+// than swallowed into an empty map) so the TUI can show why links are
+// missing instead of silently dropping them.
+//
+// The Kargo Web UI uses the same GetConfig RPC. Different Kargo server
+// versions have shipped the shard table under both camelCase and
+// snake_case JSON keys, so we accept either to stay robust.
+func (c *Client) DiscoverArgoCDShards(ctx context.Context) (ArgoCDShards, error) {
 	var resp struct {
-		ArgoCDShards map[string]struct {
+		ArgoCDShardsCamel map[string]struct {
 			URL       string `json:"url"`
 			Namespace string `json:"namespace"`
 		} `json:"argocdShards"`
+		ArgoCDShardsSnake map[string]struct {
+			URL       string `json:"url"`
+			Namespace string `json:"namespace"`
+		} `json:"argocd_shards"`
 	}
 	if err := c.rpc.call(ctx, "GetConfig", struct{}{}, &resp); err != nil {
-		return ArgoCDShards{}
+		return ArgoCDShards{}, err
 	}
-	out := make(ArgoCDShards, len(resp.ArgoCDShards))
-	for name, sh := range resp.ArgoCDShards {
+	shards := resp.ArgoCDShardsCamel
+	if len(shards) == 0 {
+		shards = resp.ArgoCDShardsSnake
+	}
+	out := make(ArgoCDShards, len(shards))
+	for name, sh := range shards {
 		out[name] = ArgoCDShard{
 			URL:       strings.TrimRight(sh.URL, "/"),
 			Namespace: sh.Namespace,
 		}
 	}
-	return out
+	return out, nil
 }
 
 // parseArgoApps extracts Argo CD Application references from a Stage's

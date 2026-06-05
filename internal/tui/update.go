@@ -254,7 +254,19 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case argoShardsMsg:
-		m.argoShards = kargo.ArgoCDShards(msg)
+		m.argoShards = msg.shards
+		// Surface a transient status so a silent failure to discover any
+		// shards is visible (otherwise the Argo link section just
+		// disappears with no explanation). One toast per discovery is
+		// fine — the user can press r to retry.
+		switch {
+		case msg.err != nil:
+			m.yankedMessage = "argo shard discovery failed: " + msg.err.Error()
+			m.yankedAt = time.Now()
+		case len(msg.shards) == 0:
+			m.yankedMessage = "argo shard discovery returned no shards (server has none configured?)"
+			m.yankedAt = time.Now()
+		}
 		m.refreshPanel()
 		return m, nil
 
@@ -673,6 +685,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(
 					loadDeploysCmd(m.client, m.project),
 					loadFreightsCmd(m.client, m.project),
+					discoverArgoShardsCmd(m.client),
 				)
 			}
 			return m, nil

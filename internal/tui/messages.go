@@ -45,9 +45,14 @@ type warehousesRefreshedMsg struct {
 	err       error
 }
 
-// argoShardsMsg carries the discovered Argo CD shard table (empty when none
-// are configured or discovery failed).
-type argoShardsMsg kargo.ArgoCDShards
+// argoShardsMsg carries the discovered Argo CD shard table (empty when
+// none are configured) and any discovery error. The TUI surfaces the
+// error so a configured-but-undiscovered shard table is visible
+// instead of silently producing zero links.
+type argoShardsMsg struct {
+	shards kargo.ArgoCDShards
+	err    error
+}
 
 // logsLoadedMsg carries the result of fetching Promotions and Events for a
 // given stage.
@@ -112,7 +117,8 @@ func tickCmd() tea.Cmd {
 // server's GetConfig RPC.
 func discoverArgoShardsCmd(c *kargo.Client) tea.Cmd {
 	return func() tea.Msg {
-		return argoShardsMsg(c.DiscoverArgoCDShards(context.Background()))
+		sh, err := c.DiscoverArgoCDShards(context.Background())
+		return argoShardsMsg{shards: sh, err: err}
 	}
 }
 
