@@ -33,6 +33,18 @@ type freightsLoadedMsg struct {
 // tickMsg fires on the periodic refresh timer.
 type tickMsg time.Time
 
+// warehousesRefreshedMsg carries the result of the F shortcut: a
+// fan-out RefreshWarehouse call across every warehouse in the current
+// project. Refreshed is the number of warehouses the server accepted
+// the request for. err is the first failure encountered, if any (the
+// fan-out short-circuits so we surface the first error rather than
+// continuing past a likely-systemic failure).
+type warehousesRefreshedMsg struct {
+	project   string
+	refreshed int
+	err       error
+}
+
 // argoShardsMsg carries the discovered Argo CD shard table (empty when none
 // are configured or discovery failed).
 type argoShardsMsg kargo.ArgoCDShards
@@ -68,6 +80,26 @@ func loadFreightsCmd(c *kargo.Client, project string) tea.Cmd {
 	return func() tea.Msg {
 		f, err := c.ListFreight(context.Background(), project)
 		return freightsLoadedMsg{freights: f, err: err}
+	}
+}
+
+// refreshWarehousesCmd lists every warehouse in the project and fires
+// RefreshResource at each one. Server-side refresh is asynchronous, so
+// the new Freight only shows up on a subsequent QueryFreight; the
+// existing 5s tick picks it up without any extra coordination here.
+func refreshWarehousesCmd(c *kargo.Client, project string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		names, err := c.ListWarehouseNames(ctx, project)
+		if err != nil {
+			return warehousesRefreshedMsg{project: project, err: err}
+		}
+		for _, n := range names {
+			if err := c.RefreshWarehouse(ctx, project, n); err != nil {
+				return warehousesRefreshedMsg{project: project, err: err}
+			}
+		}
+		return warehousesRefreshedMsg{project: project, refreshed: len(names)}
 	}
 }
 

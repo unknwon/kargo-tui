@@ -336,6 +336,24 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			loadFreightsCmd(m.client, m.project),
 		)
 
+	case warehousesRefreshedMsg:
+		// Stale callback after the user switched projects. Ignore so we
+		// don't show a "refreshed N warehouses" toast that refers to a
+		// project that's no longer on screen.
+		if msg.project != m.project {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.noteAuthFailure(msg.err)
+			m.yankedMessage = "refresh warehouses failed: " + msg.err.Error()
+		} else if msg.refreshed == 0 {
+			m.yankedMessage = "no warehouses to refresh in " + msg.project
+		} else {
+			m.yankedMessage = fmt.Sprintf("refreshed %d warehouse(s) in %s", msg.refreshed, msg.project)
+		}
+		m.yankedAt = time.Now()
+		return m, nil
+
 	case tea.MouseWheelMsg:
 		// Mouse wheel scrolls whichever surface is currently visible:
 		// help and the logs/diff overlay both have their own viewport, the
@@ -658,6 +676,18 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				)
 			}
 			return m, nil
+		case "F":
+			// Force every warehouse in the current project to reconcile
+			// now. The freight list itself is reloaded by the 5s tick;
+			// the controller's actual freight-discovery work is
+			// asynchronous, so a same-tick reload usually wouldn't see
+			// anything new.
+			if m.project == "" || m.client == nil {
+				return m, nil
+			}
+			m.yankedMessage = "refreshing warehouses in " + m.project + "…"
+			m.yankedAt = time.Now()
+			return m, refreshWarehousesCmd(m.client, m.project)
 		case "left":
 			// In full-screen details mode, arrows scroll the panel
 			// regardless of the structural view behind it. Otherwise
