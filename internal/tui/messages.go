@@ -45,15 +45,6 @@ type warehousesRefreshedMsg struct {
 	err       error
 }
 
-// argoShardsMsg carries the discovered Argo CD shard table (empty when
-// none are configured) and any discovery error. The TUI surfaces the
-// error so a configured-but-undiscovered shard table is visible
-// instead of silently producing zero links.
-type argoShardsMsg struct {
-	shards kargo.ArgoCDShards
-	err    error
-}
-
 // logsLoadedMsg carries the result of fetching Promotions and Events for a
 // given stage.
 type logsLoadedMsg struct {
@@ -111,19 +102,6 @@ func refreshWarehousesCmd(c *kargo.Client, project string) tea.Cmd {
 // tickCmd schedules the next refresh tick.
 func tickCmd() tea.Cmd {
 	return tea.Tick(refreshInterval, func(t time.Time) tea.Msg { return tickMsg(t) })
-}
-
-// discoverArgoShardsCmd dispatches Argo CD shard discovery via the Kargo
-// server's GetConfig RPC. The 15s timeout exists so a wedged bootstrap
-// gate (or a hung RPC) doesn't strand the cmd's goroutine forever and
-// leave the panel showing "not yet attempted" indefinitely.
-func discoverArgoShardsCmd(c *kargo.Client) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		sh, err := c.DiscoverArgoCDShards(ctx)
-		return argoShardsMsg{shards: sh, err: err}
-	}
 }
 
 // contextLoginMsg carries the result of an in-app SSO login triggered from

@@ -19,7 +19,6 @@ package kargo
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/cockroachdb/errors"
 
@@ -59,45 +58,11 @@ func (c *Client) SetTokenRefresher(refresh func(context.Context) (string, error)
 	c.rpc.refresh = refresh
 }
 
-// PrimeAsync arms the transport's bootstrap gate synchronously and
-// spawns a goroutine to refresh the token. Every RPC issued between
-// PrimeAsync's return and the goroutine's completion blocks on the
-// gate, so the first burst of post-priming calls (Init fan-out,
-// context-switch fan-out) sees the freshly-refreshed bearer instead
-// of racing it. No-op when the refresher hasn't been attached yet.
-//
-// The supplied timeout caps how long the goroutine waits on the IdP
-// before giving up; on timeout the gate releases and the affected
-// RPCs proceed with the old token (and recover via the lazy 401
-// retry, same as if PrimeAsync had never been called).
-func (c *Client) PrimeAsync(timeout time.Duration) {
-	if c.rpc.refresh == nil {
-		return
-	}
-	if !c.rpc.BeginBootstrap() {
-		return
-	}
-	go func() {
-		defer c.rpc.EndBootstrap()
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		defer cancel()
-		_ = c.rpc.tryRefresh(ctx)
-	}()
-}
-
 // ForceRefresh proactively invokes the configured token refresher and
-// updates the in-memory bearer. Used at startup (and on context
-// switch) when the saved id_token is already known to be expired (or
-// about to be), so the first RPC doesn't have to eat a 401 and
-// recover. Arms the transport's bootstrap gate so concurrent RPCs
-// block until the refresh completes, preventing the race that would
-// otherwise burn the first burst of calls on a stale bearer. No-op
-// when no refresher is attached.
+// updates the in-memory bearer. Used at startup so the synchronous
+// Init RPCs see a fresh bearer rather than relying on the lazy 401
+// retry path. No-op when no refresher is attached.
 func (c *Client) ForceRefresh(ctx context.Context) error {
-	owned := c.rpc.BeginBootstrap()
-	if owned {
-		defer c.rpc.EndBootstrap()
-	}
 	if err := c.rpc.tryRefresh(ctx); err != nil {
 		return errors.Wrap(err, "force token refresh")
 	}

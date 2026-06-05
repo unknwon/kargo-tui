@@ -96,9 +96,15 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 
 	ctxNames, ctxBuilder, ctxLogin, ctxRelogin := contextSwitcher(cfg)
 
+	// Preload the Argo shard table synchronously so the panel can
+	// render links from the first frame. Failure is non-fatal: the
+	// model just gets a nil map and falls back to no-link rendering.
+	shards, _ := client.DiscoverArgoCDShards(ctx)
+
 	var p *tea.Program
 	if project == "" {
 		m := tui.NewWithPicker(client, active.Name).
+			WithArgoShards(active.Name, shards).
 			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin)
 		if authExpired {
 			m = m.WithAuthExpired("saved session expired")
@@ -115,6 +121,7 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 			authExpired = true
 		}
 		m := tui.New(client, active.Name, project, deploys, freights).
+			WithArgoShards(active.Name, shards).
 			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin)
 		if authExpired {
 			m = m.WithAuthExpired("saved session expired")
@@ -145,21 +152,19 @@ func attachRefresher(client *kargo.Client, c *config.Context) {
 	client.SetTokenRefresher(r.Refresh)
 }
 
-// primeToken kicks off a background token refresh so the first RPC sees
-// a fresh bearer instead of eating a 401. Fire-and-forget: any failure
-// surfaces lazily via the next real 401, which raises the banner with
-// the actual error message. We intentionally do not pre-raise the banner
-// from a "saved token expires soon" heuristic, because the refresh
-// usually resolves before the user notices and a stuck banner over a
-// working session is worse than no banner at all.
-//
-// No-op when the context has no refresh token (admin-token logins): in
-// that case the lazy 401 path is the only signal we have anyway.
+// primeToken refreshes the bearer synchronously so the synchronous
+// startup RPCs (ListProjects, ListStages, ListFreight, GetConfig for
+// argo shards) see a valid token on the first try instead of relying
+// on the lazy 401 retry. No-op when the context has no refresh token
+// (admin-token logins); failures are non-fatal because the lazy retry
+// path still recovers if there's anything to recover from.
 func primeToken(client *kargo.Client, active *config.Context) {
 	if active == nil || active.RefreshToken == "" {
 		return
 	}
-	client.PrimeAsync(30 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_ = client.ForceRefresh(ctx)
 }
 
 // contextSwitcher returns the list of configured context names, a builder

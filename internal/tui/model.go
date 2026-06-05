@@ -124,16 +124,13 @@ type Model struct {
 	filterValues map[view]string
 	sort         map[view]sortMode
 	argoShards   kargo.ArgoCDShards
-	// argoShardsErr is sticky (unlike the transient yank toast) so the
-	// reason discovery failed is visible whenever the user looks at an
-	// Argo app entry. Cleared on a subsequent successful discovery.
-	argoShardsErr error
-	// argoShardsAt records when the last discovery attempt completed,
-	// so the diagnostic hint can say "tried 12s ago" rather than just
-	// "nothing here".
-	argoShardsAt  time.Time
-	yankedMessage string
-	yankedAt      time.Time
+	// argoShardsCache memoizes shard tables by context name so a
+	// switch back to a previously-visited context picks the URLs up
+	// instantly instead of re-paying the GetConfig round trip.
+	// Populated synchronously at startup and on every context switch.
+	argoShardsCache map[string]kargo.ArgoCDShards
+	yankedMessage   string
+	yankedAt        time.Time
 
 	// authExpired is set when a Kargo RPC fails with CodeUnauthenticated
 	// after the transport's refresh attempt also failed (or no refresh
@@ -521,7 +518,47 @@ func newTable(cols []table.Column) table.Model {
 // for an already-selected project, and kicks off Argo CD shard discovery.
 func (m Model) Init() tea.Cmd {
 	if m.phase == phasePickingProject {
-		return tea.Batch(loadProjectsCmd(m.client), textinput.Blink, discoverArgoShardsCmd(m.client))
+		return tea.Batch(loadProjectsCmd(m.client), textinput.Blink)
 	}
-	return tea.Batch(tickCmd(), discoverArgoShardsCmd(m.client))
+	return tickCmd()
+}
+
+// WithArgoShards preloads the discovered shard table on the model so
+// the panel can render Argo links from the very first frame instead
+// of waiting on an async discovery cmd that may never land. The cache
+// stores the result under contextName for fast restore on
+// context-switch.
+func (m Model) WithArgoShards(contextName string, shards kargo.ArgoCDShards) Model {
+	m.argoShards = shards
+	if m.argoShardsCache == nil {
+		m.argoShardsCache = make(map[string]kargo.ArgoCDShards)
+	}
+	if contextName != "" {
+		m.argoShardsCache[contextName] = shards
+	}
+	return m
+}
+
+// loadArgoShardsCached returns the shard table for the named context.
+// Reuses a cached copy when present so flipping between contexts
+// doesn't re-pay the GetConfig round trip; on a cache miss, fetches
+// synchronously (the only call site already runs in the model
+// reducer, where blocking briefly is fine and beats the previous
+// async cmd that intermittently never delivered its message).
+func (m *Model) loadArgoShardsCached(client *kargo.Client, contextName string) kargo.ArgoCDShards {
+	if m.argoShardsCache == nil {
+		m.argoShardsCache = make(map[string]kargo.ArgoCDShards)
+	}
+	if sh, ok := m.argoShardsCache[contextName]; ok {
+		return sh
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	sh, err := client.DiscoverArgoCDShards(ctx)
+	if err != nil {
+		// Don't cache failures so a retry through the picker can recover.
+		return nil
+	}
+	m.argoShardsCache[contextName] = sh
+	return sh
 }

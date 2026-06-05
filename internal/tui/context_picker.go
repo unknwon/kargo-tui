@@ -190,6 +190,7 @@ func (m Model) switchContext(name string) (Model, tea.Cmd) {
 	m.freightsError = nil
 	m.argoShards = nil
 
+	m.argoShards = m.loadArgoShardsCached(client, name)
 	if defaultProject != "" {
 		client.SetProject(defaultProject)
 		m.phase = phaseRunning
@@ -200,7 +201,6 @@ func (m Model) switchContext(name string) (Model, tea.Cmd) {
 		return m, tea.Batch(
 			loadDeploysCmd(client, defaultProject),
 			loadFreightsCmd(client, defaultProject),
-			discoverArgoShardsCmd(client),
 			tickCmd(),
 		)
 	}
@@ -211,7 +211,7 @@ func (m Model) switchContext(name string) (Model, tea.Cmd) {
 	m.nsExplicit = true
 	m.nsFilter.SetValue("")
 	m.nsFilter.Focus()
-	return m, tea.Batch(loadProjectsCmd(client), discoverArgoShardsCmd(client), textinput.Blink)
+	return m, tea.Batch(loadProjectsCmd(client), textinput.Blink)
 }
 
 // ctxBodyHeight returns the row budget the context picker uses for its

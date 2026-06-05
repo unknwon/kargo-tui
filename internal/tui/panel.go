@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -98,11 +97,6 @@ func (m Model) composePanelLines(innerW int) []string {
 			lines = append(lines, "")
 			lines = append(lines, keyStyle.Render("Argo CD Apps:"))
 			shardKey := s.Labels[kargo.ShardLabelKey]
-			shardNames := make([]string, 0, len(m.argoShards))
-			for k := range m.argoShards {
-				shardNames = append(shardNames, k)
-			}
-			sort.Strings(shardNames)
 			for _, app := range s.ArgoCDApps {
 				lines = append(lines, valStyle.Render("  • "+wrap(app.Namespace+"/"+app.Name, innerW-4)))
 				if app.Health != "" || app.Sync != "" {
@@ -110,17 +104,6 @@ func (m Model) composePanelLines(innerW int) []string {
 				}
 				if base := m.argoShards.BaseURLFor(shardKey, app); base != "" {
 					lines = append(lines, keyStyle.Render("    "+wrap(argoAppURL(base, app), innerW-4)))
-				} else {
-					var hint string
-					switch {
-					case m.argoShardsErr != nil:
-						hint = fmt.Sprintf("(discovery failed %s ago: %v)", ageString(m.argoShardsAt), m.argoShardsErr)
-					case m.argoShardsAt.IsZero():
-						hint = "(shard discovery not yet attempted)"
-					default:
-						hint = fmt.Sprintf("(no URL: shardKey=%q shards=%v · discovered %s ago)", shardKey, shardNames, ageString(m.argoShardsAt))
-					}
-					lines = append(lines, lipgloss.NewStyle().Foreground(muted).Background(bg).Render("    "+wrap(hint, innerW-4)))
 				}
 			}
 		}
