@@ -225,7 +225,8 @@ func (m *Model) openArgoCDForStage(s *kargo.Stage) {
 		return
 	}
 	app := s.ArgoCDApps[0]
-	base := m.argoShards.BaseURLFor(app)
+	shardKey := s.Labels[kargo.ShardLabelKey]
+	base := m.argoShards.BaseURLFor(shardKey, app)
 	if base == "" {
 		m.yankedMessage = "no Argo CD shard URL for " + app.Namespace + "/" + app.Name
 		m.yankedAt = time.Now()

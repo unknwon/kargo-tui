@@ -119,13 +119,18 @@ type Model struct {
 
 	// filter is the live textinput; filterValues persists each view's filter
 	// string so switching views restores the per-list query.
-	filter        textinput.Model
-	filtering     bool
-	filterValues  map[view]string
-	sort          map[view]sortMode
-	argoShards    kargo.ArgoCDShards
-	yankedMessage string
-	yankedAt      time.Time
+	filter       textinput.Model
+	filtering    bool
+	filterValues map[view]string
+	sort         map[view]sortMode
+	argoShards   kargo.ArgoCDShards
+	// argoShardsCache memoizes shard tables by context name so a
+	// switch back to a previously-visited context picks the URLs up
+	// instantly instead of re-paying the GetConfig round trip.
+	// Populated synchronously at startup and on every context switch.
+	argoShardsCache map[string]kargo.ArgoCDShards
+	yankedMessage   string
+	yankedAt        time.Time
 
 	// authExpired is set when a Kargo RPC fails with CodeUnauthenticated
 	// after the transport's refresh attempt also failed (or no refresh
@@ -275,6 +280,12 @@ type Model struct {
 	menuItems  []menuItem
 	menuCursor int
 
+	// refreshingWarehouses gates the R warehouse-reconcile shortcut so
+	// rapid presses don't fan out concurrent List+Refresh goroutines.
+	// Cleared in the warehousesRefreshedMsg handler regardless of
+	// success or error.
+	refreshingWarehouses bool
+
 	// mouseEnabled toggles mouse capture on. Off by default so the
 	// terminal keeps native text selection and scrollback. Bound to "M"
 	// globally.
@@ -309,7 +320,7 @@ var allFreightColumns = []table.Column{
 	{Title: "Current", Width: 10},
 	{Title: "Verified", Width: 10},
 	{Title: "Approved", Width: 10},
-	{Title: "Warehouse", Width: 20},
+	{Title: "Warehouse", Width: 30},
 }
 
 // New starts the TUI with a known project and pre-loaded data.
@@ -507,7 +518,23 @@ func newTable(cols []table.Column) table.Model {
 // for an already-selected project, and kicks off Argo CD shard discovery.
 func (m Model) Init() tea.Cmd {
 	if m.phase == phasePickingProject {
-		return tea.Batch(loadProjectsCmd(m.client), textinput.Blink, discoverArgoShardsCmd(m.client))
+		return tea.Batch(loadProjectsCmd(m.client), textinput.Blink)
 	}
-	return tea.Batch(tickCmd(), discoverArgoShardsCmd(m.client))
+	return tickCmd()
+}
+
+// WithArgoShards preloads the discovered shard table on the model so
+// the panel can render Argo links from the very first frame instead
+// of waiting on an async discovery cmd that may never land. The cache
+// stores the result under contextName for fast restore on
+// context-switch.
+func (m Model) WithArgoShards(contextName string, shards kargo.ArgoCDShards) Model {
+	m.argoShards = shards
+	if m.argoShardsCache == nil {
+		m.argoShardsCache = make(map[string]kargo.ArgoCDShards)
+	}
+	if contextName != "" {
+		m.argoShardsCache[contextName] = shards
+	}
+	return m
 }

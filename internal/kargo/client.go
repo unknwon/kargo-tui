@@ -59,11 +59,9 @@ func (c *Client) SetTokenRefresher(refresh func(context.Context) (string, error)
 }
 
 // ForceRefresh proactively invokes the configured token refresher and
-// updates the in-memory bearer. Used at startup when the saved id_token
-// is already known to be expired (or about to be), so the first RPC
-// doesn't have to eat a 401 and recover. No-op when no refresher is
-// attached. Returns the refresher's error so the caller can decide
-// whether to fall back to interactive re-login.
+// updates the in-memory bearer. Used at startup so the synchronous
+// Init RPCs see a fresh bearer rather than relying on the lazy 401
+// retry path. No-op when no refresher is attached.
 func (c *Client) ForceRefresh(ctx context.Context) error {
 	if err := c.rpc.tryRefresh(ctx); err != nil {
 		return errors.Wrap(err, "force token refresh")

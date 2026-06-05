@@ -33,9 +33,17 @@ type freightsLoadedMsg struct {
 // tickMsg fires on the periodic refresh timer.
 type tickMsg time.Time
 
-// argoShardsMsg carries the discovered Argo CD shard table (empty when none
-// are configured or discovery failed).
-type argoShardsMsg kargo.ArgoCDShards
+// warehousesRefreshedMsg carries the result of the F shortcut: a
+// fan-out RefreshWarehouse call across every warehouse in the current
+// project. Refreshed is the number of warehouses the server accepted
+// the request for. err is the first failure encountered, if any (the
+// fan-out short-circuits so we surface the first error rather than
+// continuing past a likely-systemic failure).
+type warehousesRefreshedMsg struct {
+	project   string
+	refreshed int
+	err       error
+}
 
 // logsLoadedMsg carries the result of fetching Promotions and Events for a
 // given stage.
@@ -71,17 +79,29 @@ func loadFreightsCmd(c *kargo.Client, project string) tea.Cmd {
 	}
 }
 
+// refreshWarehousesCmd lists every warehouse in the project and fires
+// RefreshResource at each one. Server-side refresh is asynchronous, so
+// the new Freight only shows up on a subsequent QueryFreight; the
+// existing 5s tick picks it up without any extra coordination here.
+func refreshWarehousesCmd(c *kargo.Client, project string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		names, err := c.ListWarehouseNames(ctx, project)
+		if err != nil {
+			return warehousesRefreshedMsg{project: project, err: err}
+		}
+		for _, n := range names {
+			if err := c.RefreshWarehouse(ctx, project, n); err != nil {
+				return warehousesRefreshedMsg{project: project, err: err}
+			}
+		}
+		return warehousesRefreshedMsg{project: project, refreshed: len(names)}
+	}
+}
+
 // tickCmd schedules the next refresh tick.
 func tickCmd() tea.Cmd {
 	return tea.Tick(refreshInterval, func(t time.Time) tea.Msg { return tickMsg(t) })
-}
-
-// discoverArgoShardsCmd dispatches Argo CD shard discovery via the Kargo
-// server's GetConfig RPC.
-func discoverArgoShardsCmd(c *kargo.Client) tea.Cmd {
-	return func() tea.Msg {
-		return argoShardsMsg(c.DiscoverArgoCDShards(context.Background()))
-	}
 }
 
 // contextLoginMsg carries the result of an in-app SSO login triggered from
@@ -89,6 +109,89 @@ func discoverArgoShardsCmd(c *kargo.Client) tea.Cmd {
 type contextLoginMsg struct {
 	name string
 	err  error
+}
+
+// contextSwitchedMsg carries every piece of data the model needs to
+// move into a freshly-selected context: the rebuilt client, the
+// resolved default project (auto-picked when exactly one exists), the
+// discovered Argo shard table, and the initial deploys/freight load.
+// Bundling them into a single message means the reducer transitions
+// to the running phase exactly once, in a known-good state, instead
+// of stitching together five different in-flight results.
+type contextSwitchedMsg struct {
+	name           string
+	client         *kargo.Client
+	defaultProject string
+	shards         kargo.ArgoCDShards
+	projectList    []string
+	err            error
+}
+
+// contextSwitchCmd does every blocking step of a context switch on a
+// goroutine (build client + prime token via the supplied builder,
+// discover shards, pick default project, preload deploys/freights)
+// and streams human-readable progress via the loginStatusMsg channel
+// so the picker can show what it's doing instead of looking frozen.
+// Cancellation is on a best-effort basis — the builder runs to
+// completion and the result message is still posted, but a stale
+// message lands in a reducer that has already moved on and is
+// dropped.
+func contextSwitchCmd(
+	build func(string) (*kargo.Client, string, error),
+	name string,
+	cachedShards kargo.ArgoCDShards,
+	send func(tea.Msg),
+) tea.Cmd {
+	return func() tea.Msg {
+		report := func(s string) {
+			if send != nil {
+				send(loginStatusMsg(s))
+			}
+		}
+		report("Building client for " + name + "…")
+		client, defaultProject, err := build(name)
+		if err != nil {
+			return contextSwitchedMsg{name: name, err: err}
+		}
+
+		shards := cachedShards
+		if shards == nil {
+			report("Discovering Argo CD shards…")
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			shards, _ = client.DiscoverArgoCDShards(ctx)
+			cancel()
+		}
+
+		var projects []string
+		if defaultProject == "" {
+			report("Listing projects…")
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ps, perr := client.ListProjects(ctx)
+			cancel()
+			if perr == nil {
+				projects = ps
+				if len(ps) == 1 {
+					defaultProject = ps[0]
+				}
+			}
+		}
+
+		if defaultProject != "" {
+			report("Loading project " + defaultProject + "…")
+			client.SetProject(defaultProject)
+		}
+		// Don't preload deploys/freights here — let the reducer fire
+		// the regular loadDeploysCmd / loadFreightsCmd path so error
+		// handling (auth banner, error line) matches the rest of the
+		// app instead of silently arriving as empty slices on failure.
+		return contextSwitchedMsg{
+			name:           name,
+			client:         client,
+			defaultProject: defaultProject,
+			shards:         shards,
+			projectList:    projects,
+		}
+	}
 }
 
 // loginStatusMsg lets the SSO goroutine report progress (e.g. the auth URL

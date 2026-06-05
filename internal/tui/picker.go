@@ -80,6 +80,21 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.phase = phaseRunning
 				return m, nil
 			}
+			// Cold start with no project chosen yet: if a context
+			// picker is wired up (the typical case with multiple
+			// configured Kargo instances), drop into it instead of
+			// quitting so the user can pick a different server. With
+			// no context picker available there's nowhere to go, so
+			// quit remains the right behavior.
+			if m.ctxBuilder != nil {
+				m.phase = phasePickingContext
+				m.ctxCursor = 0
+				m.ctxError = nil
+				m.ctxAdding = false
+				m.ctxFilter.SetValue("")
+				m.ctxFilter.Focus()
+				return m, textinput.Blink
+			}
 			return m, tea.Quit
 		case "up", "ctrl+p":
 			if m.nsCursor > 0 {
@@ -193,7 +208,11 @@ func (m Model) pickerView() tea.View {
 
 	var lines []string
 	lines = append(lines, titleStyle.Render("Select a Kargo project"))
-	lines = append(lines, hintStyle.Render(wrap("type to filter · ↑/↓ select · enter open · r reload · esc quit", innerW)))
+	escHint := "esc back"
+	if m.project == "" && m.ctxBuilder == nil {
+		escHint = "esc quit"
+	}
+	lines = append(lines, hintStyle.Render(wrap("type to filter · ↑/↓ select · enter open · r reload · "+escHint, innerW)))
 	lines = append(lines, "")
 	filterRow := lipgloss.Height(strings.Join(lines, "\n"))
 	lines = append(lines, m.nsFilter.View())

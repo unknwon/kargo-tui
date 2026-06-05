@@ -30,36 +30,59 @@ type ArgoCDShard struct {
 // the server has no shards configured or GetConfig failed.
 type ArgoCDShards map[string]ArgoCDShard
 
-// BaseURLFor returns the UI base URL that hosts the given app, or "" when
-// no shard matches. Resolution order:
-//  1. Exact namespace match: any shard whose controller runs in app.Namespace
-//     (works for the common case where one Argo controller manages apps in
-//     its own namespace).
-//  2. Single-shard fallback: if exactly one shard exists, use it.
-//  3. Empty: the caller must hide the link rather than guess.
+// ShardLabelKey is the Stage label whose value names which Argo CD shard
+// the stage's Applications live on. Matches the upstream Kargo web UI
+// constant kargo.akuity.io/shard. The empty string is a valid value (it
+// means "the unnamed default shard") and is keyed verbatim into
+// ArgoCDShards.
+const ShardLabelKey = "kargo.akuity.io/shard"
+
+// BaseURLFor returns the UI base URL that hosts the given app.
+// Resolution order:
+//  1. Exact label match: the shard keyed by shardKey (the stage's
+//     kargo.akuity.io/shard label value). This is what the upstream
+//     Kargo web UI uses as its sole signal.
+//  2. Exact namespace match: any shard whose namespace equals
+//     app.Namespace. Covers older Kargo deployments where shards
+//     carried a per-shard namespace and the label wasn't set.
+//  3. The shard keyed "default" (Kargo's conventional primary shard).
+//  4. The lowest-keyed shard with a URL (deterministic so the link
+//     stays stable across refreshes).
 //
-// We deliberately do not fall through to "first shard alphabetically" — that
-// previous behaviour produced confidently-wrong URLs on multi-shard servers.
-func (s ArgoCDShards) BaseURLFor(app ArgoCDAppRef) string {
-	for _, sh := range s {
+// The fallbacks intentionally guess when the label is absent: a
+// wrong-shard URL still lands on a real Argo CD instance fronting the
+// same backing cluster, which beats a missing link.
+func (s ArgoCDShards) BaseURLFor(shardKey string, app ArgoCDAppRef) string {
+	if sh, ok := s[shardKey]; ok && sh.URL != "" {
+		return strings.TrimRight(sh.URL, "/")
+	}
+	keys := make([]string, 0, len(s))
+	for k := range s {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		sh := s[k]
 		if sh.Namespace != "" && sh.Namespace == app.Namespace && sh.URL != "" {
 			return strings.TrimRight(sh.URL, "/")
 		}
 	}
-	if len(s) == 1 {
-		for _, sh := range s {
-			if sh.URL != "" {
-				return strings.TrimRight(sh.URL, "/")
-			}
+	if sh, ok := s["default"]; ok && sh.URL != "" {
+		return strings.TrimRight(sh.URL, "/")
+	}
+	for _, k := range keys {
+		if s[k].URL != "" {
+			return strings.TrimRight(s[k].URL, "/")
 		}
 	}
 	return ""
 }
 
 // DiscoverArgoCDShards queries the Kargo server's GetConfig endpoint and
-// returns every configured ArgoCD shard. Returns an empty map when nothing
-// is configured or the RPC fails, so callers can degrade gracefully.
-func (c *Client) DiscoverArgoCDShards(ctx context.Context) ArgoCDShards {
+// returns every configured ArgoCD shard. The error is surfaced (rather
+// than swallowed into an empty map) so the TUI can show why links are
+// missing instead of silently dropping them.
+func (c *Client) DiscoverArgoCDShards(ctx context.Context) (ArgoCDShards, error) {
 	var resp struct {
 		ArgoCDShards map[string]struct {
 			URL       string `json:"url"`
@@ -67,7 +90,7 @@ func (c *Client) DiscoverArgoCDShards(ctx context.Context) ArgoCDShards {
 		} `json:"argocdShards"`
 	}
 	if err := c.rpc.call(ctx, "GetConfig", struct{}{}, &resp); err != nil {
-		return ArgoCDShards{}
+		return ArgoCDShards{}, err
 	}
 	out := make(ArgoCDShards, len(resp.ArgoCDShards))
 	for name, sh := range resp.ArgoCDShards {
@@ -76,7 +99,7 @@ func (c *Client) DiscoverArgoCDShards(ctx context.Context) ArgoCDShards {
 			Namespace: sh.Namespace,
 		}
 	}
-	return out
+	return out, nil
 }
 
 // parseArgoApps extracts Argo CD Application references from a Stage's

@@ -253,11 +253,6 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderLogs()
 		return m, nil
 
-	case argoShardsMsg:
-		m.argoShards = kargo.ArgoCDShards(msg)
-		m.refreshPanel()
-		return m, nil
-
 	case stageEventMsg:
 		m.deploys = kargo.MergeStageEvent(m.deploys, kargo.StageEvent(msg))
 		m.refreshRows()
@@ -335,6 +330,25 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			loadDeploysCmd(m.client, m.project),
 			loadFreightsCmd(m.client, m.project),
 		)
+
+	case warehousesRefreshedMsg:
+		m.refreshingWarehouses = false
+		// Stale callback after the user switched projects. Ignore so we
+		// don't show a "refreshed N warehouses" toast that refers to a
+		// project that's no longer on screen.
+		if msg.project != m.project {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.noteAuthFailure(msg.err)
+			m.yankedMessage = "refresh warehouses failed: " + msg.err.Error()
+		} else if msg.refreshed == 0 {
+			m.yankedMessage = "no warehouses to refresh in " + msg.project
+		} else {
+			m.yankedMessage = fmt.Sprintf("refreshed %d warehouse(s) in %s", msg.refreshed, msg.project)
+		}
+		m.yankedAt = time.Now()
+		return m, nil
 
 	case tea.MouseWheelMsg:
 		// Mouse wheel scrolls whichever surface is currently visible:
@@ -742,9 +756,24 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ctxFilter.Focus()
 			return m, textinput.Blink
 		case "R":
+			// Ask every warehouse in the current project to reconcile
+			// so freight discovery runs without waiting for the next
+			// poll interval. Reconcile is asynchronous server-side; the
+			// 5s tick picks up any new freight on a subsequent
+			// QueryFreight. m.refreshingWarehouses gates re-entry so
+			// mashing R doesn't fan out concurrent List+Refresh
+			// goroutines against the server.
+			if m.project == "" || m.client == nil || m.refreshingWarehouses {
+				return m, nil
+			}
+			m.refreshingWarehouses = true
+			m.yankedMessage = "refreshing warehouses in " + m.project + "…"
+			m.yankedAt = time.Now()
+			return m, refreshWarehousesCmd(m.client, m.project)
+		case "L":
 			// Inline re-login for the current context. Only meaningful when
 			// the auth banner is up; otherwise the existing session is fine
-			// and `R` does nothing (avoids surprising the user).
+			// and L does nothing (avoids surprising the user).
 			if !m.authExpired {
 				return m, nil
 			}
