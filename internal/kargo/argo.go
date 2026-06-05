@@ -30,41 +30,29 @@ type ArgoCDShard struct {
 // the server has no shards configured or GetConfig failed.
 type ArgoCDShards map[string]ArgoCDShard
 
-// BaseURLFor returns the UI base URL that hosts the given app, or "" when
-// no shard has a usable URL. Resolution order:
-//  1. Exact namespace match: any shard whose controller runs in app.Namespace
-//     (works for the common case where one Argo controller manages apps in
-//     its own namespace).
-//  2. The shard keyed "default" (Kargo's conventional primary shard).
-//  3. The lowest-keyed shard with a URL (deterministic fallback so the link
-//     stays stable across refreshes).
+// ShardLabelKey is the Stage label whose value names which Argo CD shard
+// the stage's Applications live on. Matches the upstream Kargo web UI
+// constant kargo.akuity.io/shard. The empty string is a valid value (it
+// means "the unnamed default shard") and is keyed verbatim into
+// ArgoCDShards.
+const ShardLabelKey = "kargo.akuity.io/shard"
+
+// BaseURLFor returns the UI base URL of the shard identified by
+// shardKey, or "" when no such shard exists or its URL is unset.
 //
-// A wrong-shard URL still lands the user on a real Argo CD instance that
-// likely fronts the same backing cluster, which is more useful than a
-// missing link. The previous "namespace match or single-shard only" rule
-// silently hid the link whenever a multi-shard server's shard namespaces
-// didn't line up with the app's, and that's the case the user hit.
-func (s ArgoCDShards) BaseURLFor(app ArgoCDAppRef) string {
-	keys := make([]string, 0, len(s))
-	for k := range s {
-		keys = append(keys, k)
+// shardKey is the value of the Stage's kargo.akuity.io/shard label.
+// This mirrors the upstream Kargo web UI's resolution exactly (see
+// ui/src/features/project/pipelines/nodes/argocd-link.tsx) — the label
+// is the only source of truth, and a missing shard means the link is
+// hidden rather than guessed. The previous heuristics that tried to
+// match a shard by app namespace or fall back to "default" were
+// inventing a relationship the server never exposed.
+func (s ArgoCDShards) BaseURLFor(shardKey string) string {
+	sh, ok := s[shardKey]
+	if !ok || sh.URL == "" {
+		return ""
 	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		sh := s[k]
-		if sh.Namespace != "" && sh.Namespace == app.Namespace && sh.URL != "" {
-			return strings.TrimRight(sh.URL, "/")
-		}
-	}
-	if sh, ok := s["default"]; ok && sh.URL != "" {
-		return strings.TrimRight(sh.URL, "/")
-	}
-	for _, k := range keys {
-		if s[k].URL != "" {
-			return strings.TrimRight(s[k].URL, "/")
-		}
-	}
-	return ""
+	return strings.TrimRight(sh.URL, "/")
 }
 
 // DiscoverArgoCDShards queries the Kargo server's GetConfig endpoint and
