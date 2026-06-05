@@ -37,22 +37,45 @@ type ArgoCDShards map[string]ArgoCDShard
 // ArgoCDShards.
 const ShardLabelKey = "kargo.akuity.io/shard"
 
-// BaseURLFor returns the UI base URL of the shard identified by
-// shardKey, or "" when no such shard exists or its URL is unset.
+// BaseURLFor returns the UI base URL that hosts the given app.
+// Resolution order:
+//  1. Exact label match: the shard keyed by shardKey (the stage's
+//     kargo.akuity.io/shard label value). This is what the upstream
+//     Kargo web UI uses as its sole signal.
+//  2. Exact namespace match: any shard whose namespace equals
+//     app.Namespace. Covers older Kargo deployments where shards
+//     carried a per-shard namespace and the label wasn't set.
+//  3. The shard keyed "default" (Kargo's conventional primary shard).
+//  4. The lowest-keyed shard with a URL (deterministic so the link
+//     stays stable across refreshes).
 //
-// shardKey is the value of the Stage's kargo.akuity.io/shard label.
-// This mirrors the upstream Kargo web UI's resolution exactly (see
-// ui/src/features/project/pipelines/nodes/argocd-link.tsx) — the label
-// is the only source of truth, and a missing shard means the link is
-// hidden rather than guessed. The previous heuristics that tried to
-// match a shard by app namespace or fall back to "default" were
-// inventing a relationship the server never exposed.
-func (s ArgoCDShards) BaseURLFor(shardKey string) string {
-	sh, ok := s[shardKey]
-	if !ok || sh.URL == "" {
-		return ""
+// The fallbacks intentionally guess when the label is absent: a
+// wrong-shard URL still lands on a real Argo CD instance fronting the
+// same backing cluster, which beats a missing link.
+func (s ArgoCDShards) BaseURLFor(shardKey string, app ArgoCDAppRef) string {
+	if sh, ok := s[shardKey]; ok && sh.URL != "" {
+		return strings.TrimRight(sh.URL, "/")
 	}
-	return strings.TrimRight(sh.URL, "/")
+	keys := make([]string, 0, len(s))
+	for k := range s {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		sh := s[k]
+		if sh.Namespace != "" && sh.Namespace == app.Namespace && sh.URL != "" {
+			return strings.TrimRight(sh.URL, "/")
+		}
+	}
+	if sh, ok := s["default"]; ok && sh.URL != "" {
+		return strings.TrimRight(sh.URL, "/")
+	}
+	for _, k := range keys {
+		if s[k].URL != "" {
+			return strings.TrimRight(s[k].URL, "/")
+		}
+	}
+	return ""
 }
 
 // DiscoverArgoCDShards queries the Kargo server's GetConfig endpoint and

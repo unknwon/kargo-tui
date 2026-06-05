@@ -44,6 +44,18 @@ type connectJSON struct {
 	// returned value before retrying the failed call once.
 	refresh func(context.Context) (string, error)
 
+	// bootstrap gates every RPC behind any in-flight startup priming
+	// (typically a ForceRefresh that swaps the on-disk id_token for a
+	// fresh one). awaitBootstrap closes the channel on the first call
+	// to either bootstrapBegin or bootstrapDone, so RPCs that arrive
+	// before priming starts pay no cost. Without this gate the
+	// Init-time fan-out (GetConfig, ListStages, ListProjects, ...) races
+	// the priming goroutine for the token field and intermittently
+	// burns calls on a stale bearer.
+	bootstrapMu    sync.Mutex
+	bootstrapReady chan struct{}
+	bootstrapped   bool
+
 	http *http.Client
 	// streamHTTP is a separate client without a request timeout, used
 	// for long-lived server-streaming RPCs (WatchStages etc.). Built
@@ -59,13 +71,64 @@ func newConnectJSON(baseURL, token string, insecureSkipTLSVerify bool) *connectJ
 	if insecureSkipTLSVerify {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
 	}
+	// bootstrapReady is closed by default so RPCs on clients that don't
+	// opt into priming (admin-token logins, tests) never block.
+	// BeginBootstrap installs a fresh open channel that the priming
+	// caller closes in EndBootstrap.
+	ready := make(chan struct{})
+	close(ready)
 	return &connectJSON{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		token:   token,
+		baseURL:        strings.TrimRight(baseURL, "/"),
+		token:          token,
+		bootstrapReady: ready,
+		bootstrapped:   true,
 		http: &http.Client{
 			Transport: transport,
 			Timeout:   30 * time.Second,
 		},
+	}
+}
+
+// BeginBootstrap arms the bootstrap gate so every subsequent RPC blocks
+// until EndBootstrap (or the per-call context deadline) fires. Safe to
+// call multiple times; a second call is a no-op until EndBootstrap
+// releases the first one. Returns true on the call that actually armed
+// the gate so the caller knows it owns the matching EndBootstrap.
+func (c *connectJSON) BeginBootstrap() bool {
+	c.bootstrapMu.Lock()
+	defer c.bootstrapMu.Unlock()
+	if !c.bootstrapped {
+		return false
+	}
+	c.bootstrapped = false
+	c.bootstrapReady = make(chan struct{})
+	return true
+}
+
+// EndBootstrap releases every RPC waiting on the gate armed by
+// BeginBootstrap. Safe to call when no gate is armed.
+func (c *connectJSON) EndBootstrap() {
+	c.bootstrapMu.Lock()
+	defer c.bootstrapMu.Unlock()
+	if c.bootstrapped {
+		return
+	}
+	close(c.bootstrapReady)
+	c.bootstrapped = true
+}
+
+// awaitBootstrap blocks until the bootstrap gate is released or ctx
+// expires, returning ctx.Err() on cancellation so the caller can wrap
+// it like any other RPC failure.
+func (c *connectJSON) awaitBootstrap(ctx context.Context) error {
+	c.bootstrapMu.Lock()
+	ch := c.bootstrapReady
+	c.bootstrapMu.Unlock()
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -75,6 +138,9 @@ func newConnectJSON(baseURL, token string, insecureSkipTLSVerify bool) *connectJ
 // configured *and* it succeeds, the call is retried once with the new
 // token; otherwise the original auth error propagates unchanged.
 func (c *connectJSON) call(ctx context.Context, method string, req, out any) error {
+	if err := c.awaitBootstrap(ctx); err != nil {
+		return errors.Wrapf(err, "wait for bootstrap before %s", method)
+	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return errors.Wrapf(err, "marshal request for %s", method)
@@ -133,6 +199,9 @@ func (c *connectJSON) call(ctx context.Context, method string, req, out any) err
 // retry behaviour mirrors call(): on CodeUnauthenticated, if a refresher
 // is configured and succeeds, the request is retried once.
 func (c *connectJSON) callProto(ctx context.Context, method string, reqMsg, respMsg proto.Message) error {
+	if err := c.awaitBootstrap(ctx); err != nil {
+		return errors.Wrapf(err, "wait for bootstrap before %s", method)
+	}
 	body, err := proto.Marshal(reqMsg)
 	if err != nil {
 		return errors.Wrapf(err, "marshal proto request for %s", method)

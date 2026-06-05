@@ -159,11 +159,7 @@ func primeToken(client *kargo.Client, active *config.Context) {
 	if active == nil || active.RefreshToken == "" {
 		return
 	}
-	go func() {
-		bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_ = client.ForceRefresh(bgCtx)
-	}()
+	client.PrimeAsync(30 * time.Second)
 }
 
 // contextSwitcher returns the list of configured context names, a builder
@@ -194,6 +190,12 @@ func contextSwitcher(cfg *config.Config) (
 			return nil, "", errors.Wrap(err, "create Kargo client")
 		}
 		attachRefresher(client, c)
+		// Mirror the startup priming so the first burst of RPCs after a
+		// context switch (deploys, freights, argo shard discovery) doesn't
+		// race the lazy 401 retry path. Without this, the one-shot
+		// GetConfig that powers Argo links can land on a stale token and
+		// fail, leaving the shard table empty for the rest of the session.
+		primeToken(client, c)
 		cfg.CurrentContext = name
 		_ = config.Save(cfg)
 		return client, c.Project, nil

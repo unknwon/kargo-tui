@@ -97,13 +97,12 @@ func (m Model) composePanelLines(innerW int) []string {
 			lines = append(lines, "")
 			lines = append(lines, keyStyle.Render("Argo CD Apps:"))
 			shardKey := s.Labels[kargo.ShardLabelKey]
-			base := m.argoShards.BaseURLFor(shardKey)
 			for _, app := range s.ArgoCDApps {
 				lines = append(lines, valStyle.Render("  • "+wrap(app.Namespace+"/"+app.Name, innerW-4)))
 				if app.Health != "" || app.Sync != "" {
 					lines = append(lines, "    "+argoHealthCell(app.Health)+keyStyle.Render(" / ")+argoSyncCell(app.Sync))
 				}
-				if base != "" {
+				if base := m.argoShards.BaseURLFor(shardKey, app); base != "" {
 					lines = append(lines, keyStyle.Render("    "+wrap(argoAppURL(base, app), innerW-4)))
 				}
 			}
