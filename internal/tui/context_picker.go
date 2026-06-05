@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -191,8 +192,22 @@ func (m Model) switchContext(name string) (Model, tea.Cmd) {
 	m.argoShards = nil
 
 	m.argoShards = m.loadArgoShardsCached(client, name)
+	// Mirror the startup auto-select: when the context has no saved
+	// default project, fetch the list synchronously and pick the only
+	// one when there's exactly one. The picker only opens for the
+	// ambiguous (0 or 2+) case. Pressing p from the running view always
+	// reopens the picker explicitly.
+	if defaultProject == "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ps, err := client.ListProjects(ctx)
+		cancel()
+		if err == nil && len(ps) == 1 {
+			defaultProject = ps[0]
+		}
+	}
 	if defaultProject != "" {
 		client.SetProject(defaultProject)
+		m.project = defaultProject
 		m.phase = phaseRunning
 		m.refreshRows()
 		m.refreshPanel()
