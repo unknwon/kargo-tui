@@ -31,29 +31,39 @@ type ArgoCDShard struct {
 type ArgoCDShards map[string]ArgoCDShard
 
 // BaseURLFor returns the UI base URL that hosts the given app, or "" when
-// no shard matches. Resolution order:
+// no shard has a usable URL. Resolution order:
 //  1. Exact namespace match: any shard whose controller runs in app.Namespace
 //     (works for the common case where one Argo controller manages apps in
 //     its own namespace).
-//  2. Single-shard fallback: if exactly one shard exists, use it.
-//  3. Empty: the caller must hide the link rather than guess.
+//  2. The shard keyed "default" (Kargo's conventional primary shard).
+//  3. The lowest-keyed shard with a URL (deterministic fallback so the link
+//     stays stable across refreshes).
 //
-// We deliberately do not fall through to "first shard alphabetically" — that
-// previous behaviour produced confidently-wrong URLs on multi-shard servers.
+// A wrong-shard URL still lands the user on a real Argo CD instance that
+// likely fronts the same backing cluster, which is more useful than a
+// missing link. The previous "namespace match or single-shard only" rule
+// silently hid the link whenever a multi-shard server's shard namespaces
+// didn't line up with the app's, and that's the case the user hit.
 func (s ArgoCDShards) BaseURLFor(app ArgoCDAppRef) string {
 	for _, sh := range s {
 		if sh.Namespace != "" && sh.Namespace == app.Namespace && sh.URL != "" {
 			return strings.TrimRight(sh.URL, "/")
 		}
 	}
-	if len(s) == 1 {
-		for _, sh := range s {
-			if sh.URL != "" {
-				return strings.TrimRight(sh.URL, "/")
-			}
+	if sh, ok := s["default"]; ok && sh.URL != "" {
+		return strings.TrimRight(sh.URL, "/")
+	}
+	keys := make([]string, 0, len(s))
+	for k, sh := range s {
+		if sh.URL != "" {
+			keys = append(keys, k)
 		}
 	}
-	return ""
+	if len(keys) == 0 {
+		return ""
+	}
+	sort.Strings(keys)
+	return strings.TrimRight(s[keys[0]].URL, "/")
 }
 
 // DiscoverArgoCDShards queries the Kargo server's GetConfig endpoint and
