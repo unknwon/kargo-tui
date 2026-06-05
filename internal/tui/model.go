@@ -309,7 +309,7 @@ var allFreightColumns = []table.Column{
 	{Title: "Current", Width: 10},
 	{Title: "Verified", Width: 10},
 	{Title: "Approved", Width: 10},
-	{Title: "Warehouse", Width: 20},
+	{Title: "Warehouse", Width: 30},
 }
 
 // New starts the TUI with a known project and pre-loaded data.
