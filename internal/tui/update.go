@@ -676,18 +676,6 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				)
 			}
 			return m, nil
-		case "F":
-			// Force every warehouse in the current project to reconcile
-			// now. The freight list itself is reloaded by the 5s tick;
-			// the controller's actual freight-discovery work is
-			// asynchronous, so a same-tick reload usually wouldn't see
-			// anything new.
-			if m.project == "" || m.client == nil {
-				return m, nil
-			}
-			m.yankedMessage = "refreshing warehouses in " + m.project + "…"
-			m.yankedAt = time.Now()
-			return m, refreshWarehousesCmd(m.client, m.project)
 		case "left":
 			// In full-screen details mode, arrows scroll the panel
 			// regardless of the structural view behind it. Otherwise
@@ -772,17 +760,25 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ctxFilter.Focus()
 			return m, textinput.Blink
 		case "R":
-			// Inline re-login for the current context. Only meaningful when
-			// the auth banner is up; otherwise the existing session is fine
-			// and `R` does nothing (avoids surprising the user).
-			if !m.authExpired {
+			// Dual-purpose: when the auth banner is up, R re-runs SSO
+			// for the current context. Otherwise it asks every warehouse
+			// in the current project to reconcile so freight discovery
+			// runs without waiting for the next poll interval. Reconcile
+			// is asynchronous server-side; the 5s tick picks up any new
+			// freight on a subsequent QueryFreight.
+			if m.authExpired {
+				cmd, ok := m.startReloginCurrentContext()
+				if !ok {
+					return m, nil
+				}
+				return m, cmd
+			}
+			if m.project == "" || m.client == nil {
 				return m, nil
 			}
-			cmd, ok := m.startReloginCurrentContext()
-			if !ok {
-				return m, nil
-			}
-			return m, cmd
+			m.yankedMessage = "refreshing warehouses in " + m.project + "…"
+			m.yankedAt = time.Now()
+			return m, refreshWarehousesCmd(m.client, m.project)
 		case "v":
 			m.detailsOnly = !m.detailsOnly
 			return m, nil
