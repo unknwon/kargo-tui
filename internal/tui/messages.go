@@ -111,6 +111,95 @@ type contextLoginMsg struct {
 	err  error
 }
 
+// contextSwitchedMsg carries every piece of data the model needs to
+// move into a freshly-selected context: the rebuilt client, the
+// resolved default project (auto-picked when exactly one exists), the
+// discovered Argo shard table, and the initial deploys/freight load.
+// Bundling them into a single message means the reducer transitions
+// to the running phase exactly once, in a known-good state, instead
+// of stitching together five different in-flight results.
+type contextSwitchedMsg struct {
+	name           string
+	client         *kargo.Client
+	defaultProject string
+	shards         kargo.ArgoCDShards
+	projectList    []string
+	deploys        []kargo.Stage
+	freights       []kargo.Freight
+	err            error
+}
+
+// contextSwitchCmd does every blocking step of a context switch on a
+// goroutine (build client + prime token via the supplied builder,
+// discover shards, pick default project, preload deploys/freights)
+// and streams human-readable progress via the loginStatusMsg channel
+// so the picker can show what it's doing instead of looking frozen.
+// Cancellation is on a best-effort basis — the builder runs to
+// completion and the result message is still posted, but a stale
+// message lands in a reducer that has already moved on and is
+// dropped.
+func contextSwitchCmd(
+	build func(string) (*kargo.Client, string, error),
+	name string,
+	cachedShards kargo.ArgoCDShards,
+	send func(tea.Msg),
+) tea.Cmd {
+	return func() tea.Msg {
+		report := func(s string) {
+			if send != nil {
+				send(loginStatusMsg(s))
+			}
+		}
+		report("Building client for " + name + "…")
+		client, defaultProject, err := build(name)
+		if err != nil {
+			return contextSwitchedMsg{name: name, err: err}
+		}
+
+		shards := cachedShards
+		if shards == nil {
+			report("Discovering Argo CD shards…")
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			shards, _ = client.DiscoverArgoCDShards(ctx)
+			cancel()
+		}
+
+		var projects []string
+		if defaultProject == "" {
+			report("Listing projects…")
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ps, perr := client.ListProjects(ctx)
+			cancel()
+			if perr == nil {
+				projects = ps
+				if len(ps) == 1 {
+					defaultProject = ps[0]
+				}
+			}
+		}
+
+		var deploys []kargo.Stage
+		var freights []kargo.Freight
+		if defaultProject != "" {
+			report("Loading project " + defaultProject + "…")
+			client.SetProject(defaultProject)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			deploys, _ = client.ListStages(ctx, defaultProject)
+			freights, _ = client.ListFreight(ctx, defaultProject)
+			cancel()
+		}
+		return contextSwitchedMsg{
+			name:           name,
+			client:         client,
+			defaultProject: defaultProject,
+			shards:         shards,
+			projectList:    projects,
+			deploys:        deploys,
+			freights:       freights,
+		}
+	}
+}
+
 // loginStatusMsg lets the SSO goroutine report progress (e.g. the auth URL
 // to visit, "waiting for callback") back to the picker view without ending
 // the whole login operation. The picker just stores the latest text.

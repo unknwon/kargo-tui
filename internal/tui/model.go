@@ -538,27 +538,3 @@ func (m Model) WithArgoShards(contextName string, shards kargo.ArgoCDShards) Mod
 	}
 	return m
 }
-
-// loadArgoShardsCached returns the shard table for the named context.
-// Reuses a cached copy when present so flipping between contexts
-// doesn't re-pay the GetConfig round trip; on a cache miss, fetches
-// synchronously (the only call site already runs in the model
-// reducer, where blocking briefly is fine and beats the previous
-// async cmd that intermittently never delivered its message).
-func (m *Model) loadArgoShardsCached(client *kargo.Client, contextName string) kargo.ArgoCDShards {
-	if m.argoShardsCache == nil {
-		m.argoShardsCache = make(map[string]kargo.ArgoCDShards)
-	}
-	if sh, ok := m.argoShardsCache[contextName]; ok {
-		return sh
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	sh, err := client.DiscoverArgoCDShards(ctx)
-	if err != nil {
-		// Don't cache failures so a retry through the picker can recover.
-		return nil
-	}
-	m.argoShardsCache[contextName] = sh
-	return sh
-}

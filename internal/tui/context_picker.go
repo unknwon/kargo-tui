@@ -4,11 +4,11 @@ import (
 	"context"
 	"slices"
 	"strings"
-	"time"
 
-	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"unknwon.dev/kargo-tui/internal/kargo"
 )
 
 // updateContextPicker handles input while the context picker is active. It
@@ -41,6 +41,61 @@ func (m Model) updateContextPicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case loginStatusMsg:
 		m.ctxLoginStatus = string(msg)
 		return m, nil
+
+	case contextSwitchedMsg:
+		m.ctxLoggingIn = false
+		m.ctxLoginStatus = ""
+		m.ctxLoginCancel = nil
+		if msg.err != nil {
+			m.ctxError = msg.err
+			return m, nil
+		}
+		// Apply the freshly-loaded state in one atomic transition so
+		// the model never renders a half-switched view. The old
+		// stage-watch goroutine is stopped here (restartStageWatch
+		// cancels any in-flight watch before starting a fresh one
+		// against the new client + project).
+		m.client = msg.client
+		m.contextName = msg.name
+		m.project = msg.defaultProject
+		m.deploys = msg.deploys
+		m.freights = msg.freights
+		m.visibleDeploys = nil
+		m.visibleFreights = nil
+		m.lastDeployRows = nil
+		m.lastFreightRows = nil
+		m.deploysError = nil
+		m.freightsError = nil
+		m.argoShards = msg.shards
+		if m.argoShardsCache == nil {
+			m.argoShardsCache = make(map[string]kargo.ArgoCDShards)
+		}
+		if msg.shards != nil {
+			m.argoShardsCache[msg.name] = msg.shards
+		}
+		if msg.defaultProject != "" {
+			m.phase = phaseRunning
+			m.refreshRows()
+			m.refreshPanel()
+			m.restartStageWatch()
+			return m, tickCmd()
+		}
+		// Multiple (or zero) projects: drop the user into the project
+		// picker so they can choose. projectList from the cmd is
+		// non-nil only when ListProjects succeeded; on failure we let
+		// loadProjectsCmd retry from the picker the way it always has.
+		m.phase = phasePickingProject
+		m.nsLoading = msg.projectList == nil
+		m.nsCursor = 0
+		m.nsExplicit = true
+		m.nsFilter.SetValue("")
+		m.nsFilter.Focus()
+		if msg.projectList != nil {
+			m.projects = msg.projectList
+			m.nsLoading = false
+			return m, nil
+		}
+		return m, loadProjectsCmd(msg.client)
 
 	case contextLoginMsg:
 		m.ctxLoggingIn = false
@@ -173,60 +228,21 @@ func (m Model) switchContext(name string) (Model, tea.Cmd) {
 		m.phase = phaseRunning
 		return m, nil
 	}
-	client, defaultProject, err := m.ctxBuilder(name)
-	if err != nil {
-		m.ctxError = err
-		return m, nil
-	}
-	m.client = client
-	m.contextName = name
-	m.project = defaultProject
-	m.deploys = nil
-	m.freights = nil
-	m.visibleDeploys = nil
-	m.visibleFreights = nil
-	m.lastDeployRows = nil
-	m.lastFreightRows = nil
-	m.deploysError = nil
-	m.freightsError = nil
-	m.argoShards = nil
-
-	m.argoShards = m.loadArgoShardsCached(client, name)
-	// Mirror the startup auto-select: when the context has no saved
-	// default project, fetch the list synchronously and pick the only
-	// one when there's exactly one. The picker only opens for the
-	// ambiguous (0 or 2+) case. Pressing p from the running view always
-	// reopens the picker explicitly.
-	if defaultProject == "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		ps, err := client.ListProjects(ctx)
-		cancel()
-		if err == nil && len(ps) == 1 {
-			defaultProject = ps[0]
-		}
-	}
-	if defaultProject != "" {
-		client.SetProject(defaultProject)
-		m.project = defaultProject
-		m.phase = phaseRunning
-		m.refreshRows()
-		m.refreshPanel()
-		m.restartStageWatch()
-		m.loading = true
-		return m, tea.Batch(
-			loadDeploysCmd(client, defaultProject),
-			loadFreightsCmd(client, defaultProject),
-			tickCmd(),
-		)
-	}
-
-	m.phase = phasePickingProject
-	m.nsLoading = true
-	m.nsCursor = 0
-	m.nsExplicit = true
-	m.nsFilter.SetValue("")
-	m.nsFilter.Focus()
-	return m, tea.Batch(loadProjectsCmd(client), textinput.Blink)
+	// Stay on the context picker with a progress hint while the
+	// blocking work runs on a goroutine. The picker's existing
+	// ctxLoggingIn / ctxLoginStatus rendering is reused so the user
+	// sees "Switching to …" instead of a frozen UI. Reducer transitions
+	// fully into the new context only when contextSwitchedMsg arrives,
+	// so a mid-switch panic or cancellation can't leave the model
+	// half-rebuilt against the old client.
+	m.phase = phasePickingContext
+	m.ctxLoggingIn = true
+	m.ctxAdding = false
+	m.ctxError = nil
+	m.ctxLoginStatus = "Switching to " + name + "…"
+	send := m.ctxSend
+	cached := m.argoShardsCache[name]
+	return m, contextSwitchCmd(m.ctxBuilder, name, cached, send)
 }
 
 // ctxBodyHeight returns the row budget the context picker uses for its
