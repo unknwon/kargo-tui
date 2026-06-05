@@ -100,10 +100,11 @@ func helpBindings() []helpRow {
 		{"", "n / N", "next / previous match (graph search)"},
 		{"", "esc", "dismiss details/overlay, then clear filter"},
 		{"Other", "r", "refresh now"},
-		{"", "R", "force warehouses in current project to reconcile (or re-login when session expired)"},
+		{"", "R", "force warehouses in current project to reconcile (server-side freight refresh)"},
 		{"", "M", "toggle mouse capture (off enables terminal text selection)"},
 		{"", "q / ctrl+c", "quit"},
 		{"Contexts", "C", "switch Kargo context (then press + to log in to a new URL)"},
+		{"", "L", "re-login to current context (only when session expired)"},
 	}
 }
 
