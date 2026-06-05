@@ -114,10 +114,14 @@ func tickCmd() tea.Cmd {
 }
 
 // discoverArgoShardsCmd dispatches Argo CD shard discovery via the Kargo
-// server's GetConfig RPC.
+// server's GetConfig RPC. The 15s timeout exists so a wedged bootstrap
+// gate (or a hung RPC) doesn't strand the cmd's goroutine forever and
+// leave the panel showing "not yet attempted" indefinitely.
 func discoverArgoShardsCmd(c *kargo.Client) tea.Cmd {
 	return func() tea.Msg {
-		sh, err := c.DiscoverArgoCDShards(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		sh, err := c.DiscoverArgoCDShards(ctx)
 		return argoShardsMsg{shards: sh, err: err}
 	}
 }
