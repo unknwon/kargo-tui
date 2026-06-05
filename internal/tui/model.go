@@ -119,11 +119,19 @@ type Model struct {
 
 	// filter is the live textinput; filterValues persists each view's filter
 	// string so switching views restores the per-list query.
-	filter        textinput.Model
-	filtering     bool
-	filterValues  map[view]string
-	sort          map[view]sortMode
-	argoShards    kargo.ArgoCDShards
+	filter       textinput.Model
+	filtering    bool
+	filterValues map[view]string
+	sort         map[view]sortMode
+	argoShards   kargo.ArgoCDShards
+	// argoShardsErr is sticky (unlike the transient yank toast) so the
+	// reason discovery failed is visible whenever the user looks at an
+	// Argo app entry. Cleared on a subsequent successful discovery.
+	argoShardsErr error
+	// argoShardsAt records when the last discovery attempt completed,
+	// so the diagnostic hint can say "tried 12s ago" rather than just
+	// "nothing here".
+	argoShardsAt  time.Time
 	yankedMessage string
 	yankedAt      time.Time
 

@@ -255,6 +255,8 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case argoShardsMsg:
 		m.argoShards = msg.shards
+		m.argoShardsErr = msg.err
+		m.argoShardsAt = time.Now()
 		// Surface a transient status so a silent failure to discover any
 		// shards is visible (otherwise the Argo link section just
 		// disappears with no explanation). One toast per discovery is

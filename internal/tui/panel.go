@@ -111,7 +111,15 @@ func (m Model) composePanelLines(innerW int) []string {
 				if base := m.argoShards.BaseURLFor(shardKey, app); base != "" {
 					lines = append(lines, keyStyle.Render("    "+wrap(argoAppURL(base, app), innerW-4)))
 				} else {
-					hint := fmt.Sprintf("(no URL: shardKey=%q shards=%v)", shardKey, shardNames)
+					var hint string
+					switch {
+					case m.argoShardsErr != nil:
+						hint = fmt.Sprintf("(discovery failed %s ago: %v)", ageString(m.argoShardsAt), m.argoShardsErr)
+					case m.argoShardsAt.IsZero():
+						hint = "(shard discovery not yet attempted)"
+					default:
+						hint = fmt.Sprintf("(no URL: shardKey=%q shards=%v · discovered %s ago)", shardKey, shardNames, ageString(m.argoShardsAt))
+					}
 					lines = append(lines, lipgloss.NewStyle().Foreground(muted).Background(bg).Render("    "+wrap(hint, innerW-4)))
 				}
 			}
