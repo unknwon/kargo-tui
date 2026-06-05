@@ -9,6 +9,48 @@ import (
 	"unknwon.dev/kargo-tui/internal/kargo"
 )
 
+// columnPadding is the extra cells we allocate beyond the longest
+// visible value in each column. The bubbles table renders cells flush
+// to their declared Width with no inter-column gutter, so without a
+// small reserve adjacent cells touch and become hard to read when the
+// next column starts with a non-space character.
+const columnPadding = 2
+
+// fitColumnWidths returns a copy of cols whose widths are expanded to
+// fit the longest visible cell value in each column (column 0, the
+// cursor marker, is left at its declared width). The minimum width is
+// max(declared width, header width). This eliminates the trailing "…"
+// truncation the bubbles table inflicts on values that overflow the
+// declared column width — see renderRow in bubbles/table/table.go,
+// which calls ansi.Truncate(value, col.Width, "…") unconditionally.
+//
+// The marker column (index 0) is intentionally left at its small
+// declared width so the visual cursor marker stays flush with the row
+// content instead of floating in a wide gutter.
+func fitColumnWidths(cols []table.Column, rows []table.Row) []table.Column {
+	out := make([]table.Column, len(cols))
+	copy(out, cols)
+	for i := range out {
+		if i == 0 {
+			continue
+		}
+		w := lipgloss.Width(out[i].Title)
+		for _, r := range rows {
+			if i >= len(r) {
+				continue
+			}
+			if rw := lipgloss.Width(r[i]); rw > w {
+				w = rw
+			}
+		}
+		w += columnPadding
+		if w > out[i].Width {
+			out[i].Width = w
+		}
+	}
+	return out
+}
+
 func (m *Model) scrollLeft() {
 	switch m.view {
 	case viewDeploys, viewControlFlow:
@@ -165,6 +207,7 @@ func (m *Model) refreshRows() {
 		for i, r := range rows {
 			slicedRows[i] = sliceRow(r, idx)
 		}
+		slicedCols = fitColumnWidths(slicedCols, slicedRows)
 		// Skip the rebuild entirely when the rendered rows are unchanged.
 		// SetRows + SetColumns reset the table's internal viewport offset
 		// (no public accessor for YOffset), which causes the visible window
@@ -229,6 +272,7 @@ func (m *Model) refreshRows() {
 		for i, r := range rows {
 			slicedRows[i] = sliceRow(r, idx)
 		}
+		slicedCols = fitColumnWidths(slicedCols, slicedRows)
 		// See the deploys branch above for why we skip the rebuild on
 		// equal-row refreshes — preserves the table's internal scroll.
 		if !sameRows(m.lastFreightRows, slicedRows) ||
@@ -295,14 +339,16 @@ func sameRows(a, b []table.Row) bool {
 }
 
 // sameColumnSlice returns true when two column slices have the same titles
-// in the same order. Used to detect when horizontal scroll has changed and
-// we therefore must rebuild the table.
+// and widths in the same order. Width participates because
+// fitColumnWidths grows columns to fit the longest visible value; a
+// width change alone (no title change) still needs to invalidate the
+// rebuild-skip cache so the new column geometry takes effect.
 func sameColumnSlice(a, b []table.Column) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
-		if a[i].Title != b[i].Title {
+		if a[i].Title != b[i].Title || a[i].Width != b[i].Width {
 			return false
 		}
 	}
