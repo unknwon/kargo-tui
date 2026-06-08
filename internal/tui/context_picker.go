@@ -66,6 +66,13 @@ func (m Model) updateContextPicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastFreightRows = nil
 		m.deploysError = nil
 		m.freightsError = nil
+		// Clear the stale "unauthenticated" error that the previous
+		// failing load left painted in the project picker, and drop the
+		// "session expired" banner: contextSwitchCmd just exercised the
+		// new bearer to discover shards and list projects, so we know
+		// the new token works.
+		m.projectsError = nil
+		m.noteAuthSuccess()
 		m.argoShards = msg.shards
 		if m.argoShardsCache == nil {
 			m.argoShardsCache = make(map[string]kargo.ArgoCDShards)
