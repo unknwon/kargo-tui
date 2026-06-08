@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 
@@ -13,9 +12,20 @@ import (
 	"unknwon.dev/kargo-tui/internal/kargo"
 )
 
-// treeNode is one entry in the rendered tree. Each stage appears exactly
-// once, attached to its primary parent (BFS-first, with a flow-correctness
-// lift that re-anchors joins as siblings of the fan-out block they merge).
+// treeNode is one entry in the rendered tree. Layout rules:
+//
+//  1. Every control-flow stage renders as a top-level root. The chain of
+//     control-flow stages is intentionally flattened — Kargo projects
+//     often pipe control-flow stages serially (canary -> tier1 ->
+//     tier1-01 -> ...), and nesting them deepens the indentation past
+//     anything useful.
+//  2. Non-control-flow stages attach as siblings under their nearest
+//     control-flow ancestor, walking up Upstreams BFS-first with an
+//     alphabetical tiebreak. This groups every tenant that descends from
+//     a given control-flow stage together regardless of how they're
+//     chained through intermediate non-CF stages.
+//  3. Non-control-flow stages with no control-flow ancestor become roots
+//     themselves so the tree still renders them.
 type treeNode struct {
 	Stage    *kargo.Stage
 	Prefix   string // pre-built indent + branch glyphs (├─ / └─ / spaces)
@@ -39,157 +49,113 @@ func (m *Model) rebuildTree() {
 		byName[s.Name] = s
 	}
 
-	children := make(map[string][]string)
-	hasParent := make(map[string]bool)
-	for _, s := range stages {
-		for _, up := range s.Upstreams {
-			if _, ok := byName[up]; !ok {
-				continue
-			}
-			children[up] = append(children[up], s.Name)
-			hasParent[s.Name] = true
-		}
-	}
-	for k := range children {
-		sort.Strings(children[k])
-	}
-	var roots []string
-	for _, s := range stages {
-		if !hasParent[s.Name] {
-			roots = append(roots, s.Name)
-		}
-	}
-	sort.Strings(roots)
-
-	// parents[child] = every upstream stage we have data for. Used both
-	// for primaryParent selection and the "is this parent really a sibling
-	// in disguise?" check below.
 	parents := make(map[string][]string)
-	parentSet := make(map[string]map[string]bool)
 	for _, s := range stages {
 		for _, up := range s.Upstreams {
 			if _, ok := byName[up]; !ok {
 				continue
 			}
 			parents[s.Name] = append(parents[s.Name], up)
-			if parentSet[s.Name] == nil {
-				parentSet[s.Name] = make(map[string]bool)
-			}
-			parentSet[s.Name][up] = true
 		}
+		sort.Strings(parents[s.Name])
 	}
 
-	// primaryParent[child] = the parent under which this stage owns its
-	// real subtree. Resolved breadth-first from roots so the alphabetically
-	// first reachable parent wins.
-	primaryParent := make(map[string]string)
-	visited := make(map[string]bool)
-	queue := append([]string(nil), roots...)
-	for _, r := range roots {
-		visited[r] = true
-	}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		for _, c := range children[cur] {
-			if _, ok := primaryParent[c]; !ok {
-				primaryParent[c] = cur
-			}
-			if !visited[c] {
-				visited[c] = true
-				queue = append(queue, c)
+	// layer[name] = longest path from any in-data root. Used purely to
+	// order the rendered control-flow roots (top to bottom) so the tree
+	// reads in promotion direction — canary above tier1, tier1 above
+	// tier1-01, etc. Tiebreaks are alphabetical.
+	layer := make(map[string]int, len(stages))
+	visiting := make(map[string]bool)
+	var depth func(name string) int
+	depth = func(name string) int {
+		if d, ok := layer[name]; ok {
+			return d
+		}
+		if visiting[name] {
+			return 0
+		}
+		visiting[name] = true
+		maxD := 0
+		for _, p := range parents[name] {
+			if d := depth(p) + 1; d > maxD {
+				maxD = d
 			}
 		}
-	}
-
-	// Flow-correctness lift: a stage S with multiple upstream parents is a
-	// join. In graph view, a join sits in its own column downstream of
-	// the fan-out it merges. The tree analogue: find the deepest single
-	// tree-node X whose primary subtree contains every one of S's real
-	// upstreams. That node is the "block" S merges. Attach S as a
-	// sibling of X (i.e. as a child of X's primary parent) so it renders
-	// after the whole fan-out instead of inside it.
-	ancestorChain := func(name string) []string {
-		var chain []string
-		for cur := name; cur != ""; cur = primaryParent[cur] {
-			chain = append(chain, cur)
-		}
-		return chain
+		visiting[name] = false
+		layer[name] = maxD
+		return maxD
 	}
 	for _, s := range stages {
-		ps := parents[s.Name]
-		if len(ps) < 2 {
-			continue
+		depth(s.Name)
+	}
+
+	// nearestCF walks upstreams BFS-first with alphabetical tiebreaks and
+	// returns the first control-flow ancestor it finds (or "" when none
+	// exists). Memoised so a fan-in shape doesn't redo the walk for every
+	// downstream tenant.
+	nearestCF := make(map[string]string, len(stages))
+	nearestCFFor := func(start string) string {
+		if v, ok := nearestCF[start]; ok {
+			return v
 		}
-		original := primaryParent[s.Name]
-		// Compute the deepest ancestor common to every parent's chain.
-		// depthOf is taken from the first parent's chain; identical
-		// ancestor positions yield identical depths across parents because
-		// primaryParent forms a tree.
-		common := make(map[string]int)
-		depthOf := make(map[string]int)
-		firstChain := ancestorChain(ps[0])
-		for i, a := range firstChain {
-			common[a] = 1
-			depthOf[a] = len(firstChain) - i
-		}
-		for _, p := range ps[1:] {
-			seen := make(map[string]bool)
-			for _, a := range ancestorChain(p) {
-				if seen[a] {
-					continue
-				}
-				seen[a] = true
-				if _, ok := common[a]; ok {
-					common[a]++
-				}
+		seen := map[string]bool{start: true}
+		queue := append([]string(nil), parents[start]...)
+		for len(queue) > 0 {
+			cur := queue[0]
+			queue = queue[1:]
+			if seen[cur] {
+				continue
 			}
-		}
-		lca, lcaDepth := "", -1
-		for a, c := range common {
-			if c == len(ps) && depthOf[a] > lcaDepth {
-				lca = a
-				lcaDepth = depthOf[a]
+			seen[cur] = true
+			if s := byName[cur]; s != nil && s.IsControlFlow {
+				nearestCF[start] = cur
+				return cur
 			}
+			queue = append(queue, parents[cur]...)
 		}
-		if lca == "" {
+		nearestCF[start] = ""
+		return ""
+	}
+
+	// primaryParent[child] = the control-flow stage child sits under.
+	// Control-flow stages themselves are roots (primaryParent == "") so
+	// the long CF chain renders flat instead of nesting. Non-CF stages
+	// with no CF ancestor are also roots; they'd otherwise vanish.
+	primaryParent := make(map[string]string)
+	for _, s := range stages {
+		if s.IsControlFlow {
 			continue
 		}
-		// X = deepest node whose subtree contains all of S's parents.
-		// When every parent shares X as their primary parent (the typical
-		// fan-out join), X is the fan-out source itself. Lift S one step
-		// further so it renders alongside X. When parents already share
-		// the LCA as one of themselves (e.g. one parent IS the ancestor
-		// of the others), keep the BFS pick — that handles the
-		// "parent + descendant of that parent" shape elsewhere.
-		if parentSet[s.Name][lca] {
-			continue
-		}
-		newPrimary := primaryParent[lca]
-		if newPrimary == "" || newPrimary == original {
-			continue
-		}
-		primaryParent[s.Name] = newPrimary
-		if !slices.Contains(children[newPrimary], s.Name) {
-			children[newPrimary] = append(children[newPrimary], s.Name)
-			sort.Strings(children[newPrimary])
+		if cf := nearestCFFor(s.Name); cf != "" {
+			primaryParent[s.Name] = cf
 		}
 	}
 
-	// Prune children[] to only entries that render under each parent (i.e.
-	// primaryParent[c] == parent). The filter visibility walk below and
-	// the render walk both consume children[] recursively. Non-primary
-	// edges left over from Upstreams would otherwise inflate the visible
-	// subtree of unrelated ancestors when a downstream join happens to
-	// match the filter.
-	for name, kids := range children {
-		filtered := kids[:0]
-		for _, c := range kids {
-			if primaryParent[c] == name {
-				filtered = append(filtered, c)
-			}
+	// roots = every control-flow stage plus every non-CF stage with no
+	// CF ancestor. Ordered by layer (promotion direction), then name.
+	var roots []string
+	for _, s := range stages {
+		if s.IsControlFlow || primaryParent[s.Name] == "" {
+			roots = append(roots, s.Name)
 		}
-		children[name] = filtered
+	}
+	sort.Slice(roots, func(i, j int) bool {
+		li, lj := layer[roots[i]], layer[roots[j]]
+		if li != lj {
+			return li < lj
+		}
+		return roots[i] < roots[j]
+	})
+
+	// children[parent] = stages attached under parent in the rendered tree,
+	// alphabetically ordered. Only primary edges populate this map, so the
+	// recursive walk below produces a strict tree (every stage appears once).
+	children := make(map[string][]string)
+	for name, p := range primaryParent {
+		children[p] = append(children[p], name)
+	}
+	for k := range children {
+		sort.Strings(children[k])
 	}
 
 	if m.treeExpanded == nil {
@@ -281,9 +247,7 @@ func (m *Model) rebuildTree() {
 			if !isVisible(c) {
 				continue
 			}
-			if primaryParent[c] == name {
-				primaryKids = append(primaryKids, c)
-			}
+			primaryKids = append(primaryKids, c)
 		}
 		hasKids := len(primaryKids) > 0
 		expanded := m.treeExpanded[name]
