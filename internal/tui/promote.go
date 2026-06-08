@@ -67,6 +67,14 @@ func (m *Model) openPromoteOverlay(stage *kargo.Stage) {
 	if stage == nil {
 		return
 	}
+	// Control-flow stages have no promotion template, so PromoteToStage
+	// would always be rejected server-side with "has no promotion template".
+	// The only meaningful promote action on a CF stage is fan-out to its
+	// downstream subscribers, mirroring what the Kargo web UI surfaces.
+	if stage.IsControlFlow {
+		m.openPromoteDownstreamOverlay(stage)
+		return
+	}
 	m.overlay = overlayPromote
 	m.overlayTitle = "Promote · " + stage.Name
 	m.promoteStage = stage.Name

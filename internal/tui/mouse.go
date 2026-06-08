@@ -260,15 +260,17 @@ func (m *Model) openMenuForStage(x, y int, s *kargo.Stage) {
 			m.openDiffOverlayForStage(&stage)
 			return nil
 		}},
-		{label: "Promote", action: func(m *Model) tea.Cmd {
+	}
+	if !stage.IsControlFlow {
+		items = append(items, menuItem{label: "Promote", action: func(m *Model) tea.Cmd {
 			m.openPromoteOverlay(&stage)
 			return nil
-		}},
-		{label: "Promote downstream", action: func(m *Model) tea.Cmd {
-			m.openPromoteDownstreamOverlay(&stage)
-			return nil
-		}},
+		}})
 	}
+	items = append(items, menuItem{label: "Promote downstream", action: func(m *Model) tea.Cmd {
+		m.openPromoteDownstreamOverlay(&stage)
+		return nil
+	}})
 	if !stage.IsControlFlow {
 		items = append(items, menuItem{label: "Open in Argo CD", action: func(m *Model) tea.Cmd {
 			m.openArgoCDForStage(&stage)
