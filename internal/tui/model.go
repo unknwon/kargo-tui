@@ -34,6 +34,23 @@ const (
 	viewGraph
 )
 
+// String returns a stable name for trace attributes and debug logs.
+func (v view) String() string {
+	switch v {
+	case viewDeploys:
+		return "deploys"
+	case viewFreights:
+		return "freights"
+	case viewControlFlow:
+		return "controlFlow"
+	case viewTree:
+		return "tree"
+	case viewGraph:
+		return "graph"
+	}
+	return "unknown"
+}
+
 type phase int
 
 const (
@@ -41,6 +58,18 @@ const (
 	phasePickingProject
 	phasePickingContext
 )
+
+func (p phase) String() string {
+	switch p {
+	case phaseRunning:
+		return "running"
+	case phasePickingProject:
+		return "pickingProject"
+	case phasePickingContext:
+		return "pickingContext"
+	}
+	return "unknown"
+}
 
 type overlayMode int
 

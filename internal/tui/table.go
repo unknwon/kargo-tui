@@ -1,12 +1,15 @@
 package tui
 
 import (
+	"context"
 	"strings"
 
 	"charm.land/bubbles/v2/table"
 	"charm.land/lipgloss/v2"
+	"go.opentelemetry.io/otel/attribute"
 
 	"unknwon.dev/kargo-tui/internal/kargo"
+	"unknwon.dev/kargo-tui/internal/tracing"
 )
 
 // columnPadding is the extra cells we allocate beyond the longest
@@ -190,6 +193,15 @@ func maxColOffset(total int) int {
 }
 
 func (m *Model) refreshRows() {
+	_, span := tracing.Start(context.Background(), "refreshRows")
+	defer span.End()
+	if span.IsRecording() {
+		span.SetAttributes(
+			attribute.Stringer("view", m.view),
+			attribute.Int("deploys.count", len(m.deploys)),
+			attribute.Int("freights.count", len(m.freights)),
+		)
+	}
 	q := strings.ToLower(strings.TrimSpace(m.filter.Value()))
 
 	// The tree and graph views need no filter/sort/column logic — just

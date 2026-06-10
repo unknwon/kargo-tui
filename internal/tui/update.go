@@ -7,8 +7,10 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"go.opentelemetry.io/otel/attribute"
 
 	"unknwon.dev/kargo-tui/internal/kargo"
+	"unknwon.dev/kargo-tui/internal/tracing"
 )
 
 // startReloginCurrentContext launches the SSO re-login flow against the
@@ -60,6 +62,17 @@ func (m *Model) startReloginCurrentContext() (tea.Cmd, bool) {
 // returned. The model can be partially-updated but the popup always
 // shows, which is the property we care about.
 func (m Model) Update(msg tea.Msg) (out tea.Model, cmd tea.Cmd) {
+	_, span := tracing.Start(context.Background(), "Update")
+	defer span.End()
+	if span.IsRecording() {
+		span.SetAttributes(
+			attribute.String("msg.type", fmt.Sprintf("%T", msg)),
+			attribute.Stringer("view", m.view),
+			attribute.Stringer("phase", m.phase),
+			attribute.Bool("filtering", m.filtering),
+			attribute.Bool("detailsOnly", m.detailsOnly),
+		)
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			m.panicMessage = formatPanic(r)

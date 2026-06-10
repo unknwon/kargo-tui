@@ -13,6 +13,7 @@ import (
 	"unknwon.dev/kargo-tui/internal/auth"
 	"unknwon.dev/kargo-tui/internal/config"
 	"unknwon.dev/kargo-tui/internal/kargo"
+	"unknwon.dev/kargo-tui/internal/tracing"
 	"unknwon.dev/kargo-tui/internal/tui"
 )
 
@@ -60,6 +61,19 @@ func main() {
 // Kargo context. If no context is configured, prompt to log in. If multiple
 // are configured and none is selected, prompt the user to pick one.
 func runTUI(ctx context.Context, cmd *cli.Command) error {
+	// Tracing is opt-in via KARGO_TUI_TRACE_FILE; unset → noop.
+	traceShutdown, err := tracing.Init("kargo-tui", buildVersion)
+	if err != nil {
+		return errors.Wrap(err, "init tracing")
+	}
+	defer func() {
+		// Use a fresh context for shutdown so a cancelled parent doesn't
+		// drop in-flight spans before the batched exporter can flush.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = traceShutdown(shutdownCtx)
+	}()
+
 	cfg, err := config.Load()
 	if err != nil {
 		return errors.Wrap(err, "load config")

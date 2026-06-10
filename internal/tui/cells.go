@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"image/color"
 	"sort"
@@ -10,8 +11,10 @@ import (
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
+	"go.opentelemetry.io/otel/attribute"
 
 	"unknwon.dev/kargo-tui/internal/kargo"
+	"unknwon.dev/kargo-tui/internal/tracing"
 )
 
 // paintFrame composites our content onto a buffer of width × height,
@@ -31,11 +34,20 @@ import (
 // width and height are typically m.width / m.height. width <= 0
 // returns the content unchanged.
 func paintFrame(content string, width, height int) string {
+	_, span := tracing.Start(context.Background(), "paintFrame")
+	defer span.End()
 	if width <= 0 {
 		return content
 	}
 	if height < 1 {
 		height = strings.Count(content, "\n") + 1
+	}
+	if span.IsRecording() {
+		span.SetAttributes(
+			attribute.Int("width", width),
+			attribute.Int("height", height),
+			attribute.Int("content.bytes", len(content)),
+		)
 	}
 	scr := uv.NewScreenBuffer(width, height)
 	uv.NewStyledString(content).Draw(scr, scr.Bounds())
