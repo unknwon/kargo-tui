@@ -139,6 +139,28 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// scrollFlushMsg must drain even when the user changed phase between
+	// pressing a wheel/arrow and the 16ms tick firing. If the picker
+	// updates ate the message instead, scrollFlushPending would stay true
+	// forever and the next listview scroll would never schedule a new
+	// tick. Always clear the state, then route the actual cursor move
+	// only when we're still on a listview.
+	if _, ok := msg.(scrollFlushMsg); ok {
+		delta := m.pendingScroll
+		m.pendingScroll = 0
+		m.scrollFlushPending = false
+		if delta == 0 {
+			return m, nil
+		}
+		switch m.view {
+		case viewDeploys, viewControlFlow, viewFreights:
+			if m.phase == phaseRunning {
+				m.moveCursor(delta)
+			}
+		}
+		return m, nil
+	}
+
 	if m.phase == phasePickingProject {
 		return m.updatePicker(msg)
 	}
@@ -358,25 +380,6 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.yankedMessage = fmt.Sprintf("refreshed %d warehouse(s) in %s", msg.refreshed, msg.project)
 		}
 		m.yankedAt = time.Now()
-		return m, nil
-
-	case scrollFlushMsg:
-		// Drain whatever wheel/arrow notches arrived during the coalesce
-		// window. Cleared even when the view changed mid-window so a stale
-		// flush from a previous list doesn't fire moveCursor on the new
-		// one.
-		delta := m.pendingScroll
-		m.pendingScroll = 0
-		m.scrollFlushPending = false
-		if delta == 0 {
-			return m, nil
-		}
-		// Only the listviews use the coalesce path. Tree/graph/details
-		// still take their own routes and never push into pendingScroll.
-		switch m.view {
-		case viewDeploys, viewControlFlow, viewFreights:
-			m.moveCursor(delta)
-		}
 		return m, nil
 
 	case tea.MouseWheelMsg:
