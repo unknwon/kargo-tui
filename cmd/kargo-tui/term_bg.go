@@ -37,12 +37,19 @@ func detectTerminalBackgroundDark() (isDark bool, ok bool) {
 	}
 
 	// Put the tty in raw mode briefly so the reply isn't line-buffered
-	// or echoed. Restore on the way out.
+	// or echoed. Restore on the way out, unless the timeout path
+	// already restored and closed the fd (in which case `fd` may be
+	// recycled, so we must not call Restore on it again).
 	prev, err := term.MakeRaw(fd)
 	if err != nil {
 		return true, false
 	}
-	defer func() { _ = term.Restore(fd, prev) }()
+	restored := false
+	defer func() {
+		if !restored {
+			_ = term.Restore(fd, prev)
+		}
+	}()
 
 	// OSC 11 query. The terminal answers with the BEL- or ST-terminated
 	// form: ESC ] 11 ; rgb:RRRR/GGGG/BBBB BEL  (or ESC \).
@@ -53,9 +60,9 @@ func detectTerminalBackgroundDark() (isDark bool, ok bool) {
 	// /dev/tty doesn't support SetReadDeadline on macOS (the underlying
 	// fd isn't pollable). Race the blocking read against a timer and
 	// close the fd to abort the read if the terminal never answers
-	// (e.g. tmux without passthrough, ssh into a barebones tty). The
-	// reply has to be consumed here either way — leaving it in the
-	// input buffer would echo to the shell after we exit.
+	// (e.g. tmux without passthrough, ssh into a barebones tty). If
+	// the reply arrives after we give up, bubbletea's input loop will
+	// swallow it once the TUI takes over.
 	done := make(chan []byte, 1)
 	go func() {
 		buf := make([]byte, 64)
@@ -64,7 +71,7 @@ func detectTerminalBackgroundDark() (isDark bool, ok bool) {
 			n, err := f.Read(buf)
 			if n > 0 {
 				got = append(got, buf[:n]...)
-				if strings.ContainsAny(string(got), "\x07") || strings.Contains(string(got), "\x1b\\") {
+				if strings.Contains(string(got), "\x07") || strings.Contains(string(got), "\x1b\\") {
 					done <- got
 					return
 				}
@@ -80,6 +87,11 @@ func detectTerminalBackgroundDark() (isDark bool, ok bool) {
 	select {
 	case got = <-done:
 	case <-time.After(200 * time.Millisecond):
+		// Restore the tty mode before closing so the deferred
+		// term.Restore doesn't run against a closed (and potentially
+		// recycled) fd.
+		_ = term.Restore(fd, prev)
+		restored = true
 		_ = f.Close()
 		<-done
 		return true, false
@@ -89,9 +101,9 @@ func detectTerminalBackgroundDark() (isDark bool, ok bool) {
 	if perr != nil {
 		return true, false
 	}
-	// Standard relative-luminance check, identical to the one ultraviolet
-	// uses internally: convert 8-bit RGB to linear, take the perceptual
-	// luma, dark if < 0.5.
+	// Rough BT.601 luma on gamma-encoded sRGB. Not WCAG-correct (which
+	// would linearize first and use Rec. 709 weights) but good enough
+	// to split dark vs light themes.
 	luma := (0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)) / 255.0
 	return luma < 0.5, true
 }
@@ -107,8 +119,8 @@ func parseOSC11Reply(s string) (r, g, b uint8, err error) {
 	}
 	tail := s[idx+len("rgb:"):]
 	// Cut off at the terminator.
-	for _, term := range []string{"\x07", "\x1b\\"} {
-		if i := strings.Index(tail, term); i >= 0 {
+	for _, end := range []string{"\x07", "\x1b\\"} {
+		if i := strings.Index(tail, end); i >= 0 {
 			tail = tail[:i]
 		}
 	}

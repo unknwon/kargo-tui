@@ -855,7 +855,6 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.theme == themeLight {
 				next = themeDark
 			}
-			m.themeUserSet = true
 			m.setTheme(next)
 			if next == themeLight {
 				m.yankedMessage = "theme: Pierre Light"

@@ -291,12 +291,9 @@ type Model struct {
 	// globally.
 	mouseEnabled bool
 
-	// theme is the active palette. themeUserSet flips to true the
-	// moment the user presses `T`, so a late-arriving
-	// BackgroundColorMsg from the terminal can no longer override a
-	// manual choice.
-	theme        themeMode
-	themeUserSet bool
+	// theme is the active palette, toggled by `T` and seeded once at
+	// startup from the OSC 11 background-color probe in main.
+	theme themeMode
 }
 
 // menuItem is one row in the right-click context menu. Label is shown;

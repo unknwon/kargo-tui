@@ -78,8 +78,8 @@ func paletteFor(mode themeMode) palette {
 // WithDetectedDark applies an auto-detected light theme when the
 // caller (main.go via OSC 11) determined the terminal background is
 // light. No-op when the terminal is dark since themeDark is the
-// default. Call before Run; later T toggles still override this since
-// themeUserSet stays false.
+// default. Call before Run. The user can still override the result by
+// pressing T at any time.
 func (m Model) WithDetectedDark(dark bool) Model {
 	if dark {
 		return m
