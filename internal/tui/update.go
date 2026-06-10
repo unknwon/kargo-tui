@@ -360,6 +360,25 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.yankedAt = time.Now()
 		return m, nil
 
+	case scrollFlushMsg:
+		// Drain whatever wheel/arrow notches arrived during the coalesce
+		// window. Cleared even when the view changed mid-window so a stale
+		// flush from a previous list doesn't fire moveCursor on the new
+		// one.
+		delta := m.pendingScroll
+		m.pendingScroll = 0
+		m.scrollFlushPending = false
+		if delta == 0 {
+			return m, nil
+		}
+		// Only the listviews use the coalesce path. Tree/graph/details
+		// still take their own routes and never push into pendingScroll.
+		switch m.view {
+		case viewDeploys, viewControlFlow, viewFreights:
+			m.moveCursor(delta)
+		}
+		return m, nil
+
 	case tea.MouseWheelMsg:
 		// Mouse wheel scrolls whichever surface is currently visible:
 		// help and the logs/diff overlay both have their own viewport, the
@@ -972,6 +991,31 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.panelVP.GotoBottom()
 				return m, nil
 			}
+		}
+	}
+
+	// Coalesce listview arrow-key scrolling. Wheel events arrive on
+	// alt-screen as bare arrow keys (mouse capture is off so terminal
+	// copy/paste keeps working). With sustained wheel input that's ~60
+	// events/sec, well above the per-frame work budget, so we batch the
+	// deltas and apply them on a 16ms timer instead of dispatching each
+	// notch into the bubbles table individually.
+	if kp, ok := msg.(tea.KeyPressMsg); ok {
+		switch kp.String() {
+		case "up", "k":
+			m.pendingScroll--
+			if !m.scrollFlushPending {
+				m.scrollFlushPending = true
+				return m, scrollFlushCmd()
+			}
+			return m, nil
+		case "down", "j":
+			m.pendingScroll++
+			if !m.scrollFlushPending {
+				m.scrollFlushPending = true
+				return m, scrollFlushCmd()
+			}
+			return m, nil
 		}
 	}
 

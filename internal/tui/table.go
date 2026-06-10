@@ -85,10 +85,15 @@ func (m *Model) scrollRight() {
 // a visible marker. The bubbles table's Selected style is a row-level wrapper
 // that loses to per-cell ANSI foreground codes on most terminals, so an
 // in-cell glyph guarantees a visible cursor indicator.
+//
+// Used on cold paths (data load, view switch, mouse click) where the
+// previous marker position is unknown so a full sweep is needed. For the
+// hot mouse-wheel path use shiftCursorMarker, which only touches the two
+// affected rows and avoids the second UpdateViewport that SetRows triggers.
 func applyCursorMarker(t *table.Model) {
 	rows := t.Rows()
 	cur := t.Cursor()
-	marked := lipgloss.NewStyle().Foreground(selected).Bold(true).Render(cursorMarkerGlyph)
+	marked := cursorMarkerCell()
 	blank := " "
 	for i := range rows {
 		if len(rows[i]) == 0 {
@@ -101,6 +106,36 @@ func applyCursorMarker(t *table.Model) {
 		}
 	}
 	t.SetRows(rows)
+}
+
+// cursorMarkerCell returns the styled marker glyph for column 0.
+func cursorMarkerCell() string {
+	return lipgloss.NewStyle().Foreground(selected).Bold(true).Render(cursorMarkerGlyph)
+}
+
+// shiftCursorMarker repaints column 0 for a cursor moving from oldIdx to
+// newIdx, touching only those two rows. Because t.Rows() returns the
+// table's backing slice (not a copy), the in-place writes are visible to
+// the next UpdateViewport call — and we deliberately do NOT call SetRows,
+// so the caller's own MoveUp/MoveDown supplies the single UpdateViewport
+// for this cursor move. The previous applyCursorMarker path ran one
+// UpdateViewport on the move and a second on SetRows, doubling
+// per-wheel-notch render work.
+//
+// Safe to call with equal indices or out-of-range values; both cases are
+// effectively no-ops.
+func shiftCursorMarker(t *table.Model, oldIdx, newIdx int) {
+	rows := t.Rows()
+	n := len(rows)
+	if n == 0 {
+		return
+	}
+	if oldIdx >= 0 && oldIdx < n && len(rows[oldIdx]) > 0 {
+		rows[oldIdx][0] = " "
+	}
+	if newIdx >= 0 && newIdx < n && len(rows[newIdx]) > 0 {
+		rows[newIdx][0] = cursorMarkerCell()
+	}
 }
 
 // horizontalSlice returns the column index window to render. Columns 0

@@ -104,6 +104,19 @@ func tickCmd() tea.Cmd {
 	return tea.Tick(refreshInterval, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
+// scrollFlushMsg drains pending listview wheel/arrow scroll deltas. See
+// the pendingScroll comment on Model.
+type scrollFlushMsg struct{}
+
+// scrollFlushInterval is the coalescing window. 16ms ≈ one 60fps frame,
+// so wheel notches that arrive faster than the display can refresh
+// collapse into a single bubbles UpdateViewport + View() pass.
+const scrollFlushInterval = 16 * time.Millisecond
+
+func scrollFlushCmd() tea.Cmd {
+	return tea.Tick(scrollFlushInterval, func(time.Time) tea.Msg { return scrollFlushMsg{} })
+}
+
 // contextLoginMsg carries the result of an in-app SSO login triggered from
 // the context picker.
 type contextLoginMsg struct {

@@ -117,6 +117,17 @@ type Model struct {
 	deploysColOffset  int
 	freightsColOffset int
 
+	// Listview scroll-coalescing state. Mouse wheel events arrive every
+	// ~15ms during sustained scroll; each one normally triggers a bubbles
+	// UpdateViewport, an applyCursorMarker pass, and a full bubbletea
+	// View()/paintFrame, totalling ~15ms of work — right at the input
+	// rate, so the input queue saturates and scroll feels choppy. The
+	// coalesce path accumulates the delta and flushes once per ~16ms tick
+	// (60fps ceiling) so the user pays one render for every burst of
+	// notches that lands within a frame instead of one render per notch.
+	pendingScroll      int
+	scrollFlushPending bool
+
 	// filter is the live textinput; filterValues persists each view's filter
 	// string so switching views restores the per-list query.
 	filter       textinput.Model
