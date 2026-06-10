@@ -96,6 +96,11 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 
 	ctxNames, ctxBuilder, ctxLogin, ctxRelogin := contextSwitcher(cfg)
 
+	// Detect the terminal's background brightness while we're still in
+	// cooked mode. Doing this after bubbletea takes over would just
+	// echo back the bg color the renderer itself set.
+	termDark, termDetected := detectTerminalBackgroundDark()
+
 	// Preload the Argo shard table synchronously so the panel can
 	// render links from the first frame. Failure is non-fatal: the
 	// model just gets a nil map and falls back to no-link rendering.
@@ -106,6 +111,9 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 		m := tui.NewWithPicker(client, active.Name).
 			WithArgoShards(active.Name, shards).
 			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin)
+		if termDetected {
+			m = m.WithDetectedDark(termDark)
+		}
 		if authExpired {
 			m = m.WithAuthExpired("saved session expired")
 		}
@@ -123,6 +131,9 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 		m := tui.New(client, active.Name, project, deploys, freights).
 			WithArgoShards(active.Name, shards).
 			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin)
+		if termDetected {
+			m = m.WithDetectedDark(termDark)
+		}
 		if authExpired {
 			m = m.WithAuthExpired("saved session expired")
 		}

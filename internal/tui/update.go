@@ -129,6 +129,16 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Bubble Tea's RequestBackgroundColor is unreliable for auto-detect
+	// here: the renderer writes its own OSC 11 to set the view bg
+	// before our query runs, so the terminal echoes that value back
+	// instead of its native theme. Detection happens in main.go before
+	// the program takes over. We still consume the message so it
+	// doesn't fall through to per-view handlers.
+	if _, ok := msg.(tea.BackgroundColorMsg); ok {
+		return m, nil
+	}
+
 	if m.phase == phasePickingProject {
 		return m.updatePicker(msg)
 	}
@@ -837,6 +847,19 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.yankedMessage = "mouse capture on"
 			} else {
 				m.yankedMessage = "mouse capture off (terminal selection enabled)"
+			}
+			m.yankedAt = time.Now()
+			return m, nil
+		case "T":
+			next := themeLight
+			if m.theme == themeLight {
+				next = themeDark
+			}
+			m.setTheme(next)
+			if next == themeLight {
+				m.yankedMessage = "theme: Pierre Light"
+			} else {
+				m.yankedMessage = "theme: Pierre Dark"
 			}
 			m.yankedAt = time.Now()
 			return m, nil
