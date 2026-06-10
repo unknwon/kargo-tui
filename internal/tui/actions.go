@@ -47,18 +47,27 @@ func (m *Model) setView(v view) {
 // bubbles table's MoveUp/MoveDown rather than SetCursor because those also
 // adjust the viewport's Y-offset — without them the cursor can scroll past
 // the bottom of the visible window when driven by the mouse wheel.
+//
+// The marker is shifted in place BEFORE the Move call so the single
+// UpdateViewport that MoveUp/MoveDown trigger internally sees the new
+// marker positions. This avoids the second UpdateViewport the old
+// applyCursorMarker(t) + SetRows path forced after every wheel notch,
+// which is the dominant cost on long lists.
 func (m *Model) moveCursor(delta int) {
 	t := m.activeTable()
 	if t == nil || len(t.Rows()) == 0 {
 		return
 	}
+	old := t.Cursor()
+	n := len(t.Rows())
+	next := max(0, min(n-1, old+delta))
+	shiftCursorMarker(t, old, next)
 	switch {
 	case delta < 0:
 		t.MoveUp(-delta)
 	case delta > 0:
 		t.MoveDown(delta)
 	}
-	applyCursorMarker(t)
 	m.resetPanelScroll()
 	m.refreshPanel()
 }

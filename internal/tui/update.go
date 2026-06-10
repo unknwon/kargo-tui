@@ -139,6 +139,28 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// scrollFlushMsg must drain even when the user changed phase between
+	// pressing a wheel/arrow and the 16ms tick firing. If the picker
+	// updates ate the message instead, scrollFlushPending would stay true
+	// forever and the next listview scroll would never schedule a new
+	// tick. Always clear the state, then route the actual cursor move
+	// only when we're still on a listview.
+	if _, ok := msg.(scrollFlushMsg); ok {
+		delta := m.pendingScroll
+		m.pendingScroll = 0
+		m.scrollFlushPending = false
+		if delta == 0 {
+			return m, nil
+		}
+		switch m.view {
+		case viewDeploys, viewControlFlow, viewFreights:
+			if m.phase == phaseRunning {
+				m.moveCursor(delta)
+			}
+		}
+		return m, nil
+	}
+
 	if m.phase == phasePickingProject {
 		return m.updatePicker(msg)
 	}
@@ -972,6 +994,31 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.panelVP.GotoBottom()
 				return m, nil
 			}
+		}
+	}
+
+	// Coalesce listview arrow-key scrolling. Wheel events arrive on
+	// alt-screen as bare arrow keys (mouse capture is off so terminal
+	// copy/paste keeps working). With sustained wheel input that's ~60
+	// events/sec, well above the per-frame work budget, so we batch the
+	// deltas and apply them on a 16ms timer instead of dispatching each
+	// notch into the bubbles table individually.
+	if kp, ok := msg.(tea.KeyPressMsg); ok {
+		switch kp.String() {
+		case "up", "k":
+			m.pendingScroll--
+			if !m.scrollFlushPending {
+				m.scrollFlushPending = true
+				return m, scrollFlushCmd()
+			}
+			return m, nil
+		case "down", "j":
+			m.pendingScroll++
+			if !m.scrollFlushPending {
+				m.scrollFlushPending = true
+				return m, scrollFlushCmd()
+			}
+			return m, nil
 		}
 	}
 
