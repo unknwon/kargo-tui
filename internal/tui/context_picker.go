@@ -82,6 +82,12 @@ func (m Model) updateContextPicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.defaultProject != "" {
 			m.phase = phaseRunning
+			// Re-fit tables in case the WindowSizeMsg already landed
+			// during the picker phase (the picker handlers only store
+			// width/height on the model and skip table.SetHeight, so
+			// without this the running view inherits the bubbles default
+			// table size and renders zero visible rows).
+			m.fitTablesToWindow()
 			m.refreshRows()
 			m.refreshPanel()
 			m.restartStageWatch()

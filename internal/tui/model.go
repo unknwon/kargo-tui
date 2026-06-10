@@ -290,6 +290,13 @@ type Model struct {
 	// terminal keeps native text selection and scrollback. Bound to "M"
 	// globally.
 	mouseEnabled bool
+
+	// theme is the active palette. themeUserSet flips to true the
+	// moment the user presses `T`, so a late-arriving
+	// BackgroundColorMsg from the terminal can no longer override a
+	// manual choice.
+	theme        themeMode
+	themeUserSet bool
 }
 
 // menuItem is one row in the right-click context menu. Label is shown;
@@ -381,6 +388,27 @@ func (m *Model) noteAuthSuccess() {
 	if m.stageWatchCancel == nil {
 		m.restartStageWatch()
 	}
+}
+
+// fitTablesToWindow propagates the most recent terminal size onto the
+// deploys/freights tables. Called from picker→running transitions
+// because the picker-phase WindowSizeMsg handler only stores width and
+// height on the model and skips the table resize. Without this the
+// first frame after the transition uses the bubbles default table
+// dimensions and clips every row out of view. No-op when no size
+// message has arrived yet.
+func (m *Model) fitTablesToWindow() {
+	if m.width <= 0 {
+		return
+	}
+	h := m.height - 4
+	if h < 3 {
+		h = 3
+	}
+	m.deploysTable.SetHeight(h)
+	m.deploysTable.SetWidth(m.width)
+	m.freightsTable.SetHeight(h)
+	m.freightsTable.SetWidth(m.width)
 }
 
 // restartStageWatch stops any in-flight WatchStages goroutine and
@@ -497,6 +525,14 @@ func newTable(cols []table.Column) table.Model {
 		table.WithFocused(true),
 		table.WithHeight(20),
 	)
+	restyleTable(&t)
+	return t
+}
+
+// restyleTable re-applies the theme-dependent style block to t. Called
+// both from newTable at construction and from setTheme on every toggle,
+// because table.Styles bakes color values in at SetStyles time.
+func restyleTable(t *table.Model) {
 	st := table.DefaultStyles()
 	st.Header = st.Header.
 		Foreground(normal).Background(bg).Bold(true).
@@ -510,17 +546,17 @@ func newTable(cols []table.Column) table.Model {
 		Bold(true).
 		Reverse(false)
 	t.SetStyles(st)
-	return t
 }
 
 // Init is the Bubble Tea entry point. It dispatches the initial commands —
 // either loading projects for the picker, or starting the refresh ticker
 // for an already-selected project, and kicks off Argo CD shard discovery.
 func (m Model) Init() tea.Cmd {
+	bgQuery := func() tea.Msg { return tea.RequestBackgroundColor() }
 	if m.phase == phasePickingProject {
-		return tea.Batch(loadProjectsCmd(m.client), textinput.Blink)
+		return tea.Batch(loadProjectsCmd(m.client), textinput.Blink, bgQuery)
 	}
-	return tickCmd()
+	return tea.Batch(tickCmd(), bgQuery)
 }
 
 // WithArgoShards preloads the discovered shard table on the model so

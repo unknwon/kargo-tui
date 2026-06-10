@@ -129,6 +129,19 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if bgMsg, ok := msg.(tea.BackgroundColorMsg); ok {
+		// Auto-detect: only adopt the terminal's reported background
+		// when the user hasn't already picked a theme manually via T.
+		if !m.themeUserSet {
+			detected := themeDark
+			if !bgMsg.IsDark() {
+				detected = themeLight
+			}
+			m.setTheme(detected)
+		}
+		return m, nil
+	}
+
 	if m.phase == phasePickingProject {
 		return m.updatePicker(msg)
 	}
@@ -837,6 +850,20 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.yankedMessage = "mouse capture on"
 			} else {
 				m.yankedMessage = "mouse capture off (terminal selection enabled)"
+			}
+			m.yankedAt = time.Now()
+			return m, nil
+		case "T":
+			next := themeLight
+			if m.theme == themeLight {
+				next = themeDark
+			}
+			m.themeUserSet = true
+			m.setTheme(next)
+			if next == themeLight {
+				m.yankedMessage = "theme: Pierre Light"
+			} else {
+				m.yankedMessage = "theme: Pierre Dark"
 			}
 			m.yankedAt = time.Now()
 			return m, nil

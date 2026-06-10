@@ -162,17 +162,7 @@ func (m Model) startWithProject(p string) (Model, tea.Cmd) {
 	m.lastDeployRows = nil
 	m.lastFreightRows = nil
 	m.refreshRows()
-	// Re-fit tables in case window size message already arrived.
-	if m.width > 0 {
-		h := m.height - 4
-		if h < 3 {
-			h = 3
-		}
-		m.deploysTable.SetHeight(h)
-		m.deploysTable.SetWidth(m.width)
-		m.freightsTable.SetHeight(h)
-		m.freightsTable.SetWidth(m.width)
-	}
+	m.fitTablesToWindow()
 	m.refreshPanel()
 	m.restartStageWatch()
 	m.loading = true
