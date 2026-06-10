@@ -129,16 +129,13 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if bgMsg, ok := msg.(tea.BackgroundColorMsg); ok {
-		// Auto-detect: only adopt the terminal's reported background
-		// when the user hasn't already picked a theme manually via T.
-		if !m.themeUserSet {
-			detected := themeDark
-			if !bgMsg.IsDark() {
-				detected = themeLight
-			}
-			m.setTheme(detected)
-		}
+	// Bubble Tea's RequestBackgroundColor is unreliable for auto-detect
+	// here: the renderer writes its own OSC 11 to set the view bg
+	// before our query runs, so the terminal echoes that value back
+	// instead of its native theme. Detection happens in main.go before
+	// the program takes over. We still consume the message so it
+	// doesn't fall through to per-view handlers.
+	if _, ok := msg.(tea.BackgroundColorMsg); ok {
 		return m, nil
 	}
 

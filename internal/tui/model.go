@@ -552,11 +552,10 @@ func restyleTable(t *table.Model) {
 // either loading projects for the picker, or starting the refresh ticker
 // for an already-selected project, and kicks off Argo CD shard discovery.
 func (m Model) Init() tea.Cmd {
-	bgQuery := func() tea.Msg { return tea.RequestBackgroundColor() }
 	if m.phase == phasePickingProject {
-		return tea.Batch(loadProjectsCmd(m.client), textinput.Blink, bgQuery)
+		return tea.Batch(loadProjectsCmd(m.client), textinput.Blink)
 	}
-	return tea.Batch(tickCmd(), bgQuery)
+	return tickCmd()
 }
 
 // WithArgoShards preloads the discovered shard table on the model so

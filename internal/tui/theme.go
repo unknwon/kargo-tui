@@ -75,6 +75,19 @@ func paletteFor(mode themeMode) palette {
 	return pierreDark
 }
 
+// WithDetectedDark applies an auto-detected light theme when the
+// caller (main.go via OSC 11) determined the terminal background is
+// light. No-op when the terminal is dark since themeDark is the
+// default. Call before Run; later T toggles still override this since
+// themeUserSet stays false.
+func (m Model) WithDetectedDark(dark bool) Model {
+	if dark {
+		return m
+	}
+	m.setTheme(themeLight)
+	return m
+}
+
 // setTheme switches the active palette, refreshes the table styles that
 // bake colors in at construction time, and invalidates the graph render
 // cache (its memoized output is colored by the previous palette).
@@ -86,6 +99,12 @@ func (m *Model) setTheme(mode themeMode) {
 	applyTheme(paletteFor(mode))
 	restyleTable(&m.deploysTable)
 	restyleTable(&m.freightsTable)
+	// Per-cell ANSI is baked at row-build time, so the cached rows still
+	// carry the previous palette's colors. Drop the cache so refreshRows
+	// rebuilds and pushes the new palette through immediately.
+	m.lastDeployRows = nil
+	m.lastFreightRows = nil
+	m.refreshRows()
 	if m.graphRender != nil {
 		m.graphRender.valid = false
 	}
