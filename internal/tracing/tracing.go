@@ -13,10 +13,21 @@
 //
 // Not a general-purpose tracing setup. Bubble Tea's Update/View pipeline
 // does not carry a context.Context through the message loop, so spans
-// don't propagate across the Update/View boundary. Each top-level span
-// starts from context.Background and lives for the duration of one
-// Update or one View call. Child spans within that call chain through
-// the returned context like normal.
+// don't propagate across the Update/View boundary: Update starts a span
+// from context.Background and ends it before View runs, which starts its
+// own Background-rooted span. The two trees share no trace_id by design;
+// correlate by timestamp ordering when you need to.
+//
+// Inside one Update or View call, child spans chain in two ways:
+//
+//  1. Code that takes a ctx (refreshRows, the kargo RPCs, the OAuth flow)
+//     receives the Update/View span's ctx as a parameter and starts
+//     children off it normally.
+//  2. Code that cannot reasonably take a ctx (paintFrame, called from 14
+//     render-path methods; composePanelLines, called from both Update
+//     and View) uses the ambient ctx mechanism (SetAmbient/AmbientStart).
+//     Both Update and View install their span ctx via SetAmbient on
+//     entry and restore it via the returned reset closure on exit.
 package tracing
 
 import (
@@ -107,17 +118,28 @@ func Start(ctx context.Context, name string, attrs ...attribute.KeyValue) (conte
 
 // ambientCtx holds a parent context for code paths that cannot thread
 // ctx through their function signatures (e.g. paintFrame, called from
-// 14 render-path methods). The render loop (View) calls SetAmbient at
-// entry and ClearAmbient on exit, so helper spans nested inside View
-// can pick up the parent without us refactoring every render method to
-// take a ctx parameter.
+// 14 render-path methods; composePanelLines, called from both refreshPanel
+// during Update and renderPanel during View). Both Update and View call
+// SetAmbient at entry and defer the returned reset closure, so helper
+// spans nested inside either pick up the right parent without us
+// refactoring every render method to take a ctx parameter.
 //
-// Safe because bubbletea calls Update/View serially on a single
-// goroutine. The variable is only mutated from that goroutine.
+// Safe because bubbletea calls Update/View serially on the same goroutine
+// (see model.Update at bubbletea/v2 tea.go:872, immediately followed by
+// p.render → model.View on the same goroutine). The variable is only
+// mutated and read from that goroutine.
 //
-// Callers MUST pair SetAmbient with ClearAmbient (typically via defer)
-// so a leftover ambient ctx doesn't parent unrelated spans from a later
-// loop iteration.
+// WARNING for future contributors: do NOT read ambientCtx from a Cmd
+// goroutine or any other off-main goroutine. If you find yourself wanting
+// the ambient ctx from a goroutine spawned by a tea.Cmd, capture the ctx
+// in the Cmd's closure at construction time instead. Reading ambientCtx
+// off-thread is a data race and would also pick up whatever Update/View
+// happened to be running at that instant, which is almost never what you
+// want.
+//
+// Callers MUST pair SetAmbient with its returned reset closure (typically
+// via defer) so a leftover ambient ctx doesn't parent unrelated spans
+// from a later loop iteration.
 var ambientCtx context.Context
 
 // SetAmbient installs ctx as the parent for AmbientStart calls. Returns
