@@ -62,8 +62,13 @@ func (m *Model) startReloginCurrentContext() (tea.Cmd, bool) {
 // returned. The model can be partially-updated but the popup always
 // shows, which is the property we care about.
 func (m Model) Update(msg tea.Msg) (out tea.Model, cmd tea.Cmd) {
-	_, span := tracing.Start(context.Background(), "Update")
+	ctx, span := tracing.Start(context.Background(), "Update")
 	defer span.End()
+	// Install for helpers that can't take ctx (composePanelLines called
+	// from refreshPanel during Update). View installs its own ambient
+	// for paintFrame on the render side.
+	resetAmbient := tracing.SetAmbient(ctx)
+	defer resetAmbient()
 	if span.IsRecording() {
 		span.SetAttributes(
 			attribute.String("msg.type", fmt.Sprintf("%T", msg)),
@@ -80,7 +85,7 @@ func (m Model) Update(msg tea.Msg) (out tea.Model, cmd tea.Cmd) {
 			out, cmd = m, nil
 		}
 	}()
-	out, cmd = m.updateInner(msg)
+	out, cmd = m.updateInner(ctx, msg)
 	// Refresh the graph pan offset after every update so the cursor stays
 	// visible without snapping the viewport when the cursor is already in
 	// view. Cheap and uniform: avoids sprinkling recomputeGraphPan calls
@@ -93,7 +98,7 @@ func (m Model) Update(msg tea.Msg) (out tea.Model, cmd tea.Cmd) {
 	return out, cmd
 }
 
-func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateInner(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd) {
 	if sm, ok := msg.(SetSendMsg); ok {
 		m.ctxSend = sm.Send
 		m.restartStageWatch()
@@ -175,10 +180,10 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.phase == phasePickingProject {
-		return m.updatePicker(msg)
+		return m.updatePicker(ctx, msg)
 	}
 	if m.phase == phasePickingContext {
-		return m.updateContextPicker(msg)
+		return m.updateContextPicker(ctx, msg)
 	}
 
 	// Forward terminal paste events to the filter text input when the user
@@ -195,7 +200,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.view == viewGraph {
 				m.recomputeGraphMatches(m.filter.Value())
 			} else {
-				m.refreshRows()
+				m.refreshRows(ctx)
 			}
 			return m, cmd
 		}
@@ -263,7 +268,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.deploysError = nil
 			m.deploys = msg.deploys
 			m.noteAuthSuccess()
-			m.refreshRows()
+			m.refreshRows(ctx)
 			m.refreshPanel()
 		}
 		return m, nil
@@ -277,7 +282,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.freightsError = nil
 			m.freights = msg.freights
 			m.noteAuthSuccess()
-			m.refreshRows()
+			m.refreshRows(ctx)
 			m.refreshPanel()
 		}
 		return m, nil
@@ -300,7 +305,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case stageEventMsg:
 		m.deploys = kargo.MergeStageEvent(m.deploys, kargo.StageEvent(msg))
-		m.refreshRows()
+		m.refreshRows(ctx)
 		m.refreshPanel()
 		return m, nil
 
@@ -419,7 +424,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case m.detailsOnly:
 				m.panelVP.ScrollUp(3)
 			case shift && m.activeTable() != nil:
-				m.scrollLeft()
+				m.scrollLeft(ctx)
 			case shift && m.view == viewGraph:
 				if m.moveGraphCursor("left") {
 					m.resetPanelScroll()
@@ -446,7 +451,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case m.detailsOnly:
 				m.panelVP.ScrollDown(3)
 			case shift && m.activeTable() != nil:
-				m.scrollRight()
+				m.scrollRight(ctx)
 			case shift && m.view == viewGraph:
 				if m.moveGraphCursor("right") {
 					m.resetPanelScroll()
@@ -467,7 +472,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.MouseWheelLeft:
 			switch {
 			case m.activeTable() != nil:
-				m.scrollLeft()
+				m.scrollLeft(ctx)
 			case m.view == viewGraph:
 				if m.moveGraphCursor("left") {
 					m.resetPanelScroll()
@@ -477,7 +482,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.MouseWheelRight:
 			switch {
 			case m.activeTable() != nil:
-				m.scrollRight()
+				m.scrollRight(ctx)
 			case m.view == viewGraph:
 				if m.moveGraphCursor("right") {
 					m.resetPanelScroll()
@@ -542,7 +547,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// to undo the spatial jump too.
 					m.cancelGraphSearch()
 				} else {
-					m.refreshRows()
+					m.refreshRows(ctx)
 				}
 				return m, nil
 			case "enter":
@@ -564,7 +569,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// views filter rows instead via refreshRows.
 				m.recomputeGraphMatches(m.filter.Value())
 			} else {
-				m.refreshRows()
+				m.refreshRows(ctx)
 			}
 			return m, cmd
 		}
@@ -693,7 +698,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.graphSearchPos = 0
 					m.graphSearchActive = false
 				} else {
-					m.refreshRows()
+					m.refreshRows(ctx)
 				}
 			} else if m.view == viewGraph && len(m.graphSearchMatches) > 0 {
 				// Defensive: filter was cleared by some other path but
@@ -703,10 +708,10 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "d":
-			m.setView(viewDeploys)
+			m.setView(ctx, viewDeploys)
 			return m, nil
 		case "f":
-			m.setView(viewFreights)
+			m.setView(ctx, viewFreights)
 			return m, nil
 		case "r":
 			if !m.loading {
@@ -734,7 +739,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.setTreeNodeExpansion(false)
 				return m, nil
 			}
-			m.scrollLeft()
+			m.scrollLeft(ctx)
 			return m, nil
 		case "right":
 			if m.detailsOnly {
@@ -749,7 +754,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.setTreeNodeExpansion(true)
 				return m, nil
 			}
-			m.scrollRight()
+			m.scrollRight(ctx)
 			return m, nil
 		case "up", "k":
 			if m.detailsOnly {
@@ -831,13 +836,13 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailsOnly = !m.detailsOnly
 			return m, nil
 		case "c":
-			m.setView(viewControlFlow)
+			m.setView(ctx, viewControlFlow)
 			return m, nil
 		case "t":
-			m.setView(viewTree)
+			m.setView(ctx, viewTree)
 			return m, nil
 		case "g":
-			m.setView(viewGraph)
+			m.setView(ctx, viewGraph)
 			return m, nil
 		case "P":
 			s := m.selectedStage()
@@ -890,7 +895,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.theme == themeLight {
 				next = themeDark
 			}
-			m.setTheme(next)
+			m.setTheme(ctx, next)
 			if next == themeLight {
 				m.yankedMessage = "theme: Pierre Light"
 			} else {
@@ -900,7 +905,7 @@ func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "s":
 			m.cycleSort()
-			m.refreshRows()
+			m.refreshRows(ctx)
 			return m, nil
 		case "y":
 			m.yankSelection()

@@ -20,7 +20,7 @@ import (
 //   - Typing a new Kargo URL to log in to (`+` opens, esc cancels).
 //   - Waiting for the SSO callback to come back (ctxLoggingIn). All keys
 //     except ctrl+c are ignored while the browser flow is in progress.
-func (m Model) updateContextPicker(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateContextPicker(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Forward terminal paste events to whichever textinput is focused so
 	// users can paste a Kargo URL or filter string with ⌘V/ctrl+v.
 	if pm, ok := msg.(tea.PasteMsg); ok {
@@ -88,7 +88,7 @@ func (m Model) updateContextPicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// without this the running view inherits the bubbles default
 			// table size and renders zero visible rows).
 			m.fitTablesToWindow()
-			m.refreshRows()
+			m.refreshRows(ctx)
 			m.refreshPanel()
 			m.restartStageWatch()
 			m.loading = true

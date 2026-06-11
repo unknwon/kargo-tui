@@ -24,10 +24,12 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/pkg/browser"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/oauth2"
 
 	"unknwon.dev/kargo-tui/internal/config"
 	"unknwon.dev/kargo-tui/internal/kargo"
+	"unknwon.dev/kargo-tui/internal/tracing"
 )
 
 // LoginOptions captures the inputs to an SSO login flow.
@@ -53,6 +55,11 @@ type LoginOptions struct {
 // render progress to the user. It may be called from a goroutine other
 // than the caller's.
 func SSOLogin(ctx context.Context, opts LoginOptions, status func(string)) (*config.Context, error) {
+	ctx, span := tracing.Start(ctx, "auth.SSOLogin",
+		attribute.String("auth.context_name", opts.ContextName),
+		attribute.String("auth.api_address", opts.APIAddress),
+	)
+	defer span.End()
 	if status == nil {
 		status = func(string) {}
 	}
@@ -130,6 +137,10 @@ func SSOLogin(ctx context.Context, opts LoginOptions, status func(string)) (*con
 // configured IdP, opening the user's browser to consent and serving a local
 // callback to capture the resulting authorization code.
 func runPKCEFlow(ctx context.Context, cfg *kargo.OIDCConfig, opts LoginOptions, status func(string)) (string, string, error) {
+	ctx, span := tracing.Start(ctx, "auth.PKCEFlow",
+		attribute.String("auth.issuer", cfg.IssuerURL),
+	)
+	defer span.End()
 	httpClient := &http.Client{}
 	if opts.InsecureSkipTLSVerify {
 		t := http.DefaultTransport.(*http.Transport).Clone()

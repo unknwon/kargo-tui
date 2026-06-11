@@ -22,8 +22,13 @@ import (
 // still active; instead we fall back to a plain-text panic frame so the
 // trace stays visible and copyable.
 func (m Model) View() (v tea.View) {
-	_, span := tracing.Start(context.Background(), "View")
+	ctx, span := tracing.Start(context.Background(), "View")
 	defer span.End()
+	// Install the View span's ctx so render helpers like paintFrame nest
+	// their spans under it without us having to thread ctx through every
+	// view method's signature.
+	resetAmbient := tracing.SetAmbient(ctx)
+	defer resetAmbient()
 	if span.IsRecording() {
 		span.SetAttributes(
 			attribute.Stringer("view", m.view),

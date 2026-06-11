@@ -9,7 +9,10 @@ import (
 	"net/http"
 
 	"github.com/cockroachdb/errors"
+	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/protobuf/proto"
+
+	"unknwon.dev/kargo-tui/internal/tracing"
 )
 
 // streamClient returns the long-lived HTTP client used for server-
@@ -51,6 +54,18 @@ func (c *connectJSON) callServerStream(
 	respFactory func() proto.Message,
 	onMessage func(proto.Message) error,
 ) error {
+	ctx, span := tracing.Start(ctx, "kargo.Stream", attribute.String("rpc.method", method))
+	defer span.End()
+	dialAttempts := 0
+	frames := 0
+	defer func() {
+		if span.IsRecording() {
+			span.SetAttributes(
+				attribute.Int("stream.dial_attempts", dialAttempts),
+				attribute.Int("stream.frames", frames),
+			)
+		}
+	}()
 	body, err := proto.Marshal(reqMsg)
 	if err != nil {
 		return errors.Wrapf(err, "marshal stream request for %s", method)
@@ -60,6 +75,7 @@ func (c *connectJSON) callServerStream(
 	url := c.baseURL + kargoServicePath + method
 
 	dial := func() (*http.Response, error) {
+		dialAttempts++
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(envelope))
 		if err != nil {
 			return nil, errors.Wrapf(err, "build stream request for %s", method)
@@ -144,6 +160,7 @@ func (c *connectJSON) callServerStream(
 		if err := proto.Unmarshal(payload, msg); err != nil {
 			return errors.Wrapf(err, "decode stream %s frame", method)
 		}
+		frames++
 		if err := onMessage(msg); err != nil {
 			return errors.Wrap(err, "handle stream message")
 		}

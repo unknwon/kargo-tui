@@ -105,6 +105,41 @@ func Start(ctx context.Context, name string, attrs ...attribute.KeyValue) (conte
 	return Tracer().Start(ctx, name, trace.WithAttributes(attrs...))
 }
 
+// ambientCtx holds a parent context for code paths that cannot thread
+// ctx through their function signatures (e.g. paintFrame, called from
+// 14 render-path methods). The render loop (View) calls SetAmbient at
+// entry and ClearAmbient on exit, so helper spans nested inside View
+// can pick up the parent without us refactoring every render method to
+// take a ctx parameter.
+//
+// Safe because bubbletea calls Update/View serially on a single
+// goroutine. The variable is only mutated from that goroutine.
+//
+// Callers MUST pair SetAmbient with ClearAmbient (typically via defer)
+// so a leftover ambient ctx doesn't parent unrelated spans from a later
+// loop iteration.
+var ambientCtx context.Context
+
+// SetAmbient installs ctx as the parent for AmbientStart calls. Returns
+// a reset function the caller defers to restore the previous value.
+func SetAmbient(ctx context.Context) func() {
+	prev := ambientCtx
+	ambientCtx = ctx
+	return func() { ambientCtx = prev }
+}
+
+// AmbientStart opens a span under the currently-installed ambient ctx,
+// or under context.Background when none is installed. Use only from
+// code paths that can't take a ctx parameter; prefer Start(ctx, ...)
+// everywhere else.
+func AmbientStart(name string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
+	parent := ambientCtx
+	if parent == nil {
+		parent = context.Background()
+	}
+	return Start(parent, name, attrs...)
+}
+
 // jsonlExporter writes one JSON line per span to an io.Writer. Schema is
 // stable and intentionally flat:
 //

@@ -5,8 +5,10 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"go.opentelemetry.io/otel/attribute"
 
 	"unknwon.dev/kargo-tui/internal/kargo"
+	"unknwon.dev/kargo-tui/internal/tracing"
 )
 
 // resetPanelScroll moves the panel viewport back to the top. Call when the
@@ -39,6 +41,14 @@ func (m *Model) refreshPanel() {
 // composePanelLines returns the body lines for the side panel based on the
 // current view and selection.
 func (m Model) composePanelLines(innerW int) []string {
+	_, span := tracing.AmbientStart("composePanelLines")
+	defer span.End()
+	if span.IsRecording() {
+		span.SetAttributes(
+			attribute.Stringer("view", m.view),
+			attribute.Int("innerW", innerW),
+		)
+	}
 	titleStyle := lipgloss.NewStyle().Foreground(normal).Bold(true).Background(bg)
 	keyStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
 	valStyle := lipgloss.NewStyle().Foreground(normal).Background(bg)

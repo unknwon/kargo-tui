@@ -26,6 +26,43 @@ func TestInit(t *testing.T) {
 		require.NoError(t, shutdown(context.Background()))
 	})
 
+	t.Run("ambient parent nests child spans correctly", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "traces.jsonl")
+		t.Setenv(envTraceFile, path)
+		shutdown, err := Init("kargo-tui", "test")
+		require.NoError(t, err)
+
+		ctx, parent := Start(context.Background(), "parent")
+		reset := SetAmbient(ctx)
+		_, child := AmbientStart("child")
+		child.End()
+		reset()
+		parent.End()
+
+		// After reset, ambient is gone — AmbientStart now roots at Background.
+		_, orphan := AmbientStart("orphan")
+		orphan.End()
+
+		require.NoError(t, shutdown(context.Background()))
+
+		f, err := os.Open(path)
+		require.NoError(t, err)
+		defer f.Close()
+		byName := map[string]jsonlSpan{}
+		sc := bufio.NewScanner(f)
+		for sc.Scan() {
+			var s jsonlSpan
+			require.NoError(t, json.Unmarshal(sc.Bytes(), &s))
+			byName[s.Name] = s
+		}
+		require.NoError(t, sc.Err())
+		require.Len(t, byName, 3)
+		assert.Equal(t, byName["parent"].SpanID, byName["child"].ParentSpanID,
+			"AmbientStart child should parent under the installed ambient ctx")
+		assert.Empty(t, byName["orphan"].ParentSpanID,
+			"AmbientStart after reset should root at Background")
+	})
+
 	t.Run("writes JSON lines when file is set", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "traces.jsonl")
 		t.Setenv(envTraceFile, path)

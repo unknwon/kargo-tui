@@ -376,7 +376,10 @@ func New(client *kargo.Client, contextName, project string, deploys []kargo.Stag
 	m.phase = phaseRunning
 	m.deploys = deploys
 	m.freights = freights
-	m.refreshRows()
+	// Pre-Run path: the first refreshRows happens before bubbletea starts
+	// an Update, so there's no live span to parent off. Background here
+	// makes the initial refreshRows a top-level trace boundary.
+	m.refreshRows(context.Background())
 	m.refreshPanel()
 	return m
 }

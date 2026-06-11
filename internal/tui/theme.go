@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"image/color"
 
 	"charm.land/lipgloss/v2"
@@ -84,14 +85,16 @@ func (m Model) WithDetectedDark(dark bool) Model {
 	if dark {
 		return m
 	}
-	m.setTheme(themeLight)
+	// Pre-Run path: no Update span exists yet, so the refreshRows trace
+	// is a top-level boundary keyed off context.Background.
+	m.setTheme(context.Background(), themeLight)
 	return m
 }
 
 // setTheme switches the active palette, refreshes the table styles that
 // bake colors in at construction time, and invalidates the graph render
 // cache (its memoized output is colored by the previous palette).
-func (m *Model) setTheme(mode themeMode) {
+func (m *Model) setTheme(ctx context.Context, mode themeMode) {
 	if m.theme == mode {
 		return
 	}
@@ -104,7 +107,7 @@ func (m *Model) setTheme(mode themeMode) {
 	// rebuilds and pushes the new palette through immediately.
 	m.lastDeployRows = nil
 	m.lastFreightRows = nil
-	m.refreshRows()
+	m.refreshRows(ctx)
 	if m.graphRender != nil {
 		m.graphRender.valid = false
 	}

@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"image/color"
 	"sort"
@@ -34,7 +33,7 @@ import (
 // width and height are typically m.width / m.height. width <= 0
 // returns the content unchanged.
 func paintFrame(content string, width, height int) string {
-	_, span := tracing.Start(context.Background(), "paintFrame")
+	_, span := tracing.AmbientStart("paintFrame")
 	defer span.End()
 	if width <= 0 {
 		return content
