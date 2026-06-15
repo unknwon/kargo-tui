@@ -69,7 +69,7 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 	defer func() {
 		// Use a fresh context for shutdown so a cancelled parent doesn't
 		// drop in-flight spans before the batched exporter can flush.
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = traceShutdown(shutdownCtx)
 	}()
