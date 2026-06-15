@@ -50,6 +50,10 @@ This applies to all texts, including but not limited to UI, documentation, code 
 - For non-trivial changes that touch multiple files, propose the approach (in a plan or in chat) and wait for approval before editing. Do not start edits while the user is still discussing the approach.
 - Do not batch-fix multiple items just because the next one seems obvious. Triage strictly item by item.
 
+## Debugging
+
+- Use OTel tracing, not ad-hoc `log.Printf`. Run with `KARGO_TUI_TRACE_FILE=/tmp/kargo-traces.jsonl`, read the JSON-lines output. Add attributes or new spans where dimensions are missing. See `internal/tracing/tracing.go`.
+
 ## Source code control
 
 - Never commit on the `main` branch directly unless being explicitly asked to do so. A single ask only grants a single commit action on the `main` branch.
