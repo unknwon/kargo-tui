@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -12,7 +13,7 @@ import (
 
 // updatePicker handles input while the project picker is active. It owns
 // keypress, projects-loaded, and window-size events for the picker phase.
-func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updatePicker(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd) {
 	if pm, ok := msg.(tea.PasteMsg); ok {
 		var cmd tea.Cmd
 		m.nsFilter, cmd = m.nsFilter.Update(pm)
@@ -64,7 +65,7 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// invoked the picker mid-session, always show the list even if it
 		// contains a single entry.
 		if !m.nsExplicit && msg.err == nil && len(msg.projects) == 1 {
-			return m.startWithProject(msg.projects[0])
+			return m.startWithProject(ctx, msg.projects[0])
 		}
 		return m, nil
 
@@ -110,7 +111,7 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.nsCursor < 0 || m.nsCursor >= len(filtered) {
 				return m, nil
 			}
-			return m.startWithProject(filtered[m.nsCursor])
+			return m.startWithProject(ctx, filtered[m.nsCursor])
 		case "r":
 			if !m.nsLoading {
 				m.nsLoading = true
@@ -149,7 +150,7 @@ func (m Model) filteredProjects() []string {
 // startWithProject transitions out of the picker into the running phase
 // for the given project, clearing stale data and dispatching initial
 // loaders + the refresh ticker.
-func (m Model) startWithProject(p string) (Model, tea.Cmd) {
+func (m Model) startWithProject(ctx context.Context, p string) (Model, tea.Cmd) {
 	m.project = p
 	m.client.SetProject(p)
 	m.phase = phaseRunning
@@ -161,7 +162,7 @@ func (m Model) startWithProject(p string) (Model, tea.Cmd) {
 	m.visibleFreights = nil
 	m.lastDeployRows = nil
 	m.lastFreightRows = nil
-	m.refreshRows()
+	m.refreshRows(ctx)
 	m.fitTablesToWindow()
 	m.refreshPanel()
 	m.restartStageWatch()

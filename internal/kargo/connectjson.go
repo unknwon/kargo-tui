@@ -13,7 +13,10 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
+	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/protobuf/proto"
+
+	"unknwon.dev/kargo-tui/internal/tracing"
 )
 
 // kargoServicePath is the URL path prefix of every method on the Kargo
@@ -133,13 +136,17 @@ func (c *connectJSON) call(ctx context.Context, method string, req, out any) err
 // retry behaviour mirrors call(): on CodeUnauthenticated, if a refresher
 // is configured and succeeds, the request is retried once.
 func (c *connectJSON) callProto(ctx context.Context, method string, reqMsg, respMsg proto.Message) error {
+	ctx, span := tracing.Start(ctx, "kargo.RPC", attribute.String("rpc.method", method))
+	defer span.End()
 	body, err := proto.Marshal(reqMsg)
 	if err != nil {
 		return errors.Wrapf(err, "marshal proto request for %s", method)
 	}
 	url := c.baseURL + kargoServicePath + method
 
+	attempts := 0
 	doOnce := func() error {
+		attempts++
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
 			return errors.Wrapf(err, "build proto request for %s", method)
@@ -176,6 +183,9 @@ func (c *connectJSON) callProto(ctx context.Context, method string, reqMsg, resp
 	err = doOnce()
 	if isUnauthenticated(err) && c.tryRefresh(ctx) == nil {
 		err = doOnce()
+	}
+	if span.IsRecording() {
+		span.SetAttributes(attribute.Int("rpc.attempts", attempts))
 	}
 	if err != nil {
 		return errors.Wrapf(err, "complete %s proto request", method)

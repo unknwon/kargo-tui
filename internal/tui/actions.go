@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"reflect"
@@ -19,12 +20,12 @@ import (
 // setView swaps the active view, persisting the outgoing filter so each list
 // keeps its own search state, and restoring the incoming view's stored
 // filter. Also resyncs panels and rows.
-func (m *Model) setView(v view) {
+func (m *Model) setView(ctx context.Context, v view) {
 	m.filterValues[m.view] = m.filter.Value()
 	m.view = v
 	m.detailsOnly = false
 	m.filter.SetValue(m.filterValues[v])
-	m.refreshRows()
+	m.refreshRows(ctx)
 	if v == viewGraph {
 		// Graph view doesn't filter rows from m.filter; instead the
 		// saved query rehydrates the search match list so n/N still

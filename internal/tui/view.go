@@ -1,11 +1,15 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"go.opentelemetry.io/otel/attribute"
+
+	"unknwon.dev/kargo-tui/internal/tracing"
 )
 
 // View renders the current frame. It dispatches, in priority order,
@@ -18,6 +22,22 @@ import (
 // still active; instead we fall back to a plain-text panic frame so the
 // trace stays visible and copyable.
 func (m Model) View() (v tea.View) {
+	ctx, span := tracing.Start(context.Background(), "View")
+	defer span.End()
+	// Install the View span's ctx so render helpers like paintFrame nest
+	// their spans under it without us having to thread ctx through every
+	// view method's signature.
+	resetAmbient := tracing.SetAmbient(ctx)
+	defer resetAmbient()
+	if span.IsRecording() {
+		span.SetAttributes(
+			attribute.Stringer("view", m.view),
+			attribute.Stringer("phase", m.phase),
+			attribute.Bool("detailsOnly", m.detailsOnly),
+			attribute.Int("width", m.width),
+			attribute.Int("height", m.height),
+		)
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			// Prefer the freshly-recovered trace over m.panicMessage:

@@ -1,12 +1,15 @@
 package tui
 
 import (
+	"context"
 	"strings"
 
 	"charm.land/bubbles/v2/table"
 	"charm.land/lipgloss/v2"
+	"go.opentelemetry.io/otel/attribute"
 
 	"unknwon.dev/kargo-tui/internal/kargo"
+	"unknwon.dev/kargo-tui/internal/tracing"
 )
 
 // columnPadding is the extra cells we allocate beyond the longest
@@ -51,32 +54,32 @@ func fitColumnWidths(cols []table.Column, rows []table.Row) []table.Column {
 	return out
 }
 
-func (m *Model) scrollLeft() {
+func (m *Model) scrollLeft(ctx context.Context) {
 	switch m.view {
 	case viewDeploys, viewControlFlow:
 		if m.deploysColOffset > 0 {
 			m.deploysColOffset--
-			m.refreshRows()
+			m.refreshRows(ctx)
 		}
 	case viewFreights:
 		if m.freightsColOffset > 0 {
 			m.freightsColOffset--
-			m.refreshRows()
+			m.refreshRows(ctx)
 		}
 	}
 }
 
-func (m *Model) scrollRight() {
+func (m *Model) scrollRight(ctx context.Context) {
 	switch m.view {
 	case viewDeploys, viewControlFlow:
 		if m.deploysColOffset < maxColOffset(len(allStageColumns)) {
 			m.deploysColOffset++
-			m.refreshRows()
+			m.refreshRows(ctx)
 		}
 	case viewFreights:
 		if m.freightsColOffset < maxColOffset(len(allFreightColumns)) {
 			m.freightsColOffset++
-			m.refreshRows()
+			m.refreshRows(ctx)
 		}
 	}
 }
@@ -189,7 +192,16 @@ func maxColOffset(total int) int {
 	return total - 3
 }
 
-func (m *Model) refreshRows() {
+func (m *Model) refreshRows(ctx context.Context) {
+	_, span := tracing.Start(ctx, "refreshRows")
+	defer span.End()
+	if span.IsRecording() {
+		span.SetAttributes(
+			attribute.Stringer("view", m.view),
+			attribute.Int("deploys.count", len(m.deploys)),
+			attribute.Int("freights.count", len(m.freights)),
+		)
+	}
 	q := strings.ToLower(strings.TrimSpace(m.filter.Value()))
 
 	// The tree and graph views need no filter/sort/column logic — just

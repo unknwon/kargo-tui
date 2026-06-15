@@ -9,7 +9,10 @@ import (
 	"net/http"
 
 	"github.com/cockroachdb/errors"
+	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/protobuf/proto"
+
+	"unknwon.dev/kargo-tui/internal/tracing"
 )
 
 // streamClient returns the long-lived HTTP client used for server-
@@ -51,6 +54,28 @@ func (c *connectJSON) callServerStream(
 	respFactory func() proto.Message,
 	onMessage func(proto.Message) error,
 ) error {
+	// One span per stream lifetime. The deferred attribute setter records
+	// dial_attempts and frames at End, so an investigator can see how often
+	// the stream reconnected and how chatty the server was.
+	//
+	// Caveat: OTel only flushes spans on End, so a long-lived stream (e.g.
+	// WatchStages running for the user's whole session) won't show up in
+	// the trace file until the stream closes. If you're investigating a
+	// live perf issue and don't see a kargo.Stream entry, the watch is
+	// still open. Quit the app or wait for the stream to break, then check
+	// the file.
+	ctx, span := tracing.Start(ctx, "kargo.Stream", attribute.String("rpc.method", method))
+	defer span.End()
+	dialAttempts := 0
+	frames := 0
+	defer func() {
+		if span.IsRecording() {
+			span.SetAttributes(
+				attribute.Int("stream.dial_attempts", dialAttempts),
+				attribute.Int("stream.frames", frames),
+			)
+		}
+	}()
 	body, err := proto.Marshal(reqMsg)
 	if err != nil {
 		return errors.Wrapf(err, "marshal stream request for %s", method)
@@ -60,6 +85,7 @@ func (c *connectJSON) callServerStream(
 	url := c.baseURL + kargoServicePath + method
 
 	dial := func() (*http.Response, error) {
+		dialAttempts++
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(envelope))
 		if err != nil {
 			return nil, errors.Wrapf(err, "build stream request for %s", method)
@@ -144,6 +170,7 @@ func (c *connectJSON) callServerStream(
 		if err := proto.Unmarshal(payload, msg); err != nil {
 			return errors.Wrapf(err, "decode stream %s frame", method)
 		}
+		frames++
 		if err := onMessage(msg); err != nil {
 			return errors.Wrap(err, "handle stream message")
 		}
