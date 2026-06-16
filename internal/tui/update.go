@@ -736,7 +736,7 @@ func (m Model) updateInner(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd
 				return m, nil
 			}
 			if m.view == viewTree {
-				m.setTreeNodeExpansion(false)
+				m.collapseTreeOneLevel()
 				return m, nil
 			}
 			m.scrollLeft(ctx)
@@ -975,12 +975,6 @@ func (m Model) updateInner(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd
 				if len(m.treeNodes) > 0 {
 					m.treeCursor = len(m.treeNodes) - 1
 				}
-				return m, nil
-			case "+":
-				m.setTreeNodeExpansion(true)
-				return m, nil
-			case "-":
-				m.setTreeNodeExpansion(false)
 				return m, nil
 			case "enter":
 				m.toggleTreeNode()

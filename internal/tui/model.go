@@ -608,7 +608,10 @@ func (m Model) WithArgoShards(contextName string, shards kargo.ArgoCDShards) Mod
 	if m.argoShardsCache == nil {
 		m.argoShardsCache = make(map[string]kargo.ArgoCDShards)
 	}
-	if contextName != "" {
+	// Don't cache an empty result. An empty map usually means discovery
+	// failed, and caching it would block re-discovery on later context
+	// switches, leaving argo links missing until a restart.
+	if contextName != "" && len(shards) > 0 {
 		m.argoShardsCache[contextName] = shards
 	}
 	return m
