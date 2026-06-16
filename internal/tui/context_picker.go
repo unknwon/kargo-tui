@@ -77,7 +77,11 @@ func (m Model) updateContextPicker(ctx context.Context, msg tea.Msg) (tea.Model,
 		if m.argoShardsCache == nil {
 			m.argoShardsCache = make(map[string]kargo.ArgoCDShards)
 		}
-		if msg.shards != nil {
+		// Only cache a non-empty discovery. An empty result usually means
+		// discovery failed or timed out on a cold connection. Caching it
+		// would block re-discovery on every later switch to this context
+		// and leave argo links missing until a full restart.
+		if len(msg.shards) > 0 {
 			m.argoShardsCache[msg.name] = msg.shards
 		}
 		if msg.defaultProject != "" {

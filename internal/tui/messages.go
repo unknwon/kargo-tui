@@ -167,8 +167,13 @@ func contextSwitchCmd(
 			return contextSwitchedMsg{name: name, err: err}
 		}
 
+		// Re-discover whenever the cache is empty, not just nil. A previous
+		// switch that failed discovery (timeout, cold connection) returns a
+		// non-nil empty map. Caching that empty map would permanently shadow
+		// future re-discovery for this context until a full restart, which is
+		// exactly the "argo link missing after switch" bug.
 		shards := cachedShards
-		if shards == nil {
+		if len(shards) == 0 {
 			report("Discovering Argo CD shards…")
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			shards, _ = client.DiscoverArgoCDShards(ctx)

@@ -317,12 +317,21 @@ func (m Model) renderTreeBody(width, height int) string {
 	var lines []string
 	for i := start; i < end; i++ {
 		n := m.treeNodes[i]
+		// On the cursor row, render the [+]/[-] toggle without a baked-in
+		// background so the outer cursorStyle selection color fills through
+		// it. Root rows lead with this toggle (no tree-branch prefix), so a
+		// bg-painted toggle was the one segment that left the highlight
+		// looking absent on roots.
+		toggleStyle := mutedStyle
+		if i == m.treeCursor {
+			toggleStyle = lipgloss.NewStyle().Foreground(darkFg)
+		}
 		var toggle string
 		switch {
 		case n.HasKids && n.Expanded:
-			toggle = mutedStyle.Render("[-] ")
+			toggle = toggleStyle.Render("[-] ")
 		case n.HasKids && !n.Expanded:
-			toggle = mutedStyle.Render("[+] ")
+			toggle = toggleStyle.Render("[+] ")
 		default:
 			toggle = "    "
 		}
@@ -436,7 +445,9 @@ func (m *Model) toggleTreeNode() {
 	m.rebuildTree()
 }
 
-// setTreeNodeExpansion forces expand=true (`+`) or false (`-`).
+// setTreeNodeExpansion forces the cursor node to expand or collapse. The
+// right arrow uses it to expand. Collapsing goes through
+// collapseTreeOneLevel instead so left always steps out by one level.
 func (m *Model) setTreeNodeExpansion(expand bool) {
 	if m.treeCursor < 0 || m.treeCursor >= len(m.treeNodes) {
 		return
@@ -447,6 +458,63 @@ func (m *Model) setTreeNodeExpansion(expand bool) {
 	}
 	m.treeExpanded[n.Stage.Name] = expand
 	m.rebuildTree()
+}
+
+// treeNodeDepth returns the indentation depth of a rendered row. Roots have an
+// empty prefix (depth 0). Each nested level adds one 3-cell indent unit
+// ("├─ ", "└─ ", "│  ", or "   ") to the prefix.
+func treeNodeDepth(n treeNode) int {
+	return len([]rune(n.Prefix)) / 3
+}
+
+// collapseTreeOneLevel implements the left-arrow behavior: collapse the
+// current node when it is an expanded parent, otherwise move the cursor up to
+// the parent node and collapse that. This mirrors how file-tree views treat
+// left: it always steps "out" by one level, whether by folding the current
+// subtree or by climbing to the enclosing one.
+func (m *Model) collapseTreeOneLevel() {
+	if m.treeCursor < 0 || m.treeCursor >= len(m.treeNodes) {
+		return
+	}
+	cur := m.treeNodes[m.treeCursor]
+	if cur.HasKids && cur.Expanded {
+		m.treeExpanded[cur.Stage.Name] = false
+		name := cur.Stage.Name
+		m.rebuildTree()
+		m.focusTreeNode(name)
+		return
+	}
+	// Already collapsed or a leaf: climb to the nearest shallower row above
+	// the cursor (the parent) and collapse it.
+	depth := treeNodeDepth(cur)
+	for i := m.treeCursor - 1; i >= 0; i-- {
+		if treeNodeDepth(m.treeNodes[i]) >= depth {
+			continue
+		}
+		parent := m.treeNodes[i]
+		m.treeExpanded[parent.Stage.Name] = false
+		name := parent.Stage.Name
+		m.rebuildTree()
+		m.focusTreeNode(name)
+		return
+	}
+}
+
+// focusTreeNode moves the cursor onto the row whose stage matches name, or
+// leaves it clamped in range when the node is no longer visible.
+func (m *Model) focusTreeNode(name string) {
+	for i, n := range m.treeNodes {
+		if n.Stage.Name == name {
+			m.treeCursor = i
+			return
+		}
+	}
+	if m.treeCursor >= len(m.treeNodes) {
+		m.treeCursor = len(m.treeNodes) - 1
+	}
+	if m.treeCursor < 0 {
+		m.treeCursor = 0
+	}
 }
 
 // treeView renders the full tree-view frame.
@@ -466,7 +534,7 @@ func (m Model) treeView() tea.View {
 		m.renderTreeBody(m.width-2, bodyH))
 
 	hint := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).
-		Render("+/- expand/collapse · v details · P promote · l logs · / filter · ? help")
+		Render("←/→ collapse/expand · v details · P promote · l logs · / filter · ? help")
 
 	var statusLine string
 	switch {
