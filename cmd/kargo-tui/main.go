@@ -108,7 +108,7 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 		}
 	}
 
-	ctxNames, ctxBuilder, ctxLogin, ctxRelogin := contextSwitcher(cfg)
+	ctxNames, ctxBuilder, ctxLogin, ctxRelogin, ctxDelete := contextSwitcher(cfg)
 
 	// Detect the terminal's background brightness while we're still in
 	// cooked mode. Doing this after bubbletea takes over would just
@@ -124,7 +124,7 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 	if project == "" {
 		m := tui.NewWithPicker(client, active.Name).
 			WithArgoShards(active.Name, shards).
-			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin)
+			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin, ctxDelete)
 		if termDetected {
 			m = m.WithDetectedDark(termDark)
 		}
@@ -144,7 +144,7 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 		}
 		m := tui.New(client, active.Name, project, deploys, freights).
 			WithArgoShards(active.Name, shards).
-			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin)
+			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin, ctxDelete)
 		if termDetected {
 			m = m.WithDetectedDark(termDark)
 		}
@@ -205,6 +205,7 @@ func contextSwitcher(cfg *config.Config) (
 	func(string) (*kargo.Client, string, error),
 	func(ctx context.Context, url string, status func(string)) (string, error),
 	func(ctx context.Context, contextName string, status func(string)) (string, error),
+	func(name string) error,
 ) {
 	names := make([]string, 0, len(cfg.Contexts))
 	for _, c := range cfg.Contexts {
@@ -275,7 +276,24 @@ func contextSwitcher(cfg *config.Config) (
 		}
 		return saved.Name, nil
 	}
-	return names, build, login, relogin
+	del := func(name string) error {
+		// Read fresh from disk so a concurrent CLI edit isn't clobbered,
+		// then remove and persist. Mirror the removal into the in-memory
+		// cfg the builder/login closures share.
+		fresh, err := config.Load()
+		if err != nil {
+			return errors.Wrap(err, "load config")
+		}
+		if !fresh.Remove(name) {
+			return errors.Newf("context %q not found", name)
+		}
+		if err := config.Save(fresh); err != nil {
+			return errors.Wrap(err, "save config")
+		}
+		*cfg = *fresh
+		return nil
+	}
+	return names, build, login, relogin, del
 }
 
 // authCommand builds the `kargo-tui auth ...` subcommand tree.

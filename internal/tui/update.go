@@ -318,6 +318,7 @@ func (m Model) updateInner(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd
 				m.noteAuthFailure(msg.err)
 			} else {
 				m.yankedMessage = "stage watch ended: " + msg.err.Error()
+				m.yankedIsError = true
 				m.yankedAt = time.Now()
 			}
 		}
@@ -329,12 +330,15 @@ func (m Model) updateInner(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd
 			m.noteAuthFailure(msg.err)
 			m.promoteError = msg.err
 			m.yankedMessage = "promote-downstream failed: " + msg.err.Error()
+			m.yankedIsError = true
 		} else if msg.promotions == 0 {
 			m.promoteResult = fmt.Sprintf("no eligible downstream stages for %s", msg.source)
 			m.yankedMessage = "no eligible downstream stages for " + msg.source
+			m.yankedIsError = false
 		} else {
 			m.promoteResult = fmt.Sprintf("%d downstream promotion(s) from %s", msg.promotions, msg.source)
 			m.yankedMessage = fmt.Sprintf("created %d downstream promotion(s) from %s", msg.promotions, msg.source)
+			m.yankedIsError = false
 		}
 		m.yankedAt = time.Now()
 		// Same as promoteResultMsg: if the overlay is still up, advance

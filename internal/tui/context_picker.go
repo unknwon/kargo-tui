@@ -185,6 +185,40 @@ func (m Model) updateContextPicker(ctx context.Context, msg tea.Msg) (tea.Model,
 		}
 
 		filtered := m.filteredContexts()
+
+		// While a delete confirmation is up, only y/n/esc are live so a
+		// stray keystroke can't both dismiss the prompt and leak into the
+		// filter input.
+		if m.ctxDeleting != "" {
+			switch key {
+			case "y":
+				name := m.ctxDeleting
+				m.ctxDeleting = ""
+				if m.ctxDelete == nil {
+					return m, nil
+				}
+				if err := m.ctxDelete(name); err != nil {
+					m.ctxError = err
+					return m, nil
+				}
+				m.ctxError = nil
+				if i := slices.Index(m.ctxNames, name); i >= 0 {
+					m.ctxNames = slices.Delete(m.ctxNames, i, i+1)
+				}
+				if m.ctxCursor >= len(m.filteredContexts()) {
+					m.ctxCursor = len(m.filteredContexts()) - 1
+				}
+				if m.ctxCursor < 0 {
+					m.ctxCursor = 0
+				}
+				return m, nil
+			case "n", "esc":
+				m.ctxDeleting = ""
+				return m, nil
+			}
+			return m, nil
+		}
+
 		switch key {
 		case "ctrl+c":
 			return m, tea.Quit
@@ -215,6 +249,15 @@ func (m Model) updateContextPicker(ctx context.Context, msg tea.Msg) (tea.Model,
 			m.ctxError = nil
 			m.ctxURLInput.SetValue("")
 			return m, m.ctxURLInput.Focus()
+		case "D":
+			// Arm the inline delete confirmation for the highlighted
+			// context. Removal happens on `y`.
+			if m.ctxDelete == nil || m.ctxCursor < 0 || m.ctxCursor >= len(filtered) {
+				return m, nil
+			}
+			m.ctxDeleting = filtered[m.ctxCursor]
+			m.ctxError = nil
+			return m, nil
 		}
 		var cmd tea.Cmd
 		m.ctxFilter, cmd = m.ctxFilter.Update(msg)
@@ -319,11 +362,14 @@ func (m Model) contextPickerView() tea.View {
 		}
 	} else {
 		lines = append(lines, titleStyle.Render("Switch Kargo context"))
-		lines = append(lines, hintStyle.Render(wrap("type to filter · ↑/↓ select · enter switch · press + to paste a Kargo URL · esc cancel", innerW)))
+		lines = append(lines, hintStyle.Render(wrap("type to filter · ↑/↓ select · enter switch · + add · D delete · esc cancel", innerW)))
 		lines = append(lines, "")
 		filterRow = lipgloss.Height(strings.Join(lines, "\n"))
 		lines = append(lines, m.ctxFilter.View())
 		lines = append(lines, "")
+		if m.ctxDeleting != "" {
+			lines = append(lines, errStyle.Render(wrap("delete context \""+m.ctxDeleting+"\"? press y to confirm, n to cancel", innerW)), "")
+		}
 		if m.ctxError != nil {
 			lines = append(lines, errStyle.Render(wrap("error: "+m.ctxError.Error(), innerW)), "")
 		}

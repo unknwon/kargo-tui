@@ -123,7 +123,11 @@ func (m Model) View() (v tea.View) {
 	} else if m.authExpired {
 		filterLine = m.renderAuthBanner()
 	} else if m.yankedMessage != "" && time.Since(m.yankedAt) < 3*time.Second {
-		filterLine = lipgloss.NewStyle().Foreground(healthy).Background(bg).Padding(0, 1).Render(m.yankedMessage)
+		yankColor := healthy
+		if m.yankedIsError {
+			yankColor = degraded
+		}
+		filterLine = lipgloss.NewStyle().Foreground(yankColor).Background(bg).Padding(0, 1).Render(m.yankedMessage)
 	} else if errLine != "" {
 		filterLine = lipgloss.NewStyle().Foreground(degraded).Background(bg).Padding(0, 1).Render(errLine)
 	} else {
