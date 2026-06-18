@@ -181,8 +181,11 @@ func (m Model) renderAuthBanner() string {
 	if m.authExpiredMsg != "" {
 		msg = "session expired (" + m.authExpiredMsg + "). Press R to re-login (or C to switch context)"
 	}
+	// The background is always the red degraded color, so the text must be
+	// light in both themes. normal flips to near-black under Pierre Light,
+	// which is unreadable on red, so use a fixed light foreground instead.
 	return lipgloss.NewStyle().
-		Foreground(normal).Background(degraded).Bold(true).
+		Foreground(lipgloss.Color("#fbfbfb")).Background(degraded).Bold(true).
 		Padding(0, 1).
 		Render(msg)
 }
