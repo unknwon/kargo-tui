@@ -123,7 +123,11 @@ func (m Model) View() (v tea.View) {
 	} else if m.authExpired {
 		filterLine = m.renderAuthBanner()
 	} else if m.yankedMessage != "" && time.Since(m.yankedAt) < 3*time.Second {
-		filterLine = lipgloss.NewStyle().Foreground(healthy).Background(bg).Padding(0, 1).Render(m.yankedMessage)
+		yankColor := healthy
+		if m.yankedIsError {
+			yankColor = degraded
+		}
+		filterLine = lipgloss.NewStyle().Foreground(yankColor).Background(bg).Padding(0, 1).Render(m.yankedMessage)
 	} else if errLine != "" {
 		filterLine = lipgloss.NewStyle().Foreground(degraded).Background(bg).Padding(0, 1).Render(errLine)
 	} else {
@@ -177,8 +181,11 @@ func (m Model) renderAuthBanner() string {
 	if m.authExpiredMsg != "" {
 		msg = "session expired (" + m.authExpiredMsg + "). Press R to re-login (or C to switch context)"
 	}
+	// The background is always the red degraded color, so the text must be
+	// light in both themes. normal flips to near-black under Pierre Light,
+	// which is unreadable on red, so use a fixed light foreground instead.
 	return lipgloss.NewStyle().
-		Foreground(normal).Background(degraded).Bold(true).
+		Foreground(lipgloss.Color("#fbfbfb")).Background(degraded).Bold(true).
 		Padding(0, 1).
 		Render(msg)
 }

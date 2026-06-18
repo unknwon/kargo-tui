@@ -182,8 +182,10 @@ func (m *Model) yankValue(label, value string) {
 	}
 	if err := writeClipboard(value); err != nil {
 		m.yankedMessage = fmt.Sprintf("yank failed: %v", err)
+		m.yankedIsError = true
 	} else {
 		m.yankedMessage = fmt.Sprintf("yanked %s %s", label, value)
+		m.yankedIsError = false
 	}
 	m.yankedAt = time.Now()
 }
@@ -231,6 +233,7 @@ func (m *Model) openArgoCDForSelection() {
 func (m *Model) openArgoCDForStage(s *kargo.Stage) {
 	if s == nil || len(s.ArgoCDApps) == 0 {
 		m.yankedMessage = "no Argo CD app linked to this stage"
+		m.yankedIsError = true
 		m.yankedAt = time.Now()
 		return
 	}
@@ -239,14 +242,17 @@ func (m *Model) openArgoCDForStage(s *kargo.Stage) {
 	base := m.argoShards.BaseURLFor(shardKey, app)
 	if base == "" {
 		m.yankedMessage = "no Argo CD shard URL for " + app.Namespace + "/" + app.Name
+		m.yankedIsError = true
 		m.yankedAt = time.Now()
 		return
 	}
 	url := argoAppURL(base, app)
 	if err := openBrowser(url); err != nil {
 		m.yankedMessage = fmt.Sprintf("open failed: %v", err)
+		m.yankedIsError = true
 	} else {
 		m.yankedMessage = "opened " + url
+		m.yankedIsError = false
 	}
 	m.yankedAt = time.Now()
 }

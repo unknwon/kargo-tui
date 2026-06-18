@@ -171,6 +171,10 @@ type Model struct {
 	argoShardsCache map[string]kargo.ArgoCDShards
 	yankedMessage   string
 	yankedAt        time.Time
+	// yankedIsError marks the transient toast as a failure so the status
+	// line renders it red instead of the green used for successful
+	// yank/open notifications.
+	yankedIsError bool
 
 	// authExpired is set when a Kargo RPC fails with CodeUnauthenticated
 	// after the transport's refresh attempt also failed (or no refresh
@@ -226,13 +230,23 @@ type Model struct {
 	// preserving its saved insecureSkipTLSVerify / project flags so the
 	// re-auth flow doesn't silently strip them. Used by the inline `R`
 	// handler when the persistent auth banner is up.
-	ctxRelogin     func(ctx context.Context, contextName string, status func(string)) (string, error)
-	ctxSend        func(tea.Msg) // injected from main so login goroutine can stream status updates
-	ctxAdding      bool
-	ctxLoggingIn   bool
-	ctxLoginStatus string
-	ctxLoginCancel context.CancelFunc
-	ctxURLInput    textinput.Model
+	ctxRelogin func(ctx context.Context, contextName string, status func(string)) (string, error)
+	ctxDelete  func(name string) error
+	// ctxPersistProject saves the active project back to the named
+	// context's config so the next cold start reopens it. Invoked whenever
+	// the running phase begins for a project (picker selection or a context
+	// switch that lands on a single project).
+	ctxPersistProject func(contextName, project string)
+	ctxSend           func(tea.Msg) // injected from main so login goroutine can stream status updates
+	ctxAdding         bool
+	ctxLoggingIn      bool
+	ctxLoginStatus    string
+	ctxLoginCancel    context.CancelFunc
+	ctxURLInput       textinput.Model
+	// ctxDeleting holds the name of the context awaiting a delete
+	// confirmation. Empty when no confirmation is in flight. Set when the
+	// user presses `D` in the picker browse mode; cleared on y/n/esc.
+	ctxDeleting string
 
 	// Tree view state. treeNodes is the flat list of currently-visible rows
 	// (rebuilt on each data refresh and on every expand/collapse). Persists
@@ -484,18 +498,23 @@ func (m Model) WithAuthExpired(msg string) Model {
 // authenticates a *new* Kargo URL via SSO, and a relogin callback that
 // re-authenticates an *existing* context (preserving its saved flags).
 // When set, pressing `C` inside the TUI opens the context picker; `+`
-// inside the picker triggers the login flow for a new URL; `R` from the
-// auth-expired banner triggers the relogin flow for the current context.
+// inside the picker triggers the login flow for a new URL; `D` removes the
+// highlighted context after an inline confirm; `R` from the auth-expired
+// banner triggers the relogin flow for the current context.
 func (m Model) WithContexts(
 	names []string,
 	build func(name string) (*kargo.Client, string, error),
 	login func(ctx context.Context, url string, status func(string)) (string, error),
 	relogin func(ctx context.Context, contextName string, status func(string)) (string, error),
+	del func(name string) error,
+	persistProject func(contextName, project string),
 ) Model {
 	m.ctxNames = names
 	m.ctxBuilder = build
 	m.ctxLogin = login
 	m.ctxRelogin = relogin
+	m.ctxDelete = del
+	m.ctxPersistProject = persistProject
 	ti := newInput("› ", "type to filter contexts…", 64)
 	m.ctxFilter = ti
 	urlIn := newInput("URL › ", "https://kargo.example.com", 256)
@@ -554,8 +573,14 @@ func newBase() Model {
 		helpVP:        helpVP,
 		panicVP:       panicVP,
 		filterValues:  make(map[view]string),
-		sort:          make(map[view]sortMode),
-		graphRender:   &graphRenderCache{},
+		// The stage list views (deploys, control flow) default to name
+		// ascending. The freights view keeps the client's newest-first
+		// ordering via the zero-value sortDefault.
+		sort: map[view]sortMode{
+			viewDeploys:     sortByName,
+			viewControlFlow: sortByName,
+		},
+		graphRender: &graphRenderCache{},
 	}
 }
 

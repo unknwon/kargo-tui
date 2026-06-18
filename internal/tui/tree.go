@@ -545,7 +545,11 @@ func (m Model) treeView() tea.View {
 	case m.deploysError != nil:
 		statusLine = lipgloss.NewStyle().Foreground(degraded).Background(bg).Padding(0, 1).Render(m.deploysError.Error())
 	case m.yankedMessage != "":
-		statusLine = lipgloss.NewStyle().Foreground(healthy).Background(bg).Padding(0, 1).Render(m.yankedMessage)
+		yankColor := healthy
+		if m.yankedIsError {
+			yankColor = degraded
+		}
+		statusLine = lipgloss.NewStyle().Foreground(yankColor).Background(bg).Padding(0, 1).Render(m.yankedMessage)
 	}
 	var content string
 	if statusLine != "" {

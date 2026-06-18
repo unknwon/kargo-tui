@@ -1136,7 +1136,11 @@ func (m Model) graphView() tea.View {
 		errLine := lipgloss.NewStyle().Foreground(degraded).Background(bg).Padding(0, 1).Render(m.deploysError.Error())
 		parts = append(parts, errLine)
 	case m.yankedMessage != "":
-		yankLine := lipgloss.NewStyle().Foreground(healthy).Background(bg).Padding(0, 1).Render(m.yankedMessage)
+		yankColor := healthy
+		if m.yankedIsError {
+			yankColor = degraded
+		}
+		yankLine := lipgloss.NewStyle().Foreground(yankColor).Background(bg).Padding(0, 1).Render(m.yankedMessage)
 		parts = append(parts, yankLine)
 	}
 	searchLineRow := -1

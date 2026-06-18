@@ -103,7 +103,7 @@ func helpBindings() []helpRow {
 		{"", "M", "toggle mouse capture (off enables terminal text selection)"},
 		{"", "T", "toggle theme (Pierre Dark / Pierre Light)"},
 		{"", "q / ctrl+c", "quit"},
-		{"Contexts", "C", "switch Kargo context (then press + to log in to a new URL)"},
+		{"Contexts", "C", "switch Kargo context (then press + to log in to a new URL, D to delete)"},
 		{"", "L", "re-login to current context (only when session expired)"},
 	}
 }
