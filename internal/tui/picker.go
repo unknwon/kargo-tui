@@ -153,6 +153,9 @@ func (m Model) filteredProjects() []string {
 func (m Model) startWithProject(ctx context.Context, p string) (Model, tea.Cmd) {
 	m.project = p
 	m.client.SetProject(p)
+	if m.ctxPersistProject != nil {
+		m.ctxPersistProject(m.contextName, p)
+	}
 	m.phase = phaseRunning
 	m.nsFilter.Blur()
 	// Clear stale data and force a fresh load + tick loop.

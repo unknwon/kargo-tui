@@ -108,7 +108,7 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 		}
 	}
 
-	ctxNames, ctxBuilder, ctxLogin, ctxRelogin, ctxDelete := contextSwitcher(cfg)
+	ctxNames, ctxBuilder, ctxLogin, ctxRelogin, ctxDelete, ctxPersistProject := contextSwitcher(cfg)
 
 	// Detect the terminal's background brightness while we're still in
 	// cooked mode. Doing this after bubbletea takes over would just
@@ -124,7 +124,7 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 	if project == "" {
 		m := tui.NewWithPicker(client, active.Name).
 			WithArgoShards(active.Name, shards).
-			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin, ctxDelete)
+			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin, ctxDelete, ctxPersistProject)
 		if termDetected {
 			m = m.WithDetectedDark(termDark)
 		}
@@ -144,7 +144,7 @@ func runTUI(ctx context.Context, cmd *cli.Command) error {
 		}
 		m := tui.New(client, active.Name, project, deploys, freights).
 			WithArgoShards(active.Name, shards).
-			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin, ctxDelete)
+			WithContexts(ctxNames, ctxBuilder, ctxLogin, ctxRelogin, ctxDelete, ctxPersistProject)
 		if termDetected {
 			m = m.WithDetectedDark(termDark)
 		}
@@ -197,15 +197,19 @@ func primeToken(client *kargo.Client, active *config.Context) {
 // chosen name, a login callback that runs the SSO flow against a new
 // Kargo URL and saves it as a new context, and a relogin callback that
 // re-runs SSO against an *existing* context, preserving its
-// insecureSkipTLSVerify and project flags. The builder also persists the
-// chosen context as CurrentContext so the next launch is non-interactive;
-// failures from Save are non-fatal — the in-memory switch still completes.
+// insecureSkipTLSVerify and project flags. It also returns a delete
+// callback that removes a context, and a persistProject callback that
+// records the active project on its context so the next cold start
+// reopens it. The builder also persists the chosen context as
+// CurrentContext so the next launch is non-interactive; failures from
+// Save are non-fatal — the in-memory switch still completes.
 func contextSwitcher(cfg *config.Config) (
 	[]string,
 	func(string) (*kargo.Client, string, error),
 	func(ctx context.Context, url string, status func(string)) (string, error),
 	func(ctx context.Context, contextName string, status func(string)) (string, error),
 	func(name string) error,
+	func(contextName, project string),
 ) {
 	names := make([]string, 0, len(cfg.Contexts))
 	for _, c := range cfg.Contexts {
@@ -293,7 +297,28 @@ func contextSwitcher(cfg *config.Config) (
 		*cfg = *fresh
 		return nil
 	}
-	return names, build, login, relogin, del
+	persistProject := func(contextName, project string) {
+		if contextName == "" || project == "" {
+			return
+		}
+		// Read fresh from disk so a concurrent CLI edit isn't clobbered,
+		// then record the active project so the next cold start reopens it.
+		// Best-effort: a save failure shouldn't disrupt the running TUI.
+		fresh, err := config.Load()
+		if err != nil {
+			return
+		}
+		c := fresh.Find(contextName)
+		if c == nil || c.Project == project {
+			return
+		}
+		c.Project = project
+		if err := config.Save(fresh); err != nil {
+			return
+		}
+		*cfg = *fresh
+	}
+	return names, build, login, relogin, del, persistProject
 }
 
 // authCommand builds the `kargo-tui auth ...` subcommand tree.

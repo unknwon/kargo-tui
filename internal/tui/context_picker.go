@@ -86,6 +86,9 @@ func (m Model) updateContextPicker(ctx context.Context, msg tea.Msg) (tea.Model,
 		}
 		if msg.defaultProject != "" {
 			m.phase = phaseRunning
+			if m.ctxPersistProject != nil {
+				m.ctxPersistProject(m.contextName, m.project)
+			}
 			// Re-fit tables in case the WindowSizeMsg already landed
 			// during the picker phase (the picker handlers only store
 			// width/height on the model and skip table.SetHeight, so

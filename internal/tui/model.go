@@ -230,14 +230,19 @@ type Model struct {
 	// preserving its saved insecureSkipTLSVerify / project flags so the
 	// re-auth flow doesn't silently strip them. Used by the inline `R`
 	// handler when the persistent auth banner is up.
-	ctxRelogin     func(ctx context.Context, contextName string, status func(string)) (string, error)
-	ctxDelete      func(name string) error
-	ctxSend        func(tea.Msg) // injected from main so login goroutine can stream status updates
-	ctxAdding      bool
-	ctxLoggingIn   bool
-	ctxLoginStatus string
-	ctxLoginCancel context.CancelFunc
-	ctxURLInput    textinput.Model
+	ctxRelogin func(ctx context.Context, contextName string, status func(string)) (string, error)
+	ctxDelete  func(name string) error
+	// ctxPersistProject saves the active project back to the named
+	// context's config so the next cold start reopens it. Invoked whenever
+	// the running phase begins for a project (picker selection or a context
+	// switch that lands on a single project).
+	ctxPersistProject func(contextName, project string)
+	ctxSend           func(tea.Msg) // injected from main so login goroutine can stream status updates
+	ctxAdding         bool
+	ctxLoggingIn      bool
+	ctxLoginStatus    string
+	ctxLoginCancel    context.CancelFunc
+	ctxURLInput       textinput.Model
 	// ctxDeleting holds the name of the context awaiting a delete
 	// confirmation. Empty when no confirmation is in flight. Set when the
 	// user presses `D` in the picker browse mode; cleared on y/n/esc.
@@ -502,12 +507,14 @@ func (m Model) WithContexts(
 	login func(ctx context.Context, url string, status func(string)) (string, error),
 	relogin func(ctx context.Context, contextName string, status func(string)) (string, error),
 	del func(name string) error,
+	persistProject func(contextName, project string),
 ) Model {
 	m.ctxNames = names
 	m.ctxBuilder = build
 	m.ctxLogin = login
 	m.ctxRelogin = relogin
 	m.ctxDelete = del
+	m.ctxPersistProject = persistProject
 	ti := newInput("› ", "type to filter contexts…", 64)
 	m.ctxFilter = ti
 	urlIn := newInput("URL › ", "https://kargo.example.com", 256)
