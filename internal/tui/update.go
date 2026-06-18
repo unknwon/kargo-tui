@@ -366,9 +366,11 @@ func (m Model) updateInner(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd
 			m.noteAuthFailure(msg.err)
 			m.promoteError = msg.err
 			m.yankedMessage = "promote failed: " + msg.err.Error()
+			m.yankedIsError = true
 		} else {
 			m.promoteResult = msg.promotionName
 			m.yankedMessage = "promotion created: " + msg.promotionName
+			m.yankedIsError = false
 		}
 		m.yankedAt = time.Now()
 		if m.overlay == overlayPromote {
@@ -396,10 +398,13 @@ func (m Model) updateInner(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd
 		if msg.err != nil {
 			m.noteAuthFailure(msg.err)
 			m.yankedMessage = "refresh warehouses failed: " + msg.err.Error()
+			m.yankedIsError = true
 		} else if msg.refreshed == 0 {
 			m.yankedMessage = "no warehouses to refresh in " + msg.project
+			m.yankedIsError = false
 		} else {
 			m.yankedMessage = fmt.Sprintf("refreshed %d warehouse(s) in %s", msg.refreshed, msg.project)
+			m.yankedIsError = false
 		}
 		m.yankedAt = time.Now()
 		return m, nil
@@ -822,6 +827,7 @@ func (m Model) updateInner(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd
 			}
 			m.refreshingWarehouses = true
 			m.yankedMessage = "refreshing warehouses in " + m.project + "…"
+			m.yankedIsError = false
 			m.yankedAt = time.Now()
 			return m, refreshWarehousesCmd(m.client, m.project)
 		case "L":
@@ -892,6 +898,7 @@ func (m Model) updateInner(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd
 			} else {
 				m.yankedMessage = "mouse capture off (terminal selection enabled)"
 			}
+			m.yankedIsError = false
 			m.yankedAt = time.Now()
 			return m, nil
 		case "T":
@@ -905,6 +912,7 @@ func (m Model) updateInner(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd
 			} else {
 				m.yankedMessage = "theme: Pierre Dark"
 			}
+			m.yankedIsError = false
 			m.yankedAt = time.Now()
 			return m, nil
 		case "s":
