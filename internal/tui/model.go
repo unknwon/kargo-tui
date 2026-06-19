@@ -601,6 +601,9 @@ func newBase() Model {
 			viewControlFlow: sortByName,
 		},
 		graphRender: &graphRenderCache{},
+		// Graph view starts expanded so every stage box shows its full
+		// Health/Argo/Sync/Promo detail by default; `x` toggles to compact.
+		graphExpanded: true,
 	}
 }
 
