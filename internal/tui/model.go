@@ -183,6 +183,10 @@ type Model struct {
 	// on the next successful tick or after a successful re-login.
 	authExpired    bool
 	authExpiredMsg string
+	// autoReloginTried latches once the cold-start auto-SSO has fired so a
+	// failed/cancelled auto-login doesn't loop. After that the user drives
+	// recovery manually with R.
+	autoReloginTried bool
 
 	// helpVP renders the help overlay body so it can scroll
 	// independently of the table/details viewports.
@@ -231,7 +235,14 @@ type Model struct {
 	// re-auth flow doesn't silently strip them. Used by the inline `R`
 	// handler when the persistent auth banner is up.
 	ctxRelogin func(ctx context.Context, contextName string, status func(string)) (string, error)
-	ctxDelete  func(name string) error
+	// ctxCanRelogin reports whether a context can recover via the SSO
+	// re-login flow, i.e. it has a saved refresh token. Admin-token contexts
+	// have no refresh token and no SSO, so auto-relogin and the `R` banner
+	// action must not fire a (possibly browser-opening) SSO flow for them.
+	// Nil is treated as "always allowed" so callers that never wire it keep
+	// the old behaviour.
+	ctxCanRelogin func(name string) bool
+	ctxDelete     func(name string) error
 	// ctxPersistProject saves the active project back to the named
 	// context's config so the next cold start reopens it. Invoked whenever
 	// the running phase begins for a project (picker selection or a context
@@ -276,6 +287,13 @@ type Model struct {
 	// value copies.
 	graphLayoutVersion int
 	graphRender        *graphRenderCache
+
+	// graphExpanded controls how much each stage box shows. False (the
+	// default) renders compact boxes mirroring the Kargo web UI: freight
+	// SHA + alias + age, with state conveyed by the border colour. True
+	// restores the full Health/Argo/Sync/Promo rows. The selected stage's
+	// complete detail always lives in the side panel regardless.
+	graphExpanded bool
 
 	// Graph-view name search. `/` opens m.filter as usual; in graph view
 	// the filter doesn't hide nodes (that would break the DAG layout)
@@ -506,6 +524,7 @@ func (m Model) WithContexts(
 	build func(name string) (*kargo.Client, string, error),
 	login func(ctx context.Context, url string, status func(string)) (string, error),
 	relogin func(ctx context.Context, contextName string, status func(string)) (string, error),
+	canRelogin func(name string) bool,
 	del func(name string) error,
 	persistProject func(contextName, project string),
 ) Model {
@@ -513,6 +532,7 @@ func (m Model) WithContexts(
 	m.ctxBuilder = build
 	m.ctxLogin = login
 	m.ctxRelogin = relogin
+	m.ctxCanRelogin = canRelogin
 	m.ctxDelete = del
 	m.ctxPersistProject = persistProject
 	ti := newInput("› ", "type to filter contexts…", 64)
@@ -581,6 +601,9 @@ func newBase() Model {
 			viewControlFlow: sortByName,
 		},
 		graphRender: &graphRenderCache{},
+		// Graph view starts expanded so every stage box shows its full
+		// Health/Argo/Sync/Promo detail by default; `x` toggles to compact.
+		graphExpanded: true,
 	}
 }
 
