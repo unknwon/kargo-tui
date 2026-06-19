@@ -24,6 +24,14 @@ func (m *Model) startReloginCurrentContext() (tea.Cmd, bool) {
 	if m.ctxRelogin == nil || m.contextName == "" {
 		return nil, false
 	}
+	// SSO re-login only makes sense for a context that has a refresh token.
+	// An admin-token context can't recover this way, and on a server that
+	// also advertises OIDC the flow would pop an unwanted browser. Gate on
+	// the predicate (nil → allowed, preserving old behaviour for callers
+	// that don't wire it).
+	if m.ctxCanRelogin != nil && !m.ctxCanRelogin(m.contextName) {
+		return nil, false
+	}
 	name := m.contextName
 	relogin := m.ctxRelogin
 	url := ""
@@ -103,12 +111,14 @@ func (m Model) updateInner(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd
 		m.ctxSend = sm.Send
 		m.restartStageWatch()
 		// Cold-start recovery: if the saved session was already dead at
-		// launch, the silent refresh-token exchange has failed (rotated
+		// launch and the context can re-login via SSO (it has a refresh
+		// token), the silent refresh-token exchange has failed (rotated
 		// signing key or a single-use refresh token already claimed), so
-		// the only path back is a full browser SSO flow. Kick it off
-		// automatically now that ctxSend is wired, rather than stranding the
-		// user on the banner. Only fires once per launch (autoReloginTried
-		// latches) and only when re-login is actually possible.
+		// kick off the browser SSO flow automatically now that ctxSend is
+		// wired rather than stranding the user on the banner. Fires once per
+		// launch (autoReloginTried latches). startReloginCurrentContext
+		// gates on the context being SSO, so an expired admin-token context
+		// leaves the banner up for a manual token fix instead.
 		if m.authExpired && !m.autoReloginTried {
 			m.autoReloginTried = true
 			if cmd, ok := m.startReloginCurrentContext(); ok {
@@ -829,9 +839,12 @@ func (m Model) updateInner(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd
 			return m, textinput.Blink
 		case "R":
 			// When the auth banner is up, R re-logs in via SSO (the banner
-			// instructs "Press R to re-login"). The silent refresh-token
-			// path has already failed by the time the banner shows, so a
-			// full browser flow is the only recovery.
+			// instructs "Press R to re-login"). The silent refresh-token path
+			// has already failed by the time the banner shows, so a full
+			// browser flow is the recovery. startReloginCurrentContext returns
+			// !ok for an admin-token context (no refresh token, no SSO); R is a
+			// no-op there since those recover by re-running auth login with a
+			// fresh token outside the TUI.
 			if m.authExpired {
 				cmd, ok := m.startReloginCurrentContext()
 				if !ok {

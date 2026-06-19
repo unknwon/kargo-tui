@@ -235,7 +235,14 @@ type Model struct {
 	// re-auth flow doesn't silently strip them. Used by the inline `R`
 	// handler when the persistent auth banner is up.
 	ctxRelogin func(ctx context.Context, contextName string, status func(string)) (string, error)
-	ctxDelete  func(name string) error
+	// ctxCanRelogin reports whether a context can recover via the SSO
+	// re-login flow, i.e. it has a saved refresh token. Admin-token contexts
+	// have no refresh token and no SSO, so auto-relogin and the `R` banner
+	// action must not fire a (possibly browser-opening) SSO flow for them.
+	// Nil is treated as "always allowed" so callers that never wire it keep
+	// the old behaviour.
+	ctxCanRelogin func(name string) bool
+	ctxDelete     func(name string) error
 	// ctxPersistProject saves the active project back to the named
 	// context's config so the next cold start reopens it. Invoked whenever
 	// the running phase begins for a project (picker selection or a context
@@ -517,6 +524,7 @@ func (m Model) WithContexts(
 	build func(name string) (*kargo.Client, string, error),
 	login func(ctx context.Context, url string, status func(string)) (string, error),
 	relogin func(ctx context.Context, contextName string, status func(string)) (string, error),
+	canRelogin func(name string) bool,
 	del func(name string) error,
 	persistProject func(contextName, project string),
 ) Model {
@@ -524,6 +532,7 @@ func (m Model) WithContexts(
 	m.ctxBuilder = build
 	m.ctxLogin = login
 	m.ctxRelogin = relogin
+	m.ctxCanRelogin = canRelogin
 	m.ctxDelete = del
 	m.ctxPersistProject = persistProject
 	ti := newInput("› ", "type to filter contexts…", 64)
