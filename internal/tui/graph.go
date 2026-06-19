@@ -71,6 +71,11 @@ type graphCfg struct {
 	VMargin int
 }
 
+// nodeHPad is the inner horizontal padding inside a node box: cells of
+// blank space between each side border and the content, so the card has
+// breathing room on the left and right like the Kargo web UI.
+const nodeHPad = 1
+
 func defaultGraphCfg() graphCfg {
 	return graphCfg{
 		NodeW:   28, // wide enough for "Argo: Healthy/Synced" lines
@@ -400,10 +405,7 @@ func layoutGraph(stages []kargo.Stage, cfg graphCfg, m Model) graphLayout {
 		if dummyNames[name] {
 			return 1
 		}
-		// title bar + one pad row + rows + bottom border. The pad row gives
-		// the same breathing space under the header in every mode so compact
-		// and expanded boxes read consistently.
-		return 3 + len(rowsForNode[name])
+		return 2 + len(rowsForNode[name]) // title bar + rows + bottom border
 	}
 	for _, s := range stages {
 		stage := byName[s.Name]
@@ -415,19 +417,21 @@ func layoutGraph(stages []kargo.Stage, cfg graphCfg, m Model) graphLayout {
 	// without an ellipsis. Box layout stays uniform: every column uses
 	// the same width, derived from the widest content in the graph.
 	//
-	// Required inner width per row = keyColumnWidth(rows) + 1 (separator)
-	// + value width. Required box width = inner + 2 (borders). The stage
-	// name (rendered on row 0) only needs name + 2.
+	// Box overhead = 2 borders + a 1-cell inner pad on each side
+	// (nodeHPad * 2), so content sits off the border like the web UI card.
+	// Required box width = content + that overhead. The stage name on the
+	// title bar uses the same pad.
+	const overhead = 2 + nodeHPad*2
 	required := cfg.NodeW
 	for _, s := range stages {
 		rows := rowsForNode[s.Name]
 		keyW := keyColumnWidth(rows)
 		for _, r := range rows {
-			if w := keyW + 1 + ansi.StringWidth(r.Value) + 2; w > required {
+			if w := keyW + 1 + ansi.StringWidth(r.Value) + overhead; w > required {
 				required = w
 			}
 		}
-		if nameW := ansi.StringWidth(s.Name) + 2; nameW > required {
+		if nameW := ansi.StringWidth(s.Name) + overhead; nameW > required {
 			required = nameW
 		}
 	}
@@ -1331,10 +1335,11 @@ func drawNode(cv *canvas, n graphNode, border, bgStyle lipgloss.Style, cursor bo
 	// dark reverse-video foreground on the state colour so it reads as a
 	// filled chip; on the cursor it flips to the selected colour. The strip
 	// spans the full box width so it caps the box top corner-to-corner and the
-	// side borders meet it flush, with the name inset one cell from the edge.
+	// side borders meet it flush. The name is inset by nodeHPad so it lines up
+	// with the body content below.
 	barBG := borderColor
 	titleStyle := lipgloss.NewStyle().Foreground(darkFg).Background(barBG).Bold(true)
-	title := " " + n.Stage.Name
+	title := strings.Repeat(" ", nodeHPad) + n.Stage.Name
 	cv.writeAt(x, y, fitToWidth(title, w), titleStyle)
 
 	// Body border below the title bar — rounded corners on the bottom,
@@ -1360,14 +1365,16 @@ func drawNode(cv *canvas, n graphNode, border, bgStyle lipgloss.Style, cursor bo
 		}
 	}
 
-	innerW := w - 2
+	// Content sits inside the borders and the inner horizontal pad: it
+	// starts at contentX and is innerW cells wide.
+	contentX := x + 1 + nodeHPad
+	innerW := w - 2 - 2*nodeHPad
 	if innerW < 1 || h < 3 {
 		return
 	}
 
-	// Body rows start one pad row below the title bar (row y+1 stays blank)
-	// so the header has consistent breathing space above the first line.
-	rowY := y + 2
+	// Body rows start just under the title bar.
+	rowY := y + 1
 
 	// Subsequent rows: the key/value pairs from buildNodeRows. Key in
 	// muted, value in its semantic colour (or normal foreground when
@@ -1377,21 +1384,15 @@ func drawNode(cv *canvas, n graphNode, border, bgStyle lipgloss.Style, cursor bo
 		if rowY >= y+h-1 {
 			break
 		}
-		// Render "key  value" with the key padded to a small fixed
-		// width so values line up. Truncate the value if the combined
-		// line would overrun innerW.
+		// Render "key  value" with the key padded to a small fixed width so
+		// values line up. When there are no keys at all (compact mode, all
+		// keys empty) the key column and its separator collapse so the value
+		// sits flush at contentX, matching the inset of an expanded box's key
+		// column. Truncate the value if it would overrun innerW.
 		keyW := keyColumnWidth(n.Rows)
 		if keyW > innerW-2 {
 			keyW = innerW - 2
 		}
-		key := fitToWidth(r.Key, keyW)
-		valW := innerW - keyW - 1 // 1 cell separator
-		if valW < 1 {
-			valW = 1
-		}
-		val := fitToWidth(r.Value, valW)
-		cv.writeAt(x+1, rowY, key, keyStyle)
-		cv.set(x+1+keyW, rowY, ' ', bgStyle)
 		valColor := r.ValueColor
 		if valColor == nil {
 			valColor = normal
@@ -1400,7 +1401,20 @@ func drawNode(cv *canvas, n graphNode, border, bgStyle lipgloss.Style, cursor bo
 		if r.ValueBold {
 			valStyle = valStyle.Bold(true)
 		}
-		cv.writeAt(x+1+keyW+1, rowY, val, valStyle)
+		if keyW == 0 {
+			cv.writeAt(contentX, rowY, fitToWidth(r.Value, innerW), valStyle)
+			rowY++
+			continue
+		}
+		key := fitToWidth(r.Key, keyW)
+		valW := innerW - keyW - 1 // 1 cell separator
+		if valW < 1 {
+			valW = 1
+		}
+		val := fitToWidth(r.Value, valW)
+		cv.writeAt(contentX, rowY, key, keyStyle)
+		cv.set(contentX+keyW, rowY, ' ', bgStyle)
+		cv.writeAt(contentX+keyW+1, rowY, val, valStyle)
 		rowY++
 	}
 }
