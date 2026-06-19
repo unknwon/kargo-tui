@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"image/color"
+	"math"
 	"sort"
 	"strings"
 
@@ -74,38 +75,48 @@ func defaultGraphCfg() graphCfg {
 	return graphCfg{
 		NodeW:   28, // wide enough for "Argo: Healthy/Synced" lines
 		NodeH:   0,  // unused — box height now derives from row count
-		ColGap:  6,
-		RowGap:  1,
+		ColGap:  18, // room for staggered fan-in/fan-out buses without overlap
+		RowGap:  2,  // vertical breathing room so edges separate
 		HMargin: 1,
 		VMargin: 0,
 	}
 }
 
-// buildNodeRows produces the key/value lines a stage box should show,
-// mirroring the deploy list's columns. Rows with no value are omitted
-// (e.g. a stage with no Argo apps drops the Argo/Sync rows entirely)
-// so each box hugs only the data the stage actually has.
+// buildNodeRows produces the key/value lines a stage box should show.
+//
+// Compact mode (m.graphExpanded false, the default) mirrors the Kargo web
+// UI card: just the freight SHA, its alias, and an age, all rendered
+// without key labels so the values sit flush-left. State (health, sync,
+// promo) is conveyed by the box border colour via worstState, and the
+// selected stage's full detail lives in the side panel.
+//
+// Expanded mode adds the deploy list's columns back: Health, Argo, Sync,
+// Promo, Shard. Rows with no value are omitted (e.g. a stage with no Argo
+// apps drops the Argo/Sync rows entirely) so each box hugs only the data
+// the stage actually has.
 func buildNodeRows(s *kargo.Stage, m Model) []nodeRow {
 	var rows []nodeRow
-	if s.Health != "" {
-		rows = append(rows, nodeRow{
-			Key: "Health", Value: s.Health,
-			ValueColor: stageHealthColor(s.Health), ValueBold: true,
-		})
-	}
-	if s.IsControlFlow {
-		rows = append(rows, nodeRow{Key: "Argo", Value: "control-flow", ValueColor: progressing})
-	} else if len(s.ArgoCDApps) > 0 {
-		ah, as := worstArgo(s.ArgoCDApps)
-		if ah != "" {
-			rows = append(rows, nodeRow{Key: "Argo", Value: ah, ValueColor: argoHealthColorVal(ah)})
+	if m.graphExpanded {
+		if s.Health != "" {
+			rows = append(rows, nodeRow{
+				Key: "Health", Value: s.Health,
+				ValueColor: stageHealthColor(s.Health), ValueBold: true,
+			})
 		}
-		if as != "" {
-			rows = append(rows, nodeRow{Key: "Sync", Value: as, ValueColor: argoSyncColorVal(as)})
+		if s.IsControlFlow {
+			rows = append(rows, nodeRow{Key: "Argo", Value: "control-flow", ValueColor: progressing})
+		} else if len(s.ArgoCDApps) > 0 {
+			ah, as := worstArgo(s.ArgoCDApps)
+			if ah != "" {
+				rows = append(rows, nodeRow{Key: "Argo", Value: ah, ValueColor: argoHealthColorVal(ah)})
+			}
+			if as != "" {
+				rows = append(rows, nodeRow{Key: "Sync", Value: as, ValueColor: argoSyncColorVal(as)})
+			}
 		}
-	}
-	if s.LastPromo != "" {
-		rows = append(rows, nodeRow{Key: "Promo", Value: s.LastPromo, ValueColor: promoColorVal(s.LastPromo)})
+		if s.LastPromo != "" {
+			rows = append(rows, nodeRow{Key: "Promo", Value: s.LastPromo, ValueColor: promoColorVal(s.LastPromo)})
+		}
 	}
 	var freightSHA, freightAlias string
 	switch {
@@ -117,8 +128,15 @@ func buildNodeRows(s *kargo.Stage, m Model) []nodeRow {
 	case s.FreightSummary != "":
 		freightSHA = s.FreightSummary
 	}
+	// In compact mode the freight value has no key label so it sits flush
+	// under the stage name like the web card. In expanded mode it keeps
+	// the "Freight" key to line up with the rows above it.
+	freightKey := ""
+	if m.graphExpanded {
+		freightKey = "Freight"
+	}
 	if freightSHA != "" {
-		rows = append(rows, nodeRow{Key: "Freight", Value: freightSHA})
+		rows = append(rows, nodeRow{Key: freightKey, Value: freightSHA})
 		if freightAlias != "" {
 			// Continuation row: empty key so the alias sits flush under
 			// the SHA, indented by the key column the renderer reserves.
@@ -133,9 +151,13 @@ func buildNodeRows(s *kargo.Stage, m Model) []nodeRow {
 		age = ageString(s.Created) + " ago"
 	}
 	if age != "" {
-		rows = append(rows, nodeRow{Key: "Age", Value: age, ValueColor: muted})
+		ageKey := ""
+		if m.graphExpanded {
+			ageKey = "Age"
+		}
+		rows = append(rows, nodeRow{Key: ageKey, Value: age, ValueColor: muted})
 	}
-	if s.Shard != "" {
+	if m.graphExpanded && s.Shard != "" {
 		rows = append(rows, nodeRow{Key: "Shard", Value: s.Shard, ValueColor: muted})
 	}
 	return rows
@@ -408,76 +430,282 @@ func layoutGraph(stages []kargo.Stage, cfg graphCfg, m Model) graphLayout {
 	}
 	cfg.NodeW = required
 
-	// Per-slot row height = max box height across all layers for that
-	// slot. Keeps boxes in the same row visually aligned.
-	maxSlot := 0
-	for _, ns := range byLayer {
-		if len(ns) > maxSlot {
-			maxSlot = len(ns)
+	// Vertical coordinate assignment. Instead of snapping every node to a
+	// shared per-slot centerline (which forces edges to jog whenever two
+	// connected nodes sit at different slot indices), give each node its
+	// own Y centre and run median-alignment sweeps: pull each node toward
+	// the median centre of its neighbours, then push apart any boxes that
+	// would overlap inside a column. Single-parent / single-child chains
+	// straighten to a flat line, matching the Kargo web UI, while fan-outs
+	// still bend only where they must.
+	segChildren := make(map[string][]string)
+	for _, s := range segments {
+		segChildren[s.from] = append(segChildren[s.from], s.to)
+	}
+
+	// Initial centres: stack each layer's nodes top-to-bottom by height with
+	// RowGap between them, so the starting layout has no overlaps.
+	center := make(map[string]float64)
+	for l := 0; l <= maxLayer; l++ {
+		y := float64(cfg.VMargin)
+		for _, name := range byLayer[l] {
+			h := float64(heightFor(name))
+			center[name] = y + h/2
+			y += h + float64(cfg.RowGap)
 		}
 	}
-	slotH := make([]int, maxSlot)
-	for _, layerNodes := range byLayer {
-		for slotIdx, name := range layerNodes {
-			h := heightFor(name)
-			if h > slotH[slotIdx] {
-				slotH[slotIdx] = h
+
+	// median returns the median of a sorted-able slice of centres. For an
+	// even count it averages the two middle values, which keeps a node fed
+	// by two neighbours centred between them.
+	median := func(vals []float64) float64 {
+		if len(vals) == 0 {
+			return 0
+		}
+		sort.Float64s(vals)
+		n := len(vals)
+		if n%2 == 1 {
+			return vals[n/2]
+		}
+		return (vals[n/2-1] + vals[n/2]) / 2
+	}
+
+	// minGapBetween is the minimum centre-to-centre distance two slot
+	// neighbours need to not overlap: half of each box plus the row gap.
+	minGapBetween := func(a, b string) float64 {
+		return float64(heightFor(a))/2 + float64(heightFor(b))/2 + float64(cfg.RowGap)
+	}
+
+	// resolveOverlaps separates a layer's boxes without dragging the whole
+	// column to the top. It first pushes overlapping pairs DOWN in slot
+	// order, then re-centres the resulting block on the mean of the desired
+	// centres, so a fan-in node placed at its parents' median stays near the
+	// middle instead of being yanked up against the margin.
+	resolveOverlaps := func(layerNodes []string) {
+		if len(layerNodes) == 0 {
+			return
+		}
+		desiredSum := 0.0
+		for _, n := range layerNodes {
+			desiredSum += center[n]
+		}
+		// Push down so each box clears the previous one.
+		for i := 1; i < len(layerNodes); i++ {
+			prev, cur := layerNodes[i-1], layerNodes[i]
+			gap := minGapBetween(prev, cur)
+			if center[cur]-center[prev] < gap {
+				center[cur] = center[prev] + gap
+			}
+		}
+		// The push-down only ever moves boxes down, shifting the block's
+		// centroid below where the nodes wanted to be. Shift the whole layer
+		// back up by that drift so it re-centres on the desired mean.
+		newSum := 0.0
+		for _, n := range layerNodes {
+			newSum += center[n]
+		}
+		drift := (newSum - desiredSum) / float64(len(layerNodes))
+		for _, n := range layerNodes {
+			center[n] -= drift
+		}
+	}
+
+	// Alignment sweeps. Forward passes align children to parents; backward
+	// passes align parents to children. A handful of iterations converges
+	// for the small DAGs Kargo produces.
+	const alignSweeps = 6
+	for sweep := 0; sweep < alignSweeps; sweep++ {
+		// Forward: layers left to right, pull toward parents' median.
+		for l := 1; l <= maxLayer; l++ {
+			for _, name := range byLayer[l] {
+				ps := segParents[name]
+				if len(ps) == 0 {
+					continue
+				}
+				vals := make([]float64, 0, len(ps))
+				for _, p := range ps {
+					vals = append(vals, center[p])
+				}
+				center[name] = median(vals)
+			}
+			resolveOverlaps(byLayer[l])
+		}
+		// Backward: layers right to left, pull toward children's median.
+		for l := maxLayer - 1; l >= 0; l-- {
+			for _, name := range byLayer[l] {
+				cs := segChildren[name]
+				if len(cs) == 0 {
+					continue
+				}
+				vals := make([]float64, 0, len(cs))
+				for _, c := range cs {
+					vals = append(vals, center[c])
+				}
+				center[name] = median(vals)
+			}
+			resolveOverlaps(byLayer[l])
+		}
+	}
+
+	// Compaction. The sweeps can leave large vertical gaps: a deep fan-out
+	// pulls its chain's root far down to centre on the subtree, while a
+	// short sibling chain stays near the top, so independent components
+	// drift apart and leave dead rows between them. Compact that slack by
+	// pulling boxes up toward their predecessor, but move whole "straight
+	// runs" together so a horizontal spine doesn't get bent.
+	//
+	// A straight run is the set of nodes joined by edges whose endpoints
+	// share a Y (centre). Union them so compaction shifts the entire run as
+	// one rigid body.
+	parent := make(map[string]string, len(center))
+	find := func(a string) string {
+		for parent[a] != a {
+			parent[a] = parent[parent[a]]
+			a = parent[a]
+		}
+		return a
+	}
+	union := func(a, b string) {
+		ra, rb := find(a), find(b)
+		if ra != rb {
+			parent[ra] = rb
+		}
+	}
+	for name := range center {
+		parent[name] = name
+	}
+	for _, s := range segments {
+		if center[s.from] == center[s.to] {
+			union(s.from, s.to)
+		}
+	}
+
+	// Gravity compaction: a few passes, each pulling every layer's boxes up
+	// to just clear the box above. A box can only rise as far as the highest
+	// box in its straight run permits, so we compute the slack per run and
+	// move the whole run by the minimum slack. Repeated passes let a run
+	// settle once the runs it depends on have moved.
+	const compactPasses = 8
+	for pass := 0; pass < compactPasses; pass++ {
+		// runSlack[root] = how far this straight run may rise (min over its
+		// members of the gap above each member within its column).
+		runSlack := make(map[string]float64)
+		hasSlack := make(map[string]bool)
+		for l := 0; l <= maxLayer; l++ {
+			ln := byLayer[l]
+			for i, name := range ln {
+				var ceiling float64
+				if i == 0 {
+					ceiling = float64(cfg.VMargin) + float64(heightFor(name))/2
+				} else {
+					ceiling = center[ln[i-1]] + minGapBetween(ln[i-1], name)
+				}
+				slack := center[name] - ceiling
+				root := find(name)
+				if !hasSlack[root] || slack < runSlack[root] {
+					runSlack[root] = slack
+					hasSlack[root] = true
+				}
+			}
+		}
+		moved := false
+		for root, slack := range runSlack {
+			if slack <= 0 {
+				continue
+			}
+			for name := range center {
+				if find(name) == root {
+					center[name] -= slack
+				}
+			}
+			moved = true
+		}
+		if !moved {
+			break
+		}
+	}
+
+	// Straighten pass: after compaction, pull every node toward the centre of
+	// its neighbours one more time, but ONLY accept the move when the new
+	// centre still clears its slot neighbours (so we never reintroduce an
+	// overlap). This recovers straight horizontal runs that compaction's
+	// upward packing knocked off-axis.
+	//
+	// A node aligns to whichever side forms its "spine": a single parent or a
+	// single child is a straight link the eye expects to stay flat, so it wins
+	// over a fan on the other side. When the chosen side has a single
+	// neighbour the node snaps exactly onto it (a dead-straight run); a fan
+	// side uses the median. This keeps e.g. a single-parent node that fans out
+	// to three children aligned with its parent instead of drifting to the
+	// children's median and bending the incoming edge.
+	straighten := func() {
+		for l := 0; l <= maxLayer; l++ {
+			ln := byLayer[l]
+			for i, name := range ln {
+				ps, cs := segParents[name], segChildren[name]
+				var side []string
+				switch {
+				case len(ps) == 0 && len(cs) == 0:
+					continue
+				case len(ps) == 1:
+					side = ps // straight link from the single parent wins
+				case len(cs) == 1:
+					side = cs // straight link to the single child wins
+				case len(ps) > 0:
+					side = ps
+				default:
+					side = cs
+				}
+				vals := make([]float64, 0, len(side))
+				for _, nb := range side {
+					vals = append(vals, center[nb])
+				}
+				want := median(vals)
+				// Floor: must clear the box above in this slot.
+				lo := math.Inf(-1)
+				if i > 0 {
+					lo = center[ln[i-1]] + minGapBetween(ln[i-1], name)
+				}
+				// Ceiling: must stay above the box below.
+				hi := math.Inf(1)
+				if i < len(ln)-1 {
+					hi = center[ln[i+1]] - minGapBetween(name, ln[i+1])
+				}
+				if want >= lo && want <= hi {
+					center[name] = want
+				}
 			}
 		}
 	}
-	// Y offset per slot (cumulative height + RowGap between slots).
-	slotY := make([]int, maxSlot)
-	cum := cfg.VMargin
-	for i := 0; i < maxSlot; i++ {
-		slotY[i] = cum
-		cum += slotH[i] + cfg.RowGap
+	for sweep := 0; sweep < 4; sweep++ {
+		straighten()
 	}
 
-	// Per-slot centerline = midpoint of the slot's row band. Boxes get
-	// placed so their own vertical centre (Y + H/2, integer division)
-	// lands exactly on this line. That keeps every box's centre aligned
-	// across columns even when box heights differ by an odd number of
-	// rows, which is what allows the connector arrows to enter and exit
-	// at a consistent row.
-	slotCenter := make([]int, maxSlot)
-	for i := 0; i < maxSlot; i++ {
-		slotCenter[i] = slotY[i] + slotH[i]/2
-	}
-
-	// Per-layer pixel height = sum of slot heights this layer actually
-	// occupies + gaps between them. Used to center shorter columns
-	// against the tallest column so the graph reads as middle-aligned
-	// instead of top-aligned.
-	layerPixelH := make([]int, maxLayer+1)
-	maxLayerH := 0
+	// Normalise so the topmost box sits at the vertical margin (centres can
+	// have drifted negative or far down during the sweeps).
+	minCenter := 0.0
+	first := true
 	for l := 0; l <= maxLayer; l++ {
-		n := len(byLayer[l])
-		if n == 0 {
-			continue
-		}
-		h := 0
-		for s := 0; s < n; s++ {
-			h += slotH[s]
-		}
-		h += (n - 1) * cfg.RowGap
-		layerPixelH[l] = h
-		if h > maxLayerH {
-			maxLayerH = h
+		for _, name := range byLayer[l] {
+			top := center[name] - float64(heightFor(name))/2
+			if first || top < minCenter {
+				minCenter = top
+				first = false
+			}
 		}
 	}
+	shift := float64(cfg.VMargin) - minCenter
 
 	// Materialise nodes. Box width is uniform (cfg.NodeW); box height is
-	// per-node so each box hugs its content. Y is chosen so the box's
-	// own midline aligns with the slot's centerline, then offset by the
-	// layer's centering shift.
+	// per-node so each box hugs its content. Y comes from the aligned
+	// centre minus half the box height.
 	nodes := make([]graphNode, 0, len(stages)+len(dummyNames))
 	idxByName := make(map[string]int, len(stages)+len(dummyNames))
 	for l := 0; l <= maxLayer; l++ {
-		yOffset := (maxLayerH - layerPixelH[l]) / 2
 		for s, name := range byLayer[l] {
 			h := heightFor(name)
 			x := cfg.HMargin + l*(cfg.NodeW+cfg.ColGap)
-			y := slotCenter[s] - h/2 + yOffset
+			y := int(center[name]+shift) - h/2
 			idxByName[name] = len(nodes)
 			node := graphNode{
 				Layer: l,
@@ -510,15 +738,20 @@ func layoutGraph(stages []kargo.Stage, cfg graphCfg, m Model) graphLayout {
 		edges = append(edges, graphEdge{From: fi, To: ti, Original: origEdgeOf(s)})
 	}
 
-	// Total canvas size. Height already accounted for via slotY/cum.
+	// Total canvas size. Width spans every layer column plus gaps; height
+	// is the lowest box bottom across all nodes (centres were normalised so
+	// the topmost box sits at the vertical margin) plus a margin.
 	width := cfg.HMargin
 	if maxLayer >= 0 {
 		width += (maxLayer+1)*cfg.NodeW + maxLayer*cfg.ColGap
 	}
-	height := cum
-	if maxSlot == 0 {
-		height = cfg.VMargin
+	height := cfg.VMargin
+	for _, n := range nodes {
+		if b := n.Y + n.H; b > height {
+			height = b
+		}
 	}
+	height += cfg.VMargin
 
 	return graphLayout{
 		nodes:  nodes,
@@ -561,28 +794,93 @@ func (c *canvas) set(x, y int, r rune, style lipgloss.Style) {
 	c.cells[y][x] = canvasCell{r: r, style: style}
 }
 
+// connectorAt sets a line glyph at (x, y), merging it with any line glyph
+// already there so crossings and tees pick the right box-drawing rune. The
+// glyph is computed from which of the four directions the new and existing
+// runes occupy, then looked up in a bitmask table. Non-line cells (box
+// borders, spaces, text) are overwritten plainly so edges never garble a
+// node. dirMask: 1=up, 2=down, 4=left, 8=right.
+func (c *canvas) connectorAt(x, y int, dirs int, style lipgloss.Style) {
+	if x < 0 || y < 0 || x >= c.w || y >= c.h {
+		return
+	}
+	existing := lineDirs(c.cells[y][x].r)
+	merged := dirs
+	if existing != 0 {
+		merged |= existing
+	}
+	r := lineGlyph(merged)
+	if r == 0 {
+		r = lineGlyph(dirs)
+	}
+	c.set(x, y, r, style)
+}
+
+// lineDirs returns the direction bitmask a box-drawing rune occupies, or 0
+// if r isn't one of the connector glyphs the router produces.
+func lineDirs(r rune) int {
+	switch r {
+	case '─':
+		return 4 | 8
+	case '│':
+		return 1 | 2
+	case '┌', '╭':
+		return 2 | 8
+	case '┐', '╮':
+		return 2 | 4
+	case '└', '╰':
+		return 1 | 8
+	case '┘', '╯':
+		return 1 | 4
+	case '├':
+		return 1 | 2 | 8
+	case '┤':
+		return 1 | 2 | 4
+	case '┬':
+		return 2 | 4 | 8
+	case '┴':
+		return 1 | 4 | 8
+	case '┼':
+		return 1 | 2 | 4 | 8
+	}
+	return 0
+}
+
+// lineGlyph maps a direction bitmask back to a box-drawing rune. Returns 0
+// for masks with no glyph (e.g. a single direction, which a connector
+// never stands alone as).
+func lineGlyph(dirs int) rune {
+	switch dirs {
+	case 4 | 8:
+		return '─'
+	case 1 | 2:
+		return '│'
+	case 2 | 8:
+		return '╭'
+	case 2 | 4:
+		return '╮'
+	case 1 | 8:
+		return '╰'
+	case 1 | 4:
+		return '╯'
+	case 1 | 2 | 8:
+		return '├'
+	case 1 | 2 | 4:
+		return '┤'
+	case 2 | 4 | 8:
+		return '┬'
+	case 1 | 4 | 8:
+		return '┴'
+	case 1 | 2 | 4 | 8:
+		return '┼'
+	}
+	return 0
+}
+
 func (c *canvas) writeAt(x, y int, s string, style lipgloss.Style) {
 	for _, r := range s {
 		c.set(x, y, r, style)
 		x++
-	}
-}
-
-func (c *canvas) hLine(x1, x2, y int, style lipgloss.Style) {
-	if x1 > x2 {
-		x1, x2 = x2, x1
-	}
-	for x := x1; x <= x2; x++ {
-		c.set(x, y, '─', style)
-	}
-}
-
-func (c *canvas) vLine(x, y1, y2 int, style lipgloss.Style) {
-	if y1 > y2 {
-		y1, y2 = y2, y1
-	}
-	for y := y1; y <= y2; y++ {
-		c.set(x, y, '│', style)
 	}
 }
 
@@ -660,68 +958,10 @@ func renderGraphCached(cache *graphRenderCache, layoutVersion int, g graphLayout
 // cursor node on screen; cursorIdx is used only for cursor highlighting.
 func renderGraph(g graphLayout, cursorIdx, viewW, viewH, panX, panY int) string {
 	cv := newCanvas(g.width, g.height)
-
-	edgeStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
-	cursorEdgeStyle := lipgloss.NewStyle().Foreground(selected).Background(bg).Bold(true)
-	cursorBorderStyle := lipgloss.NewStyle().Foreground(selected).Background(bg).Bold(true)
 	bgStyle := lipgloss.NewStyle().Background(bg)
+	cursorBorderStyle := lipgloss.NewStyle().Foreground(selected).Background(bg).Bold(true)
 
-	// Determine which original edge the cursor highlights (if any). An
-	// edge is highlighted when either of its real endpoints is the
-	// cursor; for chained long edges, every segment with a matching
-	// Original index lights up too.
-	highlightedOrig := -1
-	if cursorIdx >= 0 && cursorIdx < len(g.nodes) {
-		for _, e := range g.edges {
-			if e.From == cursorIdx || e.To == cursorIdx {
-				highlightedOrig = e.Original
-				break
-			}
-		}
-	}
-
-	// Paint each segment. Real edges and dummy chain segments share the
-	// same routing math: out the source's right edge, vertical in a
-	// per-segment gutter, into the target's left edge.
-	for _, e := range g.edges {
-		from := g.nodes[e.From]
-		to := g.nodes[e.To]
-		style := edgeStyle
-		if e.Original == highlightedOrig && highlightedOrig != -1 {
-			style = cursorEdgeStyle
-		}
-		startX := from.X + from.W
-		startY := from.Y + from.H/2
-		endX := to.X - 1
-		endY := to.Y + to.H/2
-		// When the source is a dummy, "right side" is the centre of the
-		// dummy's reserved slot — there's no box edge to paint outside
-		// of, so start one cell into the gutter.
-		if from.Dummy {
-			startX = from.X
-		}
-		if to.Dummy {
-			endX = to.X + to.W - 1
-		}
-		gutter := from.X + from.W + g.cfg.ColGap/2
-		cv.hLine(startX, gutter, startY, style)
-		if startY != endY {
-			cv.vLine(gutter, startY, endY, style)
-			if endY > startY {
-				cv.set(gutter, startY, '┐', style)
-				cv.set(gutter, endY, '└', style)
-			} else {
-				cv.set(gutter, startY, '┘', style)
-				cv.set(gutter, endY, '┌', style)
-			}
-		}
-		cv.hLine(gutter, endX, endY, style)
-		// Arrowhead only when the target is a real node (terminal segment
-		// of any chain). Mid-chain dummies extend the line plainly.
-		if !to.Dummy {
-			cv.set(endX, endY, '▶', style)
-		}
-	}
+	paintGraphEdges(g, cv, cursorIdx)
 
 	// Nodes (skip dummies — they're invisible routing slots). Border
 	// colour = worst-of-state so the picture reads as a heatmap; the
@@ -750,6 +990,247 @@ func renderGraph(g graphLayout, cursorIdx, viewW, viewH, panX, panY int) string 
 		viewH = g.height
 	}
 	return cv.renderRect(panX, panY, viewW, viewH)
+}
+
+// paintGraphEdges paints every edge of g onto cv. cursorIdx (-1 for none)
+// highlights every edge touching the cursor node, incoming and outgoing;
+// those are painted last in the selected colour so they win at shared cells.
+//
+// Routing model, mirroring the Kargo web UI. Each edge makes a single
+// vertical turn so converging/diverging edges read as trunks, not a tangle:
+//
+//   - Fan-in (target has >1 incoming): all sources converge on one vertical
+//     "bus" at the gap midpoint before the target.
+//   - Fan-out / single edge: the edge turns on the source's bus, so a source's
+//     branches split from one trunk.
+//   - Multi-layer edges (routed through dummy nodes): each rides its dummy's
+//     reserved clear row for the long horizontal run, never a box row.
+//   - An edge already on its target's row draws as a single flat line.
+//
+// connectorAt merges box-drawing glyphs so a bus grows ┤ / ┬ / ┴ tees where
+// edges join and rounds the pure corners (╭╮╰╯).
+func paintGraphEdges(g graphLayout, cv *canvas, cursorIdx int) {
+	edgeStyle := lipgloss.NewStyle().Foreground(muted).Background(bg)
+	cursorEdgeStyle := lipgloss.NewStyle().Foreground(selected).Background(bg).Bold(true)
+
+	// Determine which original edges the cursor highlights. EVERY edge that
+	// touches the cursor lights up, both incoming and outgoing, so selecting a
+	// node shows its full connectivity at once. An edge is touched when either
+	// of its segment endpoints is the cursor; for chained long edges, the
+	// segment adjacent to the cursor matches and every segment sharing that
+	// Original lights up via the same set.
+	highlightedOrigs := make(map[int]bool)
+	if cursorIdx >= 0 && cursorIdx < len(g.nodes) {
+		for _, e := range g.edges {
+			if e.From == cursorIdx || e.To == cursorIdx {
+				highlightedOrigs[e.Original] = true
+			}
+		}
+	}
+
+	// Bus routing, mirroring the Kargo web UI. Each edge makes a single
+	// vertical turn at one shared "bus" column inside the gap, so converging
+	// or diverging edges read as one trunk instead of a tangle of private
+	// lanes. Which column an edge uses depends on the shape it's part of:
+	//
+	//   - Fan-in (target has >1 incoming edge): the bus is anchored to the
+	//     TARGET — one column just before it where every source's horizontal
+	//     converges. Stacked fan-in targets in the same layer stagger by slot
+	//     so one target's vertical never runs through another's approach rows.
+	//   - Otherwise (the target has a single incoming edge): the bus is
+	//     anchored to the SOURCE — one column shared by all of that source's
+	//     outgoing edges. A pure fan-out then splits at a single trunk with no
+	//     per-target offset, instead of each branch jogging at its own column.
+	//
+	// Source horizontals sit at distinct rows so they never overlap, and they
+	// all meet the same vertical. connectorAt merges glyphs so the bus grows
+	// ┤ / ┬ / ┴ tees where edges join and rounds the pure corners. An edge
+	// whose source already sits on the target's row draws as one flat line.
+	inDeg := make([]int, len(g.nodes))
+	for _, e := range g.edges {
+		inDeg[e.To]++
+	}
+	gapMidFor := func(layer int) int {
+		gapStart := g.cfg.HMargin + (layer-1)*(g.cfg.NodeW+g.cfg.ColGap) + g.cfg.NodeW
+		return gapStart + g.cfg.ColGap/2
+	}
+	clampBus := func(layer, x int) int {
+		gapStart := g.cfg.HMargin + (layer-1)*(g.cfg.NodeW+g.cfg.ColGap) + g.cfg.NodeW
+		lo := gapStart + 1
+		hi := gapStart + g.cfg.ColGap - 1
+		if x < lo {
+			x = lo
+		}
+		if x > hi {
+			x = hi
+		}
+		return x
+	}
+	// targetBusOf: fan-in convergence column, staggered by the target's slot.
+	// sourceBusOf: fan-out trunk column, one per source (gap midpoint, no
+	// stagger so all of a source's branches split at the same vertical).
+	targetBusOf := make([]int, len(g.nodes))
+	sourceBusOf := make([]int, len(g.nodes))
+	for i, n := range g.nodes {
+		targetBusOf[i] = clampBus(n.Layer, gapMidFor(n.Layer)+n.Slot%3)
+		sourceBusOf[i] = clampBus(n.Layer+1, gapMidFor(n.Layer+1))
+	}
+
+	// Endpoint geometry for an edge: the source-exit and target-entry cells.
+	endpoints := func(e graphEdge) (sx, sy, ex, ey int) {
+		from, to := g.nodes[e.From], g.nodes[e.To]
+		sx = from.X + from.W
+		sy = from.Y + from.H/2
+		if from.Dummy {
+			sx = from.X
+		}
+		ex = to.X - 1
+		ey = to.Y + to.H/2
+		if to.Dummy {
+			ex = to.X + to.W - 1
+		}
+		return sx, sy, ex, ey
+	}
+
+	// busColOf: the vertical-turn column an edge uses. Fan-in edges (target
+	// with >1 incoming) converge on the target bus; everything else splits
+	// from the source bus.
+	busColOf := func(e graphEdge, sx, ex int) int {
+		bus := sourceBusOf[e.From]
+		if inDeg[e.To] > 1 {
+			bus = targetBusOf[e.To]
+		}
+		if bus <= sx {
+			bus = sx + 1
+		}
+		if bus >= ex {
+			bus = ex - 1
+		}
+		return bus
+	}
+
+	// A multi-layer edge is split into a chain of single-layer segments
+	// through dummy nodes (see layoutGraph). Each dummy occupies its own
+	// reserved 1-cell row that the layout keeps clear of real boxes, so a
+	// long edge already has a dedicated horizontal lane: its dummy row. The
+	// trick is to get the edge ONTO that row immediately on leaving the
+	// source, so the long horizontal run lives entirely on the clear dummy
+	// row instead of on the source's box row (where it would co-run with
+	// every other edge leaving that row and merge into one line).
+	//
+	// So a segment feeding a dummy turns vertically right at the source's
+	// right edge (one cell out) down/up to the dummy row, then runs flat to
+	// the dummy. A segment leaving a dummy runs flat along the clear dummy row
+	// and only turns into the target row at the last cell before the target,
+	// so the long run still owns the dummy row. Only genuine real→real turns
+	// use the shared bus, where merging is wanted (fan-out trunk, fan-in
+	// convergence).
+	paintEdge := func(ei int, style lipgloss.Style) {
+		e := g.edges[ei]
+		from, to := g.nodes[e.From], g.nodes[e.To]
+		sx, sy, ex, ey := endpoints(e)
+		if sy == ey {
+			// Already on one row: a single flat horizontal.
+			for x := sx; x <= ex; x++ {
+				cv.connectorAt(x, sy, 4|8, style)
+			}
+			if !to.Dummy {
+				cv.set(ex, ey, '▶', style)
+			}
+			return
+		}
+		// Segment touching a dummy: turn onto the clear dummy row as early as
+		// possible (feeding a dummy) or stay on it until the last cell
+		// (leaving a dummy), so the long horizontal run owns the dummy's
+		// reserved row instead of co-running on a box row.
+		if from.Dummy || to.Dummy {
+			if to.Dummy {
+				// Feeding a dummy: short stub on the source row, turn down/up
+				// at sx+1, then flat along the dummy row to the dummy.
+				turn := sx + 1
+				cv.connectorAt(sx, sy, 4|8, style)
+				y1, y2 := sy, ey
+				if y1 > y2 {
+					y1, y2 = y2, y1
+				}
+				for y := y1 + 1; y < y2; y++ {
+					cv.connectorAt(turn, y, 1|2, style)
+				}
+				if ey > sy {
+					cv.connectorAt(turn, sy, 2|4, style) // ╮
+					cv.connectorAt(turn, ey, 1|8, style) // ╰
+				} else {
+					cv.connectorAt(turn, sy, 1|4, style) // ╯
+					cv.connectorAt(turn, ey, 2|8, style) // ╭
+				}
+				for x := turn + 1; x <= ex; x++ {
+					cv.connectorAt(x, ey, 4|8, style)
+				}
+				return
+			}
+			// Leaving a dummy: flat along the dummy row to ex-1, turn into the
+			// target row, short stub into the target.
+			turn := ex - 1
+			for x := sx; x < turn; x++ {
+				cv.connectorAt(x, sy, 4|8, style)
+			}
+			y1, y2 := sy, ey
+			if y1 > y2 {
+				y1, y2 = y2, y1
+			}
+			for y := y1 + 1; y < y2; y++ {
+				cv.connectorAt(turn, y, 1|2, style)
+			}
+			if ey > sy {
+				cv.connectorAt(turn, sy, 2|4, style) // ╮ flat-in from left, down
+				cv.connectorAt(turn, ey, 1|8, style) // ╰ up-in, out right to target
+			} else {
+				cv.connectorAt(turn, sy, 1|4, style) // ╯ flat-in from left, up
+				cv.connectorAt(turn, ey, 2|8, style) // ╭ down-in, out right to target
+			}
+			cv.connectorAt(ex, ey, 4|8, style)
+			cv.set(ex, ey, '▶', style)
+			return
+		}
+		// Real → real turn: route over the shared bus so fan-outs split from a
+		// single trunk and fan-ins converge on one vertical.
+		bus := busColOf(e, sx, ex)
+		for x := sx; x < bus; x++ {
+			cv.connectorAt(x, sy, 4|8, style)
+		}
+		y1, y2 := sy, ey
+		if y1 > y2 {
+			y1, y2 = y2, y1
+		}
+		for y := y1 + 1; y < y2; y++ {
+			cv.connectorAt(bus, y, 1|2, style)
+		}
+		if ey > sy {
+			cv.connectorAt(bus, sy, 2|4, style) // ╮
+			cv.connectorAt(bus, ey, 1|8, style) // ╰
+		} else {
+			cv.connectorAt(bus, sy, 1|4, style) // ╯
+			cv.connectorAt(bus, ey, 2|8, style) // ╭
+		}
+		for x := bus + 1; x <= ex; x++ {
+			cv.connectorAt(x, ey, 4|8, style)
+		}
+		cv.set(ex, ey, '▶', style)
+	}
+
+	// Non-highlighted edges first, then highlighted on top so the selected
+	// node's connections win at any shared cell.
+	for ei, e := range g.edges {
+		if highlightedOrigs[e.Original] {
+			continue
+		}
+		paintEdge(ei, edgeStyle)
+	}
+	for ei, e := range g.edges {
+		if highlightedOrigs[e.Original] {
+			paintEdge(ei, cursorEdgeStyle)
+		}
+	}
 }
 
 // graphPanOffsetFor returns the top-left canvas coordinate the renderer
@@ -834,25 +1315,35 @@ func graphPanOffsetFor(g graphLayout, cursorIdx, viewW, viewH, prevX, prevY int)
 	return clamp(x0, y0)
 }
 
-// drawNode paints a single node box. The first inner row is the stage
-// name (bold, in the border colour); each subsequent row is one
-// "key: value" pair from buildNodeRows. Box height is set per-node
-// during layout so each box hugs its content.
+// drawNode paints a single node box. The top row is a filled title bar
+// carrying the stage name (web-UI card header); each body row below is one
+// "key: value" pair from buildNodeRows. Box height is set per-node during
+// layout so each box hugs its content.
 func drawNode(cv *canvas, n graphNode, border, bgStyle lipgloss.Style, cursor bool, borderColor color.Color) {
 	x, y := n.X, n.Y
 	w, h := n.W, n.H
 
-	// Border — heavy double-line on the cursor so selection always wins.
-	tl, tr, bl, br, hor, ver := '┌', '┐', '└', '┘', '─', '│'
+	// Title bar: the top row is a solid colour strip carrying the stage
+	// name, mirroring the Kargo web UI card header. The name renders in the
+	// dark reverse-video foreground on the state colour so it reads as a
+	// filled chip; on the cursor it flips to the selected colour. The strip
+	// spans the full box width so it caps the box top corner-to-corner and the
+	// side borders meet it flush, with the name inset one cell from the edge.
+	barBG := borderColor
+	titleStyle := lipgloss.NewStyle().Foreground(darkFg).Background(barBG).Bold(true)
+	title := " " + n.Stage.Name
+	cv.writeAt(x, y, fitToWidth(title, w), titleStyle)
+
+	// Body border below the title bar — rounded corners on the bottom,
+	// vertical sides. Heavy double-line on the cursor so selection always
+	// wins against any state colour.
+	bl, br, hor, ver := '╰', '╯', '─', '│'
 	if cursor {
-		tl, tr, bl, br, hor, ver = '╔', '╗', '╚', '╝', '═', '║'
+		bl, br, hor, ver = '╚', '╝', '═', '║'
 	}
-	cv.set(x, y, tl, border)
-	cv.set(x+w-1, y, tr, border)
 	cv.set(x, y+h-1, bl, border)
 	cv.set(x+w-1, y+h-1, br, border)
 	for i := x + 1; i < x+w-1; i++ {
-		cv.set(i, y, hor, border)
 		cv.set(i, y+h-1, hor, border)
 	}
 	for i := y + 1; i < y+h-1; i++ {
@@ -871,12 +1362,8 @@ func drawNode(cv *canvas, n graphNode, border, bgStyle lipgloss.Style, cursor bo
 		return
 	}
 
-	// Row 0: stage name in bold, painted in the border colour so the
-	// outside-and-inside read as one unit ("the red box belongs to qa").
+	// Body rows start just under the title bar.
 	rowY := y + 1
-	nameStyle := bgStyle.Foreground(borderColor).Bold(true)
-	cv.writeAt(x+1, rowY, fitToWidth(n.Stage.Name, innerW), nameStyle)
-	rowY++
 
 	// Subsequent rows: the key/value pairs from buildNodeRows. Key in
 	// muted, value in its semantic colour (or normal foreground when
@@ -1101,7 +1588,7 @@ func (m Model) graphView() tea.View {
 	}
 
 	hint := lipgloss.NewStyle().Foreground(muted).Background(bg).Padding(0, 1).
-		Render("v details · P promote · l logs · / search · n/N next/prev · ? help")
+		Render("v details · x expand · P promote · l logs · / search · n/N next/prev · ? help")
 
 	// Body sizing: header + statusLine + hint = 3 lines guaranteed.
 	// Banner / error / yank message and the search line each cost one

@@ -183,6 +183,10 @@ type Model struct {
 	// on the next successful tick or after a successful re-login.
 	authExpired    bool
 	authExpiredMsg string
+	// autoReloginTried latches once the cold-start auto-SSO has fired so a
+	// failed/cancelled auto-login doesn't loop. After that the user drives
+	// recovery manually with R.
+	autoReloginTried bool
 
 	// helpVP renders the help overlay body so it can scroll
 	// independently of the table/details viewports.
@@ -276,6 +280,13 @@ type Model struct {
 	// value copies.
 	graphLayoutVersion int
 	graphRender        *graphRenderCache
+
+	// graphExpanded controls how much each stage box shows. False (the
+	// default) renders compact boxes mirroring the Kargo web UI: freight
+	// SHA + alias + age, with state conveyed by the border colour. True
+	// restores the full Health/Argo/Sync/Promo rows. The selected stage's
+	// complete detail always lives in the side panel regardless.
+	graphExpanded bool
 
 	// Graph-view name search. `/` opens m.filter as usual; in graph view
 	// the filter doesn't hide nodes (that would break the DAG layout)

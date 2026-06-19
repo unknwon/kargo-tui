@@ -77,6 +77,7 @@ func helpBindings() []helpRow {
 		{"", "f", "freights"},
 		{"", "t", "tree (DAG of stages, ←/→ collapse/expand)"},
 		{"", "g", "graph (layered DAG with spatial cursor)"},
+		{"", "x", "graph: toggle compact / expanded stage boxes"},
 		{"", "p", "switch project"},
 		{"", "?", "show this help overlay"},
 		{"Actions", "l", "logs (promotions + events) for selected stage"},

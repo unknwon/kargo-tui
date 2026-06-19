@@ -102,6 +102,19 @@ func (m Model) updateInner(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd
 	if sm, ok := msg.(SetSendMsg); ok {
 		m.ctxSend = sm.Send
 		m.restartStageWatch()
+		// Cold-start recovery: if the saved session was already dead at
+		// launch, the silent refresh-token exchange has failed (rotated
+		// signing key or a single-use refresh token already claimed), so
+		// the only path back is a full browser SSO flow. Kick it off
+		// automatically now that ctxSend is wired, rather than stranding the
+		// user on the banner. Only fires once per launch (autoReloginTried
+		// latches) and only when re-login is actually possible.
+		if m.authExpired && !m.autoReloginTried {
+			m.autoReloginTried = true
+			if cmd, ok := m.startReloginCurrentContext(); ok {
+				return m, cmd
+			}
+		}
 		return m, nil
 	}
 
@@ -815,13 +828,23 @@ func (m Model) updateInner(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd
 			m.ctxFilter.Focus()
 			return m, textinput.Blink
 		case "R":
-			// Ask every warehouse in the current project to reconcile
-			// so freight discovery runs without waiting for the next
-			// poll interval. Reconcile is asynchronous server-side; the
-			// 5s tick picks up any new freight on a subsequent
-			// QueryFreight. m.refreshingWarehouses gates re-entry so
-			// mashing R doesn't fan out concurrent List+Refresh
-			// goroutines against the server.
+			// When the auth banner is up, R re-logs in via SSO (the banner
+			// instructs "Press R to re-login"). The silent refresh-token
+			// path has already failed by the time the banner shows, so a
+			// full browser flow is the only recovery.
+			if m.authExpired {
+				cmd, ok := m.startReloginCurrentContext()
+				if !ok {
+					return m, nil
+				}
+				return m, cmd
+			}
+			// Otherwise R asks every warehouse in the current project to
+			// reconcile so freight discovery runs without waiting for the
+			// next poll interval. Reconcile is asynchronous server-side; the
+			// 5s tick picks up any new freight on a subsequent QueryFreight.
+			// m.refreshingWarehouses gates re-entry so mashing R doesn't fan
+			// out concurrent List+Refresh goroutines against the server.
 			if m.project == "" || m.client == nil || m.refreshingWarehouses {
 				return m, nil
 			}
@@ -845,6 +868,16 @@ func (m Model) updateInner(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd
 		case "v":
 			m.detailsOnly = !m.detailsOnly
 			return m, nil
+		case "x":
+			// Graph view only: toggle compact / expanded stage boxes.
+			// Rebuild the layout so box heights and edge routing reflow
+			// for the new row counts.
+			if m.view == viewGraph {
+				m.graphExpanded = !m.graphExpanded
+				m.rebuildGraph()
+				m.recomputeGraphPan()
+				return m, nil
+			}
 		case "c":
 			m.setView(ctx, viewControlFlow)
 			return m, nil
