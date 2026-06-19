@@ -400,7 +400,10 @@ func layoutGraph(stages []kargo.Stage, cfg graphCfg, m Model) graphLayout {
 		if dummyNames[name] {
 			return 1
 		}
-		return 2 + len(rowsForNode[name]) // top border + rows + bottom border
+		// title bar + one pad row + rows + bottom border. The pad row gives
+		// the same breathing space under the header in every mode so compact
+		// and expanded boxes read consistently.
+		return 3 + len(rowsForNode[name])
 	}
 	for _, s := range stages {
 		stage := byName[s.Name]
@@ -1362,8 +1365,9 @@ func drawNode(cv *canvas, n graphNode, border, bgStyle lipgloss.Style, cursor bo
 		return
 	}
 
-	// Body rows start just under the title bar.
-	rowY := y + 1
+	// Body rows start one pad row below the title bar (row y+1 stays blank)
+	// so the header has consistent breathing space above the first line.
+	rowY := y + 2
 
 	// Subsequent rows: the key/value pairs from buildNodeRows. Key in
 	// muted, value in its semantic colour (or normal foreground when
