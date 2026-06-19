@@ -688,6 +688,80 @@ func layoutGraph(stages []kargo.Stage, cfg graphCfg, m Model) graphLayout {
 		straighten()
 	}
 
+	// Component banding. The alignment sweeps keep a node near its connected
+	// neighbours, but they don't separate independent pipelines: a chain with
+	// no edge into another (a distinct set of warehouses/stages) can end up
+	// vertically interleaved with an unrelated one, so their edges weave past
+	// each other. Group nodes into weakly-connected components (over the
+	// segment graph, so a long edge's dummy chain stays with its endpoints),
+	// then stack each component into its own vertical band: order components by
+	// their current mean centre and lay them out top-to-bottom with a gap, each
+	// shifted rigidly so its internal shape (the straightened spines) is
+	// preserved. The result reads as cleanly separated pipelines instead of one
+	// tangled block.
+	compParent := make(map[string]string, len(center))
+	compFind := func(a string) string {
+		for compParent[a] != a {
+			compParent[a] = compParent[compParent[a]]
+			a = compParent[a]
+		}
+		return a
+	}
+	for name := range center {
+		compParent[name] = name
+	}
+	for _, s := range segments {
+		ra, rb := compFind(s.from), compFind(s.to)
+		if ra != rb {
+			compParent[ra] = rb
+		}
+	}
+	members := make(map[string][]string)
+	for name := range center {
+		r := compFind(name)
+		members[r] = append(members[r], name)
+	}
+	// Only band when there's more than one component (a single connected DAG
+	// is already handled by the sweeps and needs no separation).
+	if len(members) > 1 {
+		type compBand struct {
+			root      string
+			meanC     float64
+			top, span float64
+		}
+		bands := make([]compBand, 0, len(members))
+		for root, ms := range members {
+			sum, top, bot := 0.0, math.Inf(1), math.Inf(-1)
+			for _, name := range ms {
+				h := float64(heightFor(name))
+				sum += center[name]
+				if t := center[name] - h/2; t < top {
+					top = t
+				}
+				if b := center[name] + h/2; b > bot {
+					bot = b
+				}
+			}
+			bands = append(bands, compBand{root, sum / float64(len(ms)), top, bot - top})
+		}
+		// Stable order: by current mean centre, then root name for determinism.
+		sort.Slice(bands, func(i, j int) bool {
+			if bands[i].meanC != bands[j].meanC {
+				return bands[i].meanC < bands[j].meanC
+			}
+			return bands[i].root < bands[j].root
+		})
+		const bandGap = 2.0
+		y := float64(cfg.VMargin)
+		for _, b := range bands {
+			delta := y - b.top
+			for _, name := range members[b.root] {
+				center[name] += delta
+			}
+			y += b.span + bandGap
+		}
+	}
+
 	// Normalise so the topmost box sits at the vertical margin (centres can
 	// have drifted negative or far down during the sweeps).
 	minCenter := 0.0

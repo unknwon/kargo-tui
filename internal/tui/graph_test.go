@@ -167,6 +167,52 @@ func TestGraphNoEdgeThroughUnrelatedBox(t *testing.T) {
 	}
 }
 
+// TestGraphComponentsBanded verifies independent pipelines are laid out in
+// disjoint vertical bands instead of interleaving. Two unconnected chains
+// must not overlap in Y: every box of one sits entirely above or entirely
+// below every box of the other.
+func TestGraphComponentsBanded(t *testing.T) {
+	mk := func(name string, ups ...string) kargo.Stage {
+		return kargo.Stage{Name: name, Health: "Healthy", FreightSummary: "abc123de", Created: time.Unix(1, 0), Upstreams: ups}
+	}
+	stages := []kargo.Stage{
+		// Component A.
+		mk("a-canary"),
+		mk("a-mid", "a-canary"),
+		mk("a-ready", "a-mid"),
+		// Component B, fully independent of A.
+		mk("b-canary"),
+		mk("b1", "b-canary"),
+		mk("b2", "b-canary"),
+		mk("b-ready", "b1", "b2"),
+	}
+	g := layoutGraph(stages, defaultGraphCfg(), Model{})
+
+	compA := []string{"a-canary", "a-mid", "a-ready"}
+	compB := []string{"b-canary", "b1", "b2", "b-ready"}
+	rangeOf := func(names []string) (top, bot int) {
+		top = 1 << 30
+		for _, n := range names {
+			i, ok := g.byName[n]
+			require.Truef(t, ok, "node %q not found", n)
+			nd := g.nodes[i]
+			if nd.Y < top {
+				top = nd.Y
+			}
+			if nd.Y+nd.H > bot {
+				bot = nd.Y + nd.H
+			}
+		}
+		return top, bot
+	}
+	aTop, aBot := rangeOf(compA)
+	bTop, bBot := rangeOf(compB)
+	// Disjoint: one band's bottom is at or above the other's top.
+	disjoint := aBot <= bTop || bBot <= aTop
+	assert.Truef(t, disjoint,
+		"components overlap vertically: A=[%d,%d] B=[%d,%d]", aTop, aBot, bTop, bBot)
+}
+
 // TestGraphSingleParentStaysStraight guards the bug where a node with a
 // single parent but a fan-out of children drifted to the children's median,
 // bending the straight incoming edge. A single parent/child link is a spine
