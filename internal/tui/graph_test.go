@@ -167,6 +167,38 @@ func TestGraphNoEdgeThroughUnrelatedBox(t *testing.T) {
 	}
 }
 
+// TestGraphFeederChainSinksBelowSpine verifies that when two chains merge
+// into a shared target, the chain with the smaller downstream sub-DAG (a
+// feeder) sits below the main spine rather than floating above it. Both
+// chains here end at "sink"; the spine (canary->...->fan-out) reaches more
+// nodes than the lone feeder, so the feeder's root must be ordered below the
+// spine's root at layer 0.
+func TestGraphFeederChainSinksBelowSpine(t *testing.T) {
+	mk := func(name string, ups ...string) kargo.Stage {
+		return kargo.Stage{Name: name, FreightSummary: "abc123de", Created: time.Unix(1, 0), Upstreams: ups}
+	}
+	stages := []kargo.Stage{
+		// Spine: larger downstream tree (fans out before the sink).
+		mk("spine-canary"),
+		mk("spine-mid", "spine-canary"),
+		mk("spine-leaf1", "spine-mid"),
+		mk("spine-leaf2", "spine-mid"),
+		// Feeder: a lone chain that only joins at the sink.
+		mk("feed-canary"),
+		mk("feed-mid", "feed-canary"),
+		mk("sink", "spine-leaf1", "spine-leaf2", "feed-mid"),
+	}
+	g := layoutGraph(stages, defaultGraphCfg(), Model{})
+	yOf := func(name string) int {
+		i, ok := g.byName[name]
+		require.Truef(t, ok, "node %q not found", name)
+		return g.nodes[i].Y
+	}
+	// At layer 0 the spine root (bigger sub-DAG) must sit above the feeder root.
+	assert.Less(t, yOf("spine-canary"), yOf("feed-canary"),
+		"feeder chain should sink below the main spine")
+}
+
 // TestGraphComponentsBanded verifies independent pipelines are laid out in
 // disjoint vertical bands instead of interleaving. Two unconnected chains
 // must not overlap in Y: every box of one sits entirely above or entirely

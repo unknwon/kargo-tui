@@ -350,6 +350,36 @@ func layoutGraph(stages []kargo.Stage, cfg graphCfg, m Model) graphLayout {
 		sort.Strings(byLayer[l])
 	}
 
+	// Layer-0 root order decides which chain sits on top: the barycenter pass
+	// below propagates layer-0 slots downstream, so roots placed first end up
+	// highest. Order roots by descending size of the sub-DAG they reach (then
+	// name for determinism), so the main spine with the larger downstream tree
+	// stays on top and shorter feeder chains (e.g. a lone canary→ready that
+	// only joins later) sink below it instead of floating above the spine.
+	reach := make(map[string]int, len(byLayer[0]))
+	for _, root := range byLayer[0] {
+		seen := map[string]bool{root: true}
+		stack := []string{root}
+		for len(stack) > 0 {
+			cur := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			for _, c := range children[cur] {
+				if !seen[c] {
+					seen[c] = true
+					stack = append(stack, c)
+				}
+			}
+		}
+		reach[root] = len(seen)
+	}
+	sort.SliceStable(byLayer[0], func(i, j int) bool {
+		a, b := byLayer[0][i], byLayer[0][j]
+		if reach[a] != reach[b] {
+			return reach[a] > reach[b] // larger sub-DAG on top
+		}
+		return a < b
+	})
+
 	// Build a segment-aware parents map (real + dummy). Used only for
 	// the barycenter ordering pass below.
 	segParents := make(map[string][]string)
